@@ -1,0 +1,131 @@
+import { Styles } from "../styles.slint";
+
+export component BarDropdown {
+    Rectangle {
+        background: white;
+        border-width: 1px;
+        border-color: Styles.bar-border-light;
+    }
+
+    VerticalLayout {
+        width: Styles.bar-dropdown-width + 2px;
+        padding: 1px;
+        @children
+    }
+}
+
+export component BarDropdownDivider {
+    Rectangle {
+        height: 1px;
+        border-width: Styles.bar-dropdown-width;
+        background: Styles.bar-border-light;
+    }
+}
+
+export component BarDropdownTitle {
+    in-out property text <=> txt.text;
+
+    width: Styles.bar-dropdown-width;
+    height: Styles.bar-dropdown-height;
+
+    Rectangle { background: #f6f7f8; }
+
+    txt := Text {
+        font-size: Styles.bar-font-size;
+        color: #646464;
+        font-weight: 700;
+        horizontal-alignment: left;
+        x: Styles.bar-padding;
+    }
+}
+
+export component BarDropdownItem {
+    callback clicked <=> touch.clicked;
+    in-out property text <=> txt.text;
+    in-out property<image> icon;
+    in-out property <bool> focused;
+
+    width: Styles.bar-dropdown-width;
+    height: Styles.bar-dropdown-height;
+
+    Rectangle {
+        background: focused ? #c9e0f7 : touch.has-hover ? #edf4fc : transparent;
+        border-width: 1px;
+        border-color: focused ? #8dbcec : touch.has-hover ? #bfdcfb : transparent;
+    }
+
+    HorizontalLayout {
+        VerticalLayout {
+            alignment: space-around;
+            width: Styles.bar-dropdown-height;
+            padding-left: (Styles.bar-dropdown-height - Styles.bar-small-icon-size) / 2;
+
+            Image {
+                width: Styles.bar-small-icon-size;
+                height: Styles.bar-small-icon-size;
+                source: root.icon;
+            }
+        }
+
+        Rectangle {
+            background: Styles.bar-border-light;
+            width: 1px;
+            height: root.height;
+        }
+
+        // Spacer
+        Rectangle { width: 2 * Styles.bar-padding; }
+
+        txt := Text {
+            font-size: Styles.bar-font-size;
+            color: Styles.bar-text-color;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            height: root.height;
+        }
+    }
+
+    touch := TouchArea {}
+}
+
+export component BarSizeDropdownItem {
+    callback clicked <=> touch.clicked;
+
+    in-out property<length> size;
+    in-out property text <=> txt.text;
+
+    width: Styles.bar-dropdown-width;
+    height: Styles.bar-dropdown-height * 1.5;
+
+    Rectangle {
+        background: touch.has-hover ? #edf4fc : transparent;
+        border-width: 1px;
+        border-color: touch.has-hover ? #bfdcfb : transparent;
+    }
+
+    HorizontalLayout {
+        Rectangle { width: 2 * Styles.bar-padding; } // Spacer
+
+        VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: root.width * 0.7;
+                height: size;
+                background: black;
+            }
+        }
+
+        Rectangle { width: 2 * Styles.bar-padding; } // Spacer
+
+        txt := Text {
+            font-size: Styles.bar-font-size;
+            color: Styles.bar-text-color;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            height: root.height;
+        }
+    }
+
+    touch := TouchArea {}
+}

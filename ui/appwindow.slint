@@ -1,0 +1,59 @@
+import { Button, VerticalBox, ScrollView } from "std-widgets.slint";
+import { TopBar } from "topbar.slint";
+
+import { UserState } from "globals.slint";
+export * from "globals.slint";
+
+export component AppWindow inherits Window {
+    in-out property<int> counter: 42;
+
+    in property <image> canvas_source <=> canvas.source;
+
+    callback request-increase-value();
+
+    // Window sizes
+    min-height: 200px;
+    min-width: 200px;
+
+    preferred-height: 600px;
+    preferred-width: 900px;
+
+    // Global styles
+    default-font-family: "Segoe UI";
+    title: "LS Paint";
+
+    VerticalLayout {
+        alignment: start;
+        bar := TopBar{}
+
+        ScrollView {
+            height: 100%;
+            min-height: 100px;
+
+            Rectangle { background: #c5cfdf; }
+
+            touch := TouchArea {
+
+                // clicked, double-clicked, moved
+                // https://releases.slint.dev/1.5.1/docs/slint/src/language/builtins/elements.html#id26
+                clicked => {
+                    UserState.mouse_click(touch.mouse-x - self.x, touch.mouse-y - self.y);
+                }
+
+                double-clicked() => {
+                    UserState.mouse_click(touch.mouse-x - self.x, touch.mouse-y - self.y);
+                }
+
+                moved() => {
+                    UserState.mouse_click(touch.mouse-x - self.x, touch.mouse-y - self.y);
+                }
+
+                canvas := Image {
+                    image-rendering: pixelated;
+                    x: 4px; y: 4px;
+                    // image-fit default is `contain` when in layout, preserving aspect ratio
+                }
+            }
+        }
+    }
+}

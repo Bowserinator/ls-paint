@@ -1,0 +1,194 @@
+import { VerticalBox } from "std-widgets.slint";
+import { Styles } from "../styles.slint";
+
+component ImageButtonBase inherits Rectangle {
+    in-out property<bool> focused: false;
+    in-out property<bool> force_hover: false;
+
+    in-out property<image> icon: @image-url("../../icons/paste.png");
+    in-out property<length> font-size: Styles.bar-font-size;
+
+    out property is-hovered <=> touch.has-hover;
+    out property is-pressed <=> touch.pressed;
+
+    callback clicked <=> touch.clicked;
+
+    border-radius: 0;
+    border-width: 1px;
+    border-color: focused ? #8dbcec : touch.pressed ? #a0c6ed : (force_hover || touch.has-hover) ? #bedbf8 : transparent;
+    background: focused ? #c9e0f7 : touch.pressed ? #d5e6f7 : transparent;
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+    }
+}
+
+
+// Utils
+// +--------------------------------+
+component PaddedLayoutV inherits VerticalLayout {
+    padding: Styles.bar-padding;
+    padding-left: Styles.bar-padding * 2;
+    padding-right: Styles.bar-padding * 2;
+    spacing: Styles.bar-padding / 2;
+    alignment: start;
+}
+
+component PaddedLayoutH inherits HorizontalLayout {
+    padding: Styles.bar-padding / 2;
+    padding-left: Styles.bar-padding * 2;
+    padding-right: Styles.bar-padding * 2;
+    alignment: center;
+}
+
+component ButtonText inherits Text {
+    color: Styles.bar-text-color;
+    wrap: word-wrap;
+    horizontal-alignment: center;
+}
+
+
+// Buttons
+// +--------------------------------+
+
+// An icon with text below
+export component ImageButtonVertical inherits ImageButtonBase {
+    in-out property text <=> txt.text;
+
+    width: Styles.bar-vertical-btn-width;
+    
+    PaddedLayoutV {
+        HorizontalLayout {
+            alignment: center;
+
+            Image {
+                width: Styles.bar-large-icon-size;
+                height: Styles.bar-large-icon-size;
+                source: root.icon;
+            }
+        }
+        txt := ButtonText { font-size: root.font-size; }
+    }
+}
+
+// A colored rectangle with text below
+export component ColorButtonVertical inherits ImageButtonBase {
+    in-out property text <=> txt.text;
+    in-out property<color> colr;
+
+    width: Styles.bar-vertical-btn-width;
+
+    PaddedLayoutV {
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: Styles.bar-large-icon-size;
+                height: Styles.bar-large-icon-size;
+                background: colr;
+                border-width: 1px;
+                border-color: (colr.red + colr.blue + colr.green) / 3.0 > 0.2 ? black : white;
+            }
+        }
+        txt := ButtonText { font-size: root.font-size; }
+    }
+}
+
+// An icon with text below that functions as a dropdown
+export component ImageButtonVerticalDropdown {
+    in-out property focused1 <=> btn1.focused;
+    in-out property focused2 <=> btn2.focused;
+
+    in-out property<string> text;
+    in-out property<image> icon: @image-url("../../icons/paste.png");
+    in-out property<length> font-size: Styles.bar-font-size;
+
+    out property<bool> any-hovered: btn1.is-hovered || btn2.is-hovered;
+
+    callback clicked <=> btn1.clicked;
+    callback clicked_dropdown <=> btn2.clicked;
+    
+    width: Styles.bar-vertical-btn-width;
+    
+    VerticalLayout {
+        alignment: start;
+        spacing: -1px;
+
+        btn1 := ImageButtonBase {
+            force_hover: any-hovered;
+
+            PaddedLayoutH {
+                Image {
+                    width: Styles.bar-large-icon-size;
+                    height: Styles.bar-large-icon-size;
+                    source: root.icon;
+                }
+            }
+        }
+
+        btn2 := ImageButtonBase {
+            force_hover: any-hovered;
+
+            PaddedLayoutV {
+                txt := ButtonText {
+                    text: root.text;
+                    font-size: root.font-size;
+                }
+                ButtonText {
+                    text: "▼";
+                    font-size: 6px;
+                }
+            }
+        }
+    }
+}
+
+// A small icon with text to the right
+export component ImageButtonHorizontal inherits ImageButtonBase {
+    in-out property text <=> txt.text;
+    
+    HorizontalLayout {
+        padding: Styles.bar-padding;
+        padding-top: Styles.bar-padding / 2;
+        padding-bottom: Styles.bar-padding / 2;
+        spacing: Styles.bar-padding;
+        alignment: start;
+
+        VerticalLayout {
+            Image {
+                width: Styles.bar-small-icon-size;
+                height: Styles.bar-small-icon-size;
+                source: root.icon;
+            }
+        }
+
+        txt := ButtonText { font-size: root.font-size; }
+    }
+}
+
+// Just a small icon button
+export component ImageButtonIcon inherits ImageButtonBase {
+    width: Styles.bar-small-icon-size + 2 * Styles.bar-padding;
+    height: Styles.bar-small-icon-size + 2 * Styles.bar-padding;
+
+    Image {
+        width: Styles.bar-small-icon-size;
+        height: Styles.bar-small-icon-size;
+        source: root.icon;
+    }
+}
+
+// Color icon
+export component ColorButton inherits ImageButtonBase {
+    in-out property <color> colr;
+    
+    width: Styles.bar-small-icon-size + Styles.bar-padding;
+    height: Styles.bar-small-icon-size + Styles.bar-padding;
+    border-width: 1px;
+    border-color: root.is-pressed ? #a0c6ed : root.is-hovered ? #bedbf8 : Styles.bar-border-light;
+
+    Rectangle {
+        width: Styles.bar-small-icon-size;
+        height: Styles.bar-small-icon-size;
+        background: colr;
+    }
+}

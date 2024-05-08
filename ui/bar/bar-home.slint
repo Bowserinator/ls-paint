@@ -1,0 +1,364 @@
+import { Bar, BarDivider, BarItemGroup } from "bar.slint";
+import { ImageButtonVertical, ImageButtonHorizontal, ImageButtonIcon, ImageButtonVerticalDropdown, ColorButtonVertical, ColorButton } from "../components/image-buttons.slint";
+import { BarDropdown, BarDropdownItem, BarDropdownTitle, BarDropdownDivider, BarSizeDropdownItem } from "../components/bar-dropdown.slint";
+import { StandardButton, AboutSlint } from "std-widgets.slint";
+import { Styles } from "../styles.slint";
+import { UserState, ETool, ESelectionType } from "../globals.slint";
+
+export component HomeBar inherits Bar {
+    HorizontalLayout {
+        BarItemGroup {
+            title: "Clipboard";
+
+            clipboard-dropdown := PopupWindow {
+                y: clipboard-dropdown-btn.y + clipboard-dropdown-btn.height - Styles.bar-padding;
+                x: clipboard-dropdown-btn.x + Styles.bar-padding;
+
+                BarDropdown {
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/paste.png"); text: "Paste";
+                        clicked => { UserState.selected-tool = ETool.NONE; }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/paste.png"); text: "Paste from file";
+                        clicked => { UserState.selected-tool = ETool.NONE; }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                clipboard-dropdown-btn := ImageButtonVerticalDropdown {
+                    text: "Paste";
+                    icon: @image-url("../../icons/paste.png");
+                    focused1: UserState.selected-tool == ETool.PASTE;
+                    focused2: UserState.selected-tool == ETool.PASTE;
+
+                    clicked => { UserState.selected-tool = ETool.PASTE; }
+                    clicked_dropdown => {
+                        UserState.selected-tool = ETool.PASTE;
+                        clipboard-dropdown.show();
+                    }
+                }
+
+                VerticalLayout {
+                    max-width: 70px;
+                    spacing: Styles.bar-list-spacing;
+
+                    ImageButtonHorizontal {
+                        icon: @image-url("../../icons/cut.png");
+                        text: "Cut";
+                    }
+                    ImageButtonHorizontal {
+                        icon: @image-url("../../icons/copy.png");
+                        text: "Copy";
+                    }
+                }
+            }
+        }
+        BarDivider {}
+
+        BarItemGroup {
+            title: "Image";
+
+            select-dropdown := PopupWindow {
+                y: select-dropdown-btn.y + select-dropdown-btn.height - Styles.bar-padding;
+                x: select-dropdown-btn.x + Styles.bar-padding;
+
+                BarDropdown {
+                    BarDropdownTitle { text: "Selection Shapes"; }
+                    BarDropdownDivider {}
+    
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/selection.png"); text: "Rectangular selection";
+                        focused: UserState.selection-type == ESelectionType.RECTANGULAR;
+                        clicked => { UserState.selection-type = ESelectionType.RECTANGULAR; }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/free-selection.png"); text: "Free-hand selection";
+                        focused: UserState.selection-type == ESelectionType.FREEHAND;
+                        clicked => { UserState.selection-type = ESelectionType.FREEHAND; }
+                    }
+
+                    BarDropdownDivider {}
+                    BarDropdownTitle { text: "Selection Options"; }
+                    BarDropdownDivider {}
+
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/select-all.png"); text: "Select all";
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/invert-selection.png"); text: "Invert selection";
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/clear-selection.png"); text: "Clear selection";
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/transparent-selection.png"); text: "Transparent selection";
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                select-dropdown-btn := ImageButtonVerticalDropdown {
+                    text: "Select";
+                    icon: 
+                        UserState.selection-type == ESelectionType.RECTANGULAR ? @image-url("../../icons/selection.png") :
+                        UserState.selection-type == ESelectionType.FREEHAND ? @image-url("../../icons/free-selection.png") :
+                        @image-url("../../icons/selection.png"); // Default
+                    focused1: UserState.selected-tool == ETool.SELECTION;
+                    focused2: UserState.selected-tool == ETool.SELECTION;
+
+                    clicked => { UserState.selected-tool = ETool.SELECTION; }
+                    clicked_dropdown => {
+                        select-dropdown.show();
+                        UserState.selected-tool = ETool.SELECTION;
+                    }
+                }
+
+                VerticalLayout {
+                    max-width: 80px;
+                    spacing: Styles.bar-list-spacing;
+
+                    ImageButtonHorizontal {
+                        text: "Crop";
+                        icon: @image-url("../../icons/crop.png");
+                        focused: UserState.selected-tool == ETool.CROP;
+                        clicked => { UserState.selected-tool = ETool.CROP; }
+                    }
+                    ImageButtonHorizontal {
+                        text: "Resize";
+                        icon: @image-url("../../icons/resize.png");
+                        focused: UserState.selected-tool == ETool.RESIZE;
+                        clicked => { UserState.selected-tool = ETool.RESIZE; }
+                    }
+                    ImageButtonHorizontal {
+                        text: "Rotate";
+                        icon: @image-url("../../icons/rotate.png");
+                        focused: UserState.selected-tool == ETool.ROTATE;
+                        clicked => { UserState.selected-tool = ETool.ROTATE; }
+                    }
+                }
+            }
+        }
+
+        BarDivider {}
+
+        BarItemGroup {
+            title: "Tools";
+            GridLayout {
+                spacing: Styles.bar-padding;
+                padding-top: Styles.bar-padding;
+
+                Row {
+                    ImageButtonIcon{
+                        icon: @image-url("../../icons/pencil.png");
+                        focused: UserState.selected-tool == ETool.PENCIL;
+                        clicked => { UserState.selected-tool = ETool.PENCIL; }
+                    }
+                    ImageButtonIcon{
+                        icon: @image-url("../../icons/paint.png");
+                        focused: UserState.selected-tool == ETool.FILL;
+                        clicked => { UserState.selected-tool = ETool.FILL; }
+                    }
+                    ImageButtonIcon{
+                        icon: @image-url("../../icons/text.png");
+                        focused: UserState.selected-tool == ETool.TEXT;
+                        clicked => { UserState.selected-tool = ETool.TEXT; }
+                    }
+                }
+                Row {
+                    ImageButtonIcon{
+                        icon: @image-url("../../icons/eraser.png");
+                        focused: UserState.selected-tool == ETool.ERASER;
+                        clicked => { UserState.selected-tool = ETool.ERASER; }
+
+                    }
+                    ImageButtonIcon{
+                        icon: @image-url("../../icons/colorpicker.png");
+                        focused: UserState.selected-tool == ETool.DROPPER;
+                        clicked => { UserState.selected-tool = ETool.DROPPER; }
+                    }
+                    ImageButtonIcon{
+                        icon: @image-url("../../icons/magnify.png");
+                        focused: UserState.selected-tool == ETool.MAGNIFY;
+                        clicked => { UserState.selected-tool = ETool.MAGNIFY; }
+                    }
+                }
+            }
+        }
+
+        BarDivider {}
+
+        BarItemGroup {
+            title: "";
+            ImageButtonVerticalDropdown {
+                width: 60px;
+                text: "Brushes";
+            }
+        }
+
+        BarDivider {}
+
+        BarItemGroup {
+            title: "Shapes";
+
+            VerticalLayout {
+                max-width: 80px;
+                spacing: Styles.bar-list-spacing;
+
+                ImageButtonHorizontal {
+                    width: 90px;
+                    text: "Outline ▾";
+                    icon: @image-url("../../icons/shape-outline.png");
+                }
+                ImageButtonHorizontal {
+                    text: "Fill ▾";
+                    icon: @image-url("../../icons/shape-fill.png");
+                }
+            }
+        }
+
+        BarDivider {}
+
+        BarItemGroup {
+            title: "";
+
+            size-dropdown := PopupWindow {
+                y: size-dropdown-btn.y + size-dropdown-btn.height - Styles.bar-padding;
+                x: size-dropdown-btn.x;
+
+                BarDropdown {
+                    BarSizeDropdownItem { text: "1px"; size: 1px; }
+                    BarSizeDropdownItem { text: "2px"; size: 2px; }
+                    BarSizeDropdownItem { text: "3px"; size: 3px; }
+                    BarSizeDropdownItem { text: "4px"; size: 4px; }
+                }
+            }
+
+            size-dropdown-btn := ImageButtonVerticalDropdown {
+                text: "Size";
+                icon: @image-url("../../icons/size.png");
+
+                clicked_dropdown => {
+                    size-dropdown.show();
+                    size-dropdown-btn.focused1 = true;
+                    size-dropdown-btn.focused2 = true;
+                }
+            }
+        }
+
+        BarDivider {}
+
+        BarItemGroup {
+            title: "Colors";
+            HorizontalLayout {
+                ColorButtonVertical {
+                    colr: UserState.color_palette[UserState.selected_color_idxs[0]];
+                    text: "Color 1";
+                    focused: UserState.color_idx == 0;
+                    clicked => { UserState.color_idx = 0; }
+                }
+                ColorButtonVertical {
+                    colr: UserState.color_palette[UserState.selected_color_idxs[1]];
+                    text: "Color 2";
+                    focused: UserState.color_idx == 1;
+                    clicked => { UserState.color_idx = 1; }
+                }
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+
+                    Rectangle {
+                        width: (Styles.bar-small-icon-size + Styles.color-btn-spacing) * 10;
+
+                        for color[i] in UserState.color_palette: 
+                            ColorButton {
+                                x: mod(i, 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
+                                y: floor(i / 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
+                                colr: color;
+                                clicked => { UserState.selected_color_idxs[UserState.color_idx] = i; }
+                            }
+                    }
+                }
+
+                ImageButtonVertical {
+                    width: 57px;
+                    text: "Edit Colors";
+                    icon: @image-url("../../icons/edit-colors.png");
+                }
+            }
+        }
+
+        BarDivider {}
+
+        BarItemGroup {
+            title: "";
+            ImageButtonVertical {
+                width: 64px;
+                icon: @image-url("../../icons/about.png");
+                text: "About Program";
+
+                clicked => { about-window.show(); }
+            }
+
+            about-window := PopupWindow {
+                width: 500px;
+                height: 200px;
+                x: -300px;
+                close-on-click: false;
+
+                Rectangle {
+                    height: 100%;
+                    width: 100%;
+                    background: white;
+                    border-color: #ccc;
+                    border-width: 1px;
+
+                    drop-shadow-color: black;
+                    drop-shadow-offset-x: 0px;
+                    drop-shadow-offset-y: 2px;
+                    drop-shadow-blur: 4px;
+                }
+
+                VerticalLayout {
+                    padding: 16px;
+
+                    Text {
+                        font-size: 20px;
+                        text: "About Program";
+                        font-weight: 700;
+                        color: #333;
+                    }
+
+                    Text {
+                        color: #333;
+                        text: "LS paint: A FOSS MS paint clone.\n\n" +
+                            "Github: [TODO github link]\n\n" +
+                            "-- LICENSE: --\n" +
+                            "Copyright (C) 2024 Bowserinator\n" +
+                            "\n" +
+                            "This program is free software: you can redistribute it and/or modify\n" +
+                            "it under the terms of the GNU General Public License as published by\n" +
+                            "the Free Software Foundation, either version 3 of the License, or\n" +
+                            "(at your option) any later version.\n" +
+                            "\n" +
+                            "This program is distributed in the hope that it will be useful,\n" +
+                            "but WITHOUT ANY WARRANTY; without even the implied warranty of\n" +
+                            "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n" +
+                            "GNU General Public License for more details.\n" +
+                            "\n" +
+                            "You should have received a copy of the GNU General Public License\n" +
+                            "along with this program. If not, see <https://www.gnu.org/licenses/>.\n";
+                    }
+                    AboutSlint {}
+
+                    StandardButton {
+                        kind: ok;
+                        clicked => { about-window.close(); }
+                    }
+                }
+            }
+        }
+    }
+}

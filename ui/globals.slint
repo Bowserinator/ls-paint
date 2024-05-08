@@ -1,0 +1,20 @@
+export enum ETool {
+    NONE, PASTE, SELECTION, CROP, RESIZE, ROTATE,
+    PENCIL, FILL, TEXT, ERASER, DROPPER, MAGNIFY
+}
+export enum ESelectionType { RECTANGULAR, FREEHAND, POLYGON }
+
+export global UserState  {
+   // in-out property<color> primary: blue;
+    //in-out property<color> secondary: green;
+    callback on-test();
+
+    callback mouse_click(length, length);
+
+    in property <[color]> color_palette;
+    in-out property <int> color_idx: 0;
+    in-out property <[int]> selected_color_idxs: [0, 10];
+
+    in-out property <ETool> selected-tool: PENCIL;
+    in-out property <ESelectionType> selection-type: RECTANGULAR;
+}

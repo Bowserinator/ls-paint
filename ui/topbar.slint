@@ -1,0 +1,25 @@
+import { HorizontalBox, VerticalBox, Palette, Button, TabWidget } from "std-widgets.slint";
+import { UserState } from "globals.slint";
+
+import { ViewBar } from "./bar/bar-view.slint";
+import { HomeBar } from "./bar/bar-home.slint";
+
+export component TopBar inherits Rectangle {
+    Rectangle {
+        background: red;
+    }
+
+    HorizontalLayout {
+        TabWidget {
+            Tab {
+                title: "First";
+                HomeBar {}
+                
+            }
+            Tab {
+                title: "Second";
+                ViewBar {}
+            }
+        }
+    }
+}

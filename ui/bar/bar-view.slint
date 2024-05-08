@@ -1,0 +1,17 @@
+import { Bar, BarDivider, BarItemGroup } from "bar.slint";
+import { ImageButtonVertical } from "../components/image-buttons.slint";
+import { Button } from "std-widgets.slint";
+
+export component ViewBar inherits Bar {
+    HorizontalLayout {
+        BarItemGroup {
+            title: "Zoom";
+            ImageButtonVertical { text: "Paste"; }
+        }
+        BarDivider {}
+        BarItemGroup {
+            title: "Show or Hide";
+            Button { text: "Paste"; }
+        }
+    }
+}

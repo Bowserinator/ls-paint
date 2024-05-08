@@ -1,0 +1,46 @@
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Styles } from "../styles.slint";
+
+export component Bar inherits Rectangle {
+    min-height: Styles.bar-height;
+    height: Styles.bar-height;
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+
+    border-radius: 0;
+    background: #f5f6f7;
+    border-width: 0;
+
+    visible: root.width > 100px;
+}
+
+export component BarDivider inherits Rectangle {
+    height: 90px;
+    width: 2px;
+    y: (Styles.bar-height - root.height) / 2;
+    background: #eee;
+}
+
+export component BarItemGroup {  
+    in-out property <string> title;
+
+    height: Styles.bar-height;
+    min-width: 45px;
+
+    HorizontalLayout {
+        padding: Styles.bar-padding;
+        padding-top: 0;
+        height: Styles.bar-height - Styles.bar-font-size - 3 * Styles.bar-padding;
+
+        @children
+    }
+
+    Text {
+        text: title;
+        y: Styles.bar-height - Styles.bar-font-size - 2 * Styles.bar-padding;
+        color: #555;
+        font-size: Styles.bar-font-size;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+}
