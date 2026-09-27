@@ -7,7 +7,11 @@ export * from "globals.slint";
 export component AppWindow inherits Window {
     in-out property<int> counter: 42;
 
-    in property <image> canvas_source <=> canvas.source;
+    // in property <image> canvas_source <=> canvas.source;
+
+    in property <image> texture <=> canvas.source;
+    out property <int> requested-texture-width: canvas.width/1px;
+    out property <int> requested-texture-height: canvas.height/1px;
 
     callback request-increase-value();
 
@@ -51,6 +55,8 @@ export component AppWindow inherits Window {
                 canvas := Image {
                     image-rendering: pixelated;
                     x: 4px; y: 4px;
+                    width: 200px;
+                    height: 200px;
                     // image-fit default is `contain` when in layout, preserving aspect ratio
                 }
             }

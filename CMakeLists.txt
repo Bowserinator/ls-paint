@@ -16,8 +16,12 @@ if (NOT Slint_FOUND)
     FetchContent_MakeAvailable(Slint)
 endif (NOT Slint_FOUND)
 
+find_package(OpenGL REQUIRED)
+include_directories(${OPENGL_INCLUDE_DIRS})
+find_package(GLEW REQUIRED)
+
 add_executable(ls_paint src/main.cpp)
-target_link_libraries(ls_paint PRIVATE Slint::Slint)
+target_link_libraries(ls_paint ${OPENGL_LIBRARIES} Slint::Slint glfw3 GLEW::glew)
 slint_target_sources(ls_paint ui/appwindow.slint)
 
 # On Windows, copy the Slint DLL next to the application binary so that it's found.
