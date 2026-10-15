@@ -1,30 +1,77 @@
 cmake_minimum_required(VERSION 3.21)
 project(ls_paint LANGUAGES CXX)
 
-find_package(Slint QUIET)
-if (NOT Slint_FOUND)
-    message("Slint could not be located in the CMake module search path. Downloading it from Git and building it locally")
-    include(FetchContent)
-    FetchContent_Declare(
-        Slint
-        GIT_REPOSITORY https://github.com/slint-ui/slint.git
-        # `release/1` will auto-upgrade to the latest Slint >= 1.0.0 and < 2.0.0
-        # `release/1.0` will auto-upgrade to the latest Slint >= 1.0.0 and < 1.1.0
-        GIT_TAG release/1
-        SOURCE_SUBDIR api/cpp
-    )
-    FetchContent_MakeAvailable(Slint)
-endif (NOT Slint_FOUND)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(OpenGL REQUIRED)
-include_directories(${OPENGL_INCLUDE_DIRS})
-find_package(GLEW REQUIRED)
+include(FetchContent)
 
-add_executable(ls_paint src/main.cpp)
-target_link_libraries(ls_paint ${OPENGL_LIBRARIES} Slint::Slint glfw3 GLEW::glew)
+set(SLINT_CARGO_RELEASE_PROFILE ON CACHE BOOL "Force Slint Cargo release profile" FORCE)
+
+FetchContent_Declare(
+    Slint
+    GIT_REPOSITORY https://github.com/slint-ui/slint.git
+    GIT_TAG        v1.17.1
+    SOURCE_SUBDIR  api/cpp
+)
+
+set(SLINT_FEATURE_INTERPRETER OFF CACHE BOOL "" FORCE)
+set(SLINT_FEATURE_LIVE_PREVIEW OFF CACHE BOOL "" FORCE)
+set(SLINT_FEATURE_RENDERER_FEMTOVG OFF CACHE BOOL "" FORCE)
+set(SLINT_FEATURE_RENDERER_SOFTWARE ON CACHE BOOL "" FORCE)
+set(SLINT_FEATURE_RENDERER_SKIA OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(Slint)
+
+# Everything that does not touch Slint, so tests can link it without the GUI.
+add_library(lsp_core STATIC
+    src/app/app_controller.cpp
+    src/app/input_router.cpp
+    src/brushes/brush_engine.cpp
+    src/core/blend_modes.cpp
+    src/core/canvas_document.cpp
+    src/core/compositor.cpp
+    src/core/pixel_buffer.cpp
+    src/history/history_stack.cpp
+    src/history/commands/paint_stroke_command.cpp
+    src/history/commands/selection_edit_command.cpp
+    src/selection/selection_mask.cpp
+    src/selection/selection_ops.cpp
+    src/tools/brush_stroke_tool.cpp
+    src/tools/dropper_tool.cpp
+    src/tools/fill_tool.cpp
+    src/tools/selection_tool.cpp
+    src/tools/stroke_recorder.cpp
+    src/tools/tool_registry.cpp
+    src/ui/shortcuts.cpp
+)
+target_include_directories(lsp_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
+
+add_executable(ls_paint
+    src/main.cpp
+    src/render/slint_bridge.cpp
+    src/ui/ui_state.cpp
+)
+target_include_directories(ls_paint PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(ls_paint PRIVATE lsp_core Slint::Slint)
 slint_target_sources(ls_paint ui/appwindow.slint)
 
-# On Windows, copy the Slint DLL next to the application binary so that it's found.
+if(MSVC)
+    foreach(target lsp_core ls_paint)
+        target_compile_options(${target} PRIVATE /W4)
+    endforeach()
+else()
+    foreach(target lsp_core ls_paint)
+        target_compile_options(${target} PRIVATE -Wall -Wextra)
+    endforeach()
+endif()
+
 if (WIN32)
     add_custom_command(TARGET ls_paint POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_RUNTIME_DLLS:ls_paint> $<TARGET_FILE_DIR:ls_paint> COMMAND_EXPAND_LISTS)
+endif()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
 endif()

@@ -1,23 +1,35 @@
 import { Button, VerticalBox, ScrollView } from "std-widgets.slint";
 import { TopBar } from "topbar.slint";
+import { StatusBar } from "statusbar.slint";
+import { CanvasResizeHandle } from "components/canvas-resize-handle.slint";
+import { CanvasShadow } from "components/canvas-shadow.slint";
 
-import { UserState } from "globals.slint";
+import { UserState, DocumentState, ETool, EContentTransform, ZoomScale } from "globals.slint";
 export * from "globals.slint";
 
 export component AppWindow inherits Window {
-    in-out property<int> counter: 42;
-
-    // in property <image> canvas_source <=> canvas.source;
-
     in property <image> texture <=> canvas.source;
-    out property <int> requested-texture-width: canvas.width/1px;
-    out property <int> requested-texture-height: canvas.height/1px;
 
-    callback request-increase-value();
+    property <length> canvas-origin: 4px;
+    // Document size: canvas-w/h are what the screen shows at the current
+    // zoom, doc-w/h the pixels the document actually owns.
+    property <length> doc-w: DocumentState.canvas-width * 1px;
+    property <length> doc-h: DocumentState.canvas-height * 1px;
+    property <length> canvas-w: root.doc-w * UserState.zoom;
+    property <length> canvas-h: root.doc-h * UserState.zoom;
+    property <length> resize-dx;
+    property <length> resize-dy;
+    // Scratch for set-zoom: how far the viewport slides per pixel of cursor
+    // distance, i.e. 1 - new zoom / old zoom.
+    property <float> zoom-anchor;
+    // Ctrl+wheel travel waiting to become a notch: a normal wheel notch is
+    // 60px and steps at once, a trackpad's flood of small deltas banks up
+    // here until it too has earned one step.
+    property <length> zoom-acc: 0px;
 
     // Window sizes
-    min-height: 200px;
-    min-width: 200px;
+    min-height: 240px;
+    min-width: 620px;
 
     preferred-height: 600px;
     preferred-width: 900px;
@@ -26,39 +38,362 @@ export component AppWindow inherits Window {
     default-font-family: "Segoe UI";
     title: "LS Paint";
 
-    VerticalLayout {
-        alignment: start;
-        bar := TopBar{}
+    function resize-canvas(dx: length, dy: length) {
+        // The grips report screen deltas; the document only grows by their
+        // un-zoomed worth.
+        UserState.canvas-resize(max(1px, root.doc-w + dx / UserState.zoom),
+                                max(1px, root.doc-h + dy / UserState.zoom));
+    }
 
-        ScrollView {
-            height: 100%;
-            min-height: 100px;
+    // Where every zoom change funnels through: clamp the scale to the ends
+    // of the ladder, turn the view around the point under (px, py) so the
+    // document pixel there stays put, and walk the status bar's slider to
+    // the new notch. The zoom changes first because the new canvas size is
+    // what the viewport clamp below has to respect.
+    function set-zoom(target: float, px: length, py: length) {
+        let z = clamp(target, 0.125, 7.0);
+        root.zoom-anchor = 1.0 - z / UserState.zoom;
+        UserState.zoom = z;
+        scroll.viewport-x = min(0px, max(min(0px, scroll.visible-width - scroll.viewport-width),
+                                         scroll.viewport-x + px * root.zoom-anchor));
+        scroll.viewport-y = min(0px, max(min(0px, scroll.visible-height - scroll.viewport-height),
+                                         scroll.viewport-y + py * root.zoom-anchor));
+        status-bar.slider-pos = ZoomScale.pct-to-pos(z * 100);
+    }
 
-            Rectangle { background: #c5cfdf; }
+    // Ctrl+wheel zooms the view around the point under the cursor; over the
+    // gray around the paper that point is the canvas' top-left (0, 0), so
+    // the viewport only gets clamped, never slid.
+    function apply-zoom(px: length, py: length, factor: float) {
+        root.set-zoom(UserState.zoom * factor, px, py);
+    }
 
-            touch := TouchArea {
+    // The -/+ boxes on the status bar: one notch along the ladder at a
+    // time, turning the view around the centre of what is on screen. From
+    // between two notches the button heads for the next one outside the
+    // current zoom, and at either end the clamp keeps the scale put.
+    function step-zoom(dir: int) {
+        let here = ZoomScale.pct-to-pos(UserState.zoom * 100);
+        let next = dir < 0 ? ceil(here) - 1 : floor(here) + 1;
+        root.set-zoom(ZoomScale.pos-to-pct(next) / 100,
+                      scroll.visible-width / 2, scroll.visible-height / 2);
+    }
 
-                // clicked, double-clicked, moved
-                // https://releases.slint.dev/1.5.1/docs/slint/src/language/builtins/elements.html#id26
-                clicked => {
-                    UserState.mouse_click(touch.mouse-x - self.x, touch.mouse-y - self.y);
+    // Shared by the paper and the gray around it. With a zoom modifier held
+    // the wheel becomes one notch per 60px of travel: a lone notch counts
+    // immediately, a trackpad's stream of small deltas banks up before it
+    // steps (so a flick can never slam the zoom to its ends), and a
+    // horizontal swipe steps too. Without the modifier the wheel pans the
+    // view directly: handing it to the ScrollView's Flickable instead would
+    // arm that Flickable's 800ms scroll filter, which then swallows every
+    // wheel near the same spot — so ctrl+wheel went dead right after a
+    // plain scroll, which is what made zooming feel unreliable.
+    function handle-wheel(event: PointerScrollEvent, px: length, py: length) {
+        if (event.modifiers.control || event.modifiers.meta) {
+            let d = event.delta-y != 0px ? event.delta-y : event.delta-x;
+            root.zoom-acc = clamp(root.zoom-acc + d, -60px, 60px);
+            if (root.zoom-acc >= 60px) {
+                root.zoom-acc = 0px;
+                root.apply-zoom(px, py, 1.25);
+            } else if (root.zoom-acc <= -60px) {
+                root.zoom-acc = 0px;
+                root.apply-zoom(px, py, 0.8);
+            }
+        } else {
+            root.zoom-acc = 0px;
+            let dx = event.modifiers.shift ? event.delta-y : event.delta-x;
+            let dy = event.modifiers.shift ? event.delta-x : event.delta-y;
+            scroll.viewport-x = min(0px, max(min(0px, scroll.visible-width - scroll.viewport-width),
+                                             scroll.viewport-x + dx));
+            scroll.viewport-y = min(0px, max(min(0px, scroll.visible-height - scroll.viewport-height),
+                                             scroll.viewport-y + dy));
+        }
+    }
+
+    init => { focus-scope.focus(); }
+
+    focus-scope := FocusScope {
+        width: 100%;
+        height: 100%;
+
+        key-pressed(event) => {
+            UserState.key-pressed(event.text, event.modifiers.control || event.modifiers.meta, event.modifiers.shift);
+            accept
+        }
+
+        VerticalLayout {
+            bar := TopBar{
+                vertical-stretch: 0;
+            }
+
+            Rectangle {
+                background: #c5cfdf;
+                vertical-stretch: 1;
+                min-height: 100px;
+
+                scroll := ScrollView {
+                    viewport-width: corner-handle.x + corner-handle.width + root.canvas-origin;
+                    viewport-height: corner-handle.y + corner-handle.height + root.canvas-origin;
+
+                    // Fake drop shadow: stacked translucent frames around the
+                    // paper, deepest where they overlap next to the page.
+                    for layer in [9.0, 6.0, 4.0, 2.5] : CanvasShadow {
+                        x: root.canvas-origin - layer * 1px;
+                        y: root.canvas-origin - layer * 1px;
+                        width: root.canvas-w + 2.0 * layer * 1px;
+                        height: root.canvas-h + 2.5 * layer * 1px;
+                        spread: layer * 1px;
+                        drop: 1.5 * layer * 1px;
+                    }
+
+                    // Ctrl+wheel over the gray around the paper zooms too,
+                    // with no point under the wheel to hold in place, so the
+                    // viewport only gets clamped, never slid. Plain wheel
+                    // is rejected so the Flickable keeps panning. Hovering
+                    // here means the cursor is off the paper, which the
+                    // status bar's readout reflects.
+                    workspace-touch := TouchArea {
+                        x: 0px;
+                        y: 0px;
+                        width: max(scroll.visible-width, scroll.viewport-width);
+                        height: max(scroll.visible-height, scroll.viewport-height);
+
+                        pointer-event(event) => {
+                            UserState.cursor-on-canvas = false;
+                        }
+
+                        scroll-event(event) => {
+                            root.handle-wheel(event, 0px, 0px);
+                            accept
+                        }
+                    }
+
+                    // The selection tool owns the right-click menu. It is shown
+                    // programmatically because the TouchArea child grabs the
+                    // press before the ContextMenuArea would ever see it.
+                    canvas-area := ContextMenuArea {
+                        x: root.canvas-origin;
+                        y: root.canvas-origin;
+                        width: root.canvas-w;
+                        height: root.canvas-h;
+
+                        enabled: UserState.selected-tool == ETool.SELECTION;
+
+                        // Submenus keep the menu short: rotation and flipping
+                        // are each one line here instead of five.
+                        Menu {
+                            MenuItem {
+                                title: @tr("Cut");
+                                enabled: DocumentState.has-selection;
+                                activated => { UserState.cut-selection(); }
+                            }
+                            MenuItem {
+                                title: @tr("Copy");
+                                enabled: DocumentState.has-selection;
+                                activated => { UserState.copy-selection(); }
+                            }
+                            MenuItem {
+                                title: @tr("Paste");
+                                enabled: DocumentState.has-clipboard;
+                                activated => { UserState.paste-selection(); }
+                            }
+                            MenuSeparator {}
+                            Menu {
+                                title: @tr("Rotate");
+                                MenuItem {
+                                    title: @tr("90° CW");
+                                    enabled: DocumentState.has-selection;
+                                    activated => { UserState.transform-selection-content(EContentTransform.ROTATE_CW90); }
+                                }
+                                MenuItem {
+                                    title: @tr("90° CCW");
+                                    enabled: DocumentState.has-selection;
+                                    activated => { UserState.transform-selection-content(EContentTransform.ROTATE_CCW90); }
+                                }
+                                MenuItem {
+                                    title: @tr("180°");
+                                    enabled: DocumentState.has-selection;
+                                    activated => { UserState.transform-selection-content(EContentTransform.ROTATE_180); }
+                                }
+                            }
+                            Menu {
+                                title: @tr("Flip");
+                                MenuItem {
+                                    title: @tr("Horizontal");
+                                    enabled: DocumentState.has-selection;
+                                    activated => { UserState.transform-selection-content(EContentTransform.FLIP_HORIZONTAL); }
+                                }
+                                MenuItem {
+                                    title: @tr("Vertical");
+                                    enabled: DocumentState.has-selection;
+                                    activated => { UserState.transform-selection-content(EContentTransform.FLIP_VERTICAL); }
+                                }
+                            }
+                            MenuSeparator {}
+                            MenuItem {
+                                title: @tr("Select all");
+                                activated => { UserState.select-all(); }
+                            }
+                            MenuItem {
+                                title: @tr("Deselect");
+                                enabled: DocumentState.has-selection;
+                                activated => { UserState.clear-selection(); }
+                            }
+                        }
+
+                        touch := TouchArea {
+                            width: 100%;
+                            height: 100%;
+
+                            pointer-event(event) => {
+                                // Every hover or press over the paper pins
+                                // the document pixel under the cursor for
+                                // the status bar to read out.
+                                UserState.cursor-on-canvas = true;
+                                UserState.cursor-x = touch.mouse-x / UserState.zoom / 1px;
+                                UserState.cursor-y = touch.mouse-y / UserState.zoom / 1px;
+                                if (event.kind == PointerEventKind.down) {
+                                    focus-scope.focus();
+                                    if (UserState.selected-tool == ETool.MAGNIFY) {
+                                        // A view tool, not a document tool: the press
+                                        // zooms around the click point and never reaches
+                                        // the C++ registry, so no stroke can start and no
+                                        // floating selection gets baked.
+                                        root.apply-zoom(touch.mouse-x, touch.mouse-y,
+                                                        event.button == PointerEventButton.right
+                                                            || event.modifiers.alt ? 0.8 : 1.25);
+                                    } else if (event.button == PointerEventButton.right
+                                        && UserState.selected-tool == ETool.SELECTION) {
+                                        // The menu takes over input from here on, so the press is
+                                        // not handed to the tool: a half-finished stroke would
+                                        // never see its button-up and would swallow the next click.
+                                        canvas-area.show({ x: touch.mouse-x, y: touch.mouse-y });
+                                    } else {
+                                        UserState.pointer-down(touch.mouse-x / UserState.zoom,
+                                                               touch.mouse-y / UserState.zoom,
+                                                               event.button == PointerEventButton.right);
+                                    }
+                                } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                                    UserState.pointer-up(touch.mouse-x / UserState.zoom, touch.mouse-y / UserState.zoom);
+                                }
+                            }
+
+                            moved => {
+                                UserState.pointer-move(touch.mouse-x / UserState.zoom, touch.mouse-y / UserState.zoom);
+                            }
+
+                            // The wheel is always ours: zoom with a
+                            // modifier, pan without, never left to the
+                            // Flickable's scroll filter.
+                            scroll-event(event) => {
+                                root.handle-wheel(event, touch.mouse-x, touch.mouse-y);
+                                accept
+                            }
+
+                        canvas := Image {
+                            // Shrunk pages are filtered linearly so zoomed-out
+                            // pixels blend instead of aliasing; at 1x and above
+                            // every document pixel stays a crisp block.
+                            image-rendering: UserState.zoom < 1.0
+                                ? ImageRendering.smooth
+                                : ImageRendering.pixelated;
+                            width: 100%;
+                            height: 100%;
+                        }
+                        }
+                    }
+
+                    Rectangle {
+                        x: root.canvas-origin;
+                        y: root.canvas-origin;
+                        width: max(1px, root.canvas-w + root.resize-dx);
+                        height: max(1px, root.canvas-h + root.resize-dy);
+                        border-width: 1px;
+                        border-color: black;
+                        visible: right-handle.active || bottom-handle.active || corner-handle.active;
+                    }
+
+                    // The outline of an active selection: alternating light and
+                    // dark runs covering its border, rebuilt from C++ as the
+                    // phase advances so the pattern crawls around it.
+                    // Each run is a single border cell. Its home follows the
+                    // zoom, but its size does not: the ants stay one screen
+                    // pixel at every magnification instead of thickening.
+                    for dash in DocumentState.ants-light : Rectangle {
+                        x: root.canvas-origin + dash.x * UserState.zoom * 1px;
+                        y: root.canvas-origin + dash.y * UserState.zoom * 1px;
+                        width: dash.w * 1px;
+                        height: dash.h * 1px;
+                        background: white;
+                    }
+
+                    for dash in DocumentState.ants-dark : Rectangle {
+                        x: root.canvas-origin + dash.x * UserState.zoom * 1px;
+                        y: root.canvas-origin + dash.y * UserState.zoom * 1px;
+                        width: dash.w * 1px;
+                        height: dash.h * 1px;
+                        background: black;
+                    }
+
+                    // Resize grips sit on the selection's border. They are pure
+                    // visuals: the press is hit-tested by the selection tool
+                    // through the canvas touch area, so an element here must
+                    // not grab it. Their position follows the zoom but their
+                    // size stays put: a grip is a control, not a marking.
+                    for grip in DocumentState.grips : Rectangle {
+                        x: root.canvas-origin + grip.x * UserState.zoom * 1px - 3.5px;
+                        y: root.canvas-origin + grip.y * UserState.zoom * 1px - 3.5px;
+                        width: 7px;
+                        height: 7px;
+                        background: white;
+                        border-width: 1px;
+                        border-color: black;
+                    }
+
+                    right-handle := CanvasResizeHandle {
+                        x: root.canvas-origin + root.canvas-w + 2px;
+                        y: root.canvas-origin + (root.canvas-h - self.height) / 2;
+                        affects-width: true;
+                        cursor: MouseCursor.ew-resize;
+
+                        dragged(dx, dy) => { root.resize-dx = dx; root.resize-dy = dy; }
+                        released(dx, dy) => { root.resize-canvas(dx, dy); }
+                    }
+
+                    bottom-handle := CanvasResizeHandle {
+                        x: root.canvas-origin + (root.canvas-w - self.width) / 2;
+                        y: root.canvas-origin + root.canvas-h + 2px;
+                        affects-height: true;
+                        cursor: MouseCursor.ns-resize;
+
+                        dragged(dx, dy) => { root.resize-dx = dx; root.resize-dy = dy; }
+                        released(dx, dy) => { root.resize-canvas(dx, dy); }
+                    }
+
+                    corner-handle := CanvasResizeHandle {
+                        x: root.canvas-origin + root.canvas-w + 2px;
+                        y: root.canvas-origin + root.canvas-h + 2px;
+                        affects-width: true;
+                        affects-height: true;
+                        cursor: MouseCursor.nwse-resize;
+
+                        dragged(dx, dy) => { root.resize-dx = dx; root.resize-dy = dy; }
+                        released(dx, dy) => { root.resize-canvas(dx, dy); }
+                    }
+                }
+            }
+
+            // The bottom strip: pointer position, selection size, paper size,
+            // two blanks, and the zoom controls on the right.
+            status-bar := StatusBar {
+                vertical-stretch: 0;
+
+                zoom-chosen(pct) => {
+                    root.set-zoom(pct / 100,
+                                  scroll.visible-width / 2, scroll.visible-height / 2);
                 }
 
-                double-clicked() => {
-                    UserState.mouse_click(touch.mouse-x - self.x, touch.mouse-y - self.y);
-                }
-
-                moved() => {
-                    UserState.mouse_click(touch.mouse-x - self.x, touch.mouse-y - self.y);
-                }
-
-                canvas := Image {
-                    image-rendering: pixelated;
-                    x: 4px; y: 4px;
-                    width: 200px;
-                    height: 200px;
-                    // image-fit default is `contain` when in layout, preserving aspect ratio
-                }
+                zoom-step(dir) => { root.step-zoom(dir); }
             }
         }
     }

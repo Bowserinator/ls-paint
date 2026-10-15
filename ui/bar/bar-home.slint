@@ -3,7 +3,7 @@ import { ImageButtonVertical, ImageButtonHorizontal, ImageButtonIcon, ImageButto
 import { BarDropdown, BarDropdownItem, BarDropdownTitle, BarDropdownDivider, BarSizeDropdownItem } from "../components/bar-dropdown.slint";
 import { StandardButton, AboutSlint } from "std-widgets.slint";
 import { Styles } from "../styles.slint";
-import { UserState, ETool, ESelectionType } from "../globals.slint";
+import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions } from "../globals.slint";
 
 export component HomeBar inherits Bar {
     HorizontalLayout {
@@ -17,11 +17,12 @@ export component HomeBar inherits Bar {
                 BarDropdown {
                     BarDropdownItem {
                         icon: @image-url("../../icons/paste.png"); text: "Paste";
-                        clicked => { UserState.selected-tool = ETool.NONE; }
+                        enabled: DocumentState.has-clipboard;
+                        clicked => { UserState.paste-selection(); }
                     }
                     BarDropdownItem {
                         icon: @image-url("../../icons/paste.png"); text: "Paste from file";
-                        clicked => { UserState.selected-tool = ETool.NONE; }
+                        enabled: false;
                     }
                 }
             }
@@ -30,14 +31,9 @@ export component HomeBar inherits Bar {
                 clipboard-dropdown-btn := ImageButtonVerticalDropdown {
                     text: "Paste";
                     icon: @image-url("../../icons/paste.png");
-                    focused1: UserState.selected-tool == ETool.PASTE;
-                    focused2: UserState.selected-tool == ETool.PASTE;
 
-                    clicked => { UserState.selected-tool = ETool.PASTE; }
-                    clicked_dropdown => {
-                        UserState.selected-tool = ETool.PASTE;
-                        clipboard-dropdown.show();
-                    }
+                    clicked => { UserState.paste-selection(); }
+                    clicked_dropdown => { clipboard-dropdown.show(); }
                 }
 
                 VerticalLayout {
@@ -47,10 +43,14 @@ export component HomeBar inherits Bar {
                     ImageButtonHorizontal {
                         icon: @image-url("../../icons/cut.png");
                         text: "Cut";
+                        enabled: DocumentState.has-selection;
+                        clicked => { UserState.cut-selection(); }
                     }
                     ImageButtonHorizontal {
                         icon: @image-url("../../icons/copy.png");
                         text: "Copy";
+                        enabled: DocumentState.has-selection;
+                        clicked => { UserState.copy-selection(); }
                     }
                 }
             }
@@ -59,6 +59,35 @@ export component HomeBar inherits Bar {
 
         BarItemGroup {
             title: "Image";
+
+            rotate-dropdown := PopupWindow {
+                y: rotate-btn.y + rotate-btn.height;
+                x: rotate-btn.x;
+
+                BarDropdown {
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/rotate.png"); text: "Rotate 90° CW";
+                        clicked => { UserState.rotate(ERotation.CW90); }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/rotate.png"); text: "Rotate 90° CCW";
+                        clicked => { UserState.rotate(ERotation.CCW90); }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/rotate.png"); text: "Rotate 180°";
+                        clicked => { UserState.rotate(ERotation.R180); }
+                    }
+                    BarDropdownDivider {}
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/rotate.png"); text: "Flip horizontal";
+                        clicked => { UserState.flip-horizontal(); }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/rotate.png"); text: "Flip vertical";
+                        clicked => { UserState.flip-vertical(); }
+                    }
+                }
+            }
 
             select-dropdown := PopupWindow {
                 y: select-dropdown-btn.y + select-dropdown-btn.height - Styles.bar-padding;
@@ -71,12 +100,17 @@ export component HomeBar inherits Bar {
                     BarDropdownItem {
                         icon: @image-url("../../icons/selection.png"); text: "Rectangular selection";
                         focused: UserState.selection-type == ESelectionType.RECTANGULAR;
-                        clicked => { UserState.selection-type = ESelectionType.RECTANGULAR; }
+                        clicked => { UserState.select-shape(ESelectionType.RECTANGULAR); }
                     }
                     BarDropdownItem {
                         icon: @image-url("../../icons/free-selection.png"); text: "Free-hand selection";
                         focused: UserState.selection-type == ESelectionType.FREEHAND;
-                        clicked => { UserState.selection-type = ESelectionType.FREEHAND; }
+                        clicked => { UserState.select-shape(ESelectionType.FREEHAND); }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/selection.png"); text: "Polygon selection";
+                        focused: UserState.selection-type == ESelectionType.POLYGON;
+                        clicked => { UserState.select-shape(ESelectionType.POLYGON); }
                     }
 
                     BarDropdownDivider {}
@@ -85,15 +119,19 @@ export component HomeBar inherits Bar {
 
                     BarDropdownItem {
                         icon: @image-url("../../icons/select-all.png"); text: "Select all";
+                        clicked => { UserState.select-all(); }
                     }
                     BarDropdownItem {
                         icon: @image-url("../../icons/invert-selection.png"); text: "Invert selection";
+                        clicked => { UserState.invert-selection(); }
                     }
                     BarDropdownItem {
                         icon: @image-url("../../icons/clear-selection.png"); text: "Clear selection";
+                        clicked => { UserState.clear-selection(); }
                     }
                     BarDropdownItem {
                         icon: @image-url("../../icons/transparent-selection.png"); text: "Transparent selection";
+                        clicked => { UserState.transparent-selection(); }
                     }
                 }
             }
@@ -104,7 +142,7 @@ export component HomeBar inherits Bar {
                     icon: 
                         UserState.selection-type == ESelectionType.RECTANGULAR ? @image-url("../../icons/selection.png") :
                         UserState.selection-type == ESelectionType.FREEHAND ? @image-url("../../icons/free-selection.png") :
-                        @image-url("../../icons/selection.png"); // Default
+                        @image-url("../../icons/selection.png");
                     focused1: UserState.selected-tool == ETool.SELECTION;
                     focused2: UserState.selected-tool == ETool.SELECTION;
 
@@ -122,8 +160,8 @@ export component HomeBar inherits Bar {
                     ImageButtonHorizontal {
                         text: "Crop";
                         icon: @image-url("../../icons/crop.png");
-                        focused: UserState.selected-tool == ETool.CROP;
-                        clicked => { UserState.selected-tool = ETool.CROP; }
+                        enabled: DocumentState.has-selection;
+                        clicked => { UserState.crop-to-selection(); }
                     }
                     ImageButtonHorizontal {
                         text: "Resize";
@@ -131,11 +169,10 @@ export component HomeBar inherits Bar {
                         focused: UserState.selected-tool == ETool.RESIZE;
                         clicked => { UserState.selected-tool = ETool.RESIZE; }
                     }
-                    ImageButtonHorizontal {
-                        text: "Rotate";
+                    rotate-btn := ImageButtonHorizontal {
+                        text: "Rotate ▾";
                         icon: @image-url("../../icons/rotate.png");
-                        focused: UserState.selected-tool == ETool.ROTATE;
-                        clicked => { UserState.selected-tool = ETool.ROTATE; }
+                        clicked => { rotate-dropdown.show(); }
                     }
                 }
             }
@@ -192,7 +229,7 @@ export component HomeBar inherits Bar {
         BarItemGroup {
             title: "";
             ImageButtonVerticalDropdown {
-                width: 60px;
+                width: 80px;
                 text: "Brushes";
             }
         }
@@ -228,10 +265,34 @@ export component HomeBar inherits Bar {
                 x: size-dropdown-btn.x;
 
                 BarDropdown {
-                    BarSizeDropdownItem { text: "1px"; size: 1px; }
-                    BarSizeDropdownItem { text: "2px"; size: 2px; }
-                    BarSizeDropdownItem { text: "3px"; size: 3px; }
-                    BarSizeDropdownItem { text: "4px"; size: 4px; }
+                    BarSizeDropdownItem {
+                        text: "1px"; size: 1px;
+                        clicked => { ToolOptions.brush-size = self.size; }
+                    }
+                    BarSizeDropdownItem {
+                        text: "2px"; size: 2px;
+                        clicked => { ToolOptions.brush-size = self.size; }
+                    }
+                    BarSizeDropdownItem {
+                        text: "3px"; size: 3px;
+                        clicked => { ToolOptions.brush-size = self.size; }
+                    }
+                    BarSizeDropdownItem {
+                        text: "4px"; size: 4px;
+                        clicked => { ToolOptions.brush-size = self.size; }
+                    }
+                    BarSizeDropdownItem {
+                        text: "5px"; size: 5px;
+                        clicked => { ToolOptions.brush-size = self.size; }
+                    }
+                    BarSizeDropdownItem {
+                        text: "8px"; size: 8px;
+                        clicked => { ToolOptions.brush-size = self.size; }
+                    }
+                    BarSizeDropdownItem {
+                        text: "10px"; size: 10px;
+                        clicked => { ToolOptions.brush-size = self.size; }
+                    }
                 }
             }
 
@@ -253,13 +314,13 @@ export component HomeBar inherits Bar {
             title: "Colors";
             HorizontalLayout {
                 ColorButtonVertical {
-                    colr: UserState.color_palette[UserState.selected_color_idxs[0]];
+                    colr: UserState.primary-color;
                     text: "Color 1";
                     focused: UserState.color_idx == 0;
                     clicked => { UserState.color_idx = 0; }
                 }
                 ColorButtonVertical {
-                    colr: UserState.color_palette[UserState.selected_color_idxs[1]];
+                    colr: UserState.secondary-color;
                     text: "Color 2";
                     focused: UserState.color_idx == 1;
                     clicked => { UserState.color_idx = 1; }
@@ -277,7 +338,13 @@ export component HomeBar inherits Bar {
                                 x: mod(i, 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
                                 y: floor(i / 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
                                 colr: color;
-                                clicked => { UserState.selected_color_idxs[UserState.color_idx] = i; }
+                                clicked => {
+                                    if (UserState.color_idx == 0) {
+                                        UserState.primary-color = color;
+                                    } else {
+                                        UserState.secondary-color = color;
+                                    }
+                                }
                             }
                     }
                 }
@@ -295,7 +362,7 @@ export component HomeBar inherits Bar {
         BarItemGroup {
             title: "";
             ImageButtonVertical {
-                width: 64px;
+                width: 80px;
                 icon: @image-url("../../icons/about.png");
                 text: "About Program";
 
@@ -306,7 +373,7 @@ export component HomeBar inherits Bar {
                 width: 500px;
                 height: 200px;
                 x: -300px;
-                close-on-click: false;
+                close-policy: no-auto-close;
 
                 Rectangle {
                     height: 100%;

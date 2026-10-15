@@ -5,19 +5,15 @@ import { ViewBar } from "./bar/bar-view.slint";
 import { HomeBar } from "./bar/bar-home.slint";
 
 export component TopBar inherits Rectangle {
-    Rectangle {
-        background: red;
-    }
-
     HorizontalLayout {
         TabWidget {
             Tab {
-                title: "First";
+                title: "Home";
                 HomeBar {}
                 
             }
             Tab {
-                title: "Second";
+                title: "View";
                 ViewBar {}
             }
         }

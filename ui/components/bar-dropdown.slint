@@ -16,8 +16,8 @@ export component BarDropdown {
 
 export component BarDropdownDivider {
     Rectangle {
+        width: Styles.bar-dropdown-width;
         height: 1px;
-        border-width: Styles.bar-dropdown-width;
         background: Styles.bar-border-light;
     }
 }
@@ -44,10 +44,12 @@ export component BarDropdownItem {
     in-out property text <=> txt.text;
     in-out property<image> icon;
     in-out property <bool> focused;
+    in property <bool> enabled: true;
 
     width: Styles.bar-dropdown-width;
     height: Styles.bar-dropdown-height;
 
+    opacity: enabled ? 1.0 : 0.4;
     Rectangle {
         background: focused ? #c9e0f7 : touch.has-hover ? #edf4fc : transparent;
         border-width: 1px;
@@ -85,7 +87,7 @@ export component BarDropdownItem {
         }
     }
 
-    touch := TouchArea {}
+    touch := TouchArea { enabled: root.enabled; }
 }
 
 export component BarSizeDropdownItem {

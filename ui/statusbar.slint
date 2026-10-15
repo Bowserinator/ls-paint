@@ -1,0 +1,207 @@
+import { Slider } from "std-widgets.slint";
+import { UserState, DocumentState, ZoomScale } from "globals.slint";
+import { Styles } from "styles.slint";
+
+// The strip along the bottom, split like MS Paint's: where the pointer is,
+// how big the selection is, how big the paper is, two blanks held for later,
+// and the zoom controls on the right. Every cell is a sunken box.
+export component StatusBar inherits Rectangle {
+    background: #eceff1;
+    vertical-stretch: 0;
+    min-height: 26px;
+
+    // Walked by the window on every zoom change, and written by the drag
+    // itself, so the thumb and the scale never drift apart.
+    in-out property <float> slider-pos: ZoomScale.pct-to-pos(UserState.zoom * 100);
+
+    // Fired with the notch the slider was dropped on.
+    callback zoom-chosen(pct: float);
+    // Fired by the -/+ boxes, one notch per click.
+    callback zoom-step(dir: int);
+
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 3px;
+
+        // Pointer position, in document pixels.
+        Rectangle {
+            horizontal-stretch: 0;
+            min-width: 100px;
+            background: #f7f8fa;
+            border-width: 1px;
+            border-color: #c8ccd2;
+
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 6px;
+
+                Text {
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    font-size: Styles.bar-font-size;
+                    color: Styles.bar-text-color;
+                    text: UserState.cursor-on-canvas
+                        ? floor(UserState.cursor-x) + ", " + floor(UserState.cursor-y)
+                        : "";
+                }
+            }
+        }
+
+        // Selection size, empty without one.
+        Rectangle {
+            horizontal-stretch: 0;
+            min-width: 100px;
+            background: #f7f8fa;
+            border-width: 1px;
+            border-color: #c8ccd2;
+
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 6px;
+
+                Text {
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    font-size: Styles.bar-font-size;
+                    color: Styles.bar-text-color;
+                    text: DocumentState.has-selection
+                        ? DocumentState.selection-width + " x " + DocumentState.selection-height
+                        : "";
+                }
+            }
+        }
+
+        // Paper size.
+        Rectangle {
+            horizontal-stretch: 0;
+            min-width: 100px;
+            background: #f7f8fa;
+            border-width: 1px;
+            border-color: #c8ccd2;
+
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 6px;
+
+                Text {
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    font-size: Styles.bar-font-size;
+                    color: Styles.bar-text-color;
+                    text: DocumentState.canvas-width + " x " + DocumentState.canvas-height;
+                }
+            }
+        }
+
+        // Two blanks, kept for whatever the ribbon grows next.
+        Rectangle {
+            horizontal-stretch: 1;
+            background: #f7f8fa;
+            border-width: 1px;
+            border-color: #c8ccd2;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            background: #f7f8fa;
+            border-width: 1px;
+            border-color: #c8ccd2;
+        }
+
+        // Zoom: the percentage, then -/+ around the notch slider.
+        Rectangle {
+            horizontal-stretch: 0;
+            min-width: 250px;
+            background: #f7f8fa;
+            border-width: 1px;
+            border-color: #c8ccd2;
+
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 4px;
+                spacing: 4px;
+
+                Text {
+                    horizontal-stretch: 0;
+                    min-width: 44px;
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    font-size: Styles.bar-font-size;
+                    color: Styles.bar-text-color;
+                    // 12.5 has the fraction the ladder keeps; every other
+                    // notch is a whole percent.
+                    text: UserState.zoom * 100 == 12.5
+                        ? "12.5%"
+                        : round(UserState.zoom * 100) + "%";
+                }
+
+                Rectangle {
+                    horizontal-stretch: 0;
+                    width: 20px;
+                    background: #eceff1;
+                    border-width: 1px;
+                    border-color: #b9bdc4;
+
+                    Text {
+                        x: 0;
+                        y: 0;
+                        width: 100%;
+                        height: 100%;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                        font-size: Styles.bar-font-size;
+                        color: Styles.bar-text-color;
+                        text: "-";
+                    }
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.zoom-step(-1); }
+                    }
+                }
+
+                Slider {
+                    horizontal-stretch: 1;
+                    minimum: 0;
+                    maximum: 10;
+                    step: 1;
+                    value <=> root.slider-pos;
+
+                    // Land on a notch: the ladder has no in-between zooms.
+                    changed(pos) => {
+                        let snapped = round(pos);
+                        root.slider-pos = snapped;
+                        root.zoom-chosen(ZoomScale.pos-to-pct(snapped));
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 0;
+                    width: 20px;
+                    background: #eceff1;
+                    border-width: 1px;
+                    border-color: #b9bdc4;
+
+                    Text {
+                        x: 0;
+                        y: 0;
+                        width: 100%;
+                        height: 100%;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                        font-size: Styles.bar-font-size;
+                        color: Styles.bar-text-color;
+                        text: "+";
+                    }
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => { root.zoom-step(1); }
+                    }
+                }
+            }
+        }
+    }
+}

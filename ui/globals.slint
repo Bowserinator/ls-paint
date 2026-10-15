@@ -1,20 +1,145 @@
 export enum ETool {
-    NONE, PASTE, SELECTION, CROP, RESIZE, ROTATE,
+    NONE, SELECTION, RESIZE, ROTATE,
     PENCIL, FILL, TEXT, ERASER, DROPPER, MAGNIFY
 }
 export enum ESelectionType { RECTANGULAR, FREEHAND, POLYGON }
+export enum ERotation { CW90, CCW90, R180 }
+export enum EContentTransform { ROTATE_CW90, ROTATE_CCW90, ROTATE_180, FLIP_HORIZONTAL, FLIP_VERTICAL }
+
+// One run of the marching-ants outline, in document pixels. The pattern is
+// rebuilt from the C++ side on every animation tick.
+export struct SelectionDash {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+// A resize grip, positioned by the anchor it is centred on (document pixels).
+export struct SelectionGrip {
+    x: float,
+    y: float,
+}
 
 export global UserState  {
-   // in-out property<color> primary: blue;
-    //in-out property<color> secondary: green;
-    callback on-test();
+    callback pointer-down(length, length, bool);
+    callback pointer-move(length, length);
+    callback pointer-up(length, length);
+    callback canvas-resize(length, length);
+    callback key-pressed(string, bool, bool);
 
-    callback mouse_click(length, length);
+    callback select-shape(ESelectionType);
+    callback select-all();
+    callback invert-selection();
+    callback clear-selection();
+    callback transparent-selection();
+    callback crop-to-selection();
+    callback rotate(ERotation);
+    callback flip-horizontal();
+    callback flip-vertical();
+
+    // Clipboard / selection contents (Cut, Copy, Paste and the context menu)
+    callback cut-selection();
+    callback copy-selection();
+    callback paste-selection();
+    callback transform-selection-content(EContentTransform);
 
     in property <[color]> color_palette;
     in-out property <int> color_idx: 0;
-    in-out property <[int]> selected_color_idxs: [0, 10];
+    in-out property <color> primary-color: black;
+    in-out property <color> secondary-color: white;
 
     in-out property <ETool> selected-tool: PENCIL;
     in-out property <ESelectionType> selection-type: RECTANGULAR;
+
+    // View zoom in screen pixels per document pixel. Ctrl+wheel changes it,
+    // and every screen-to-document coordinate conversion divides by it.
+    in-out property <float> zoom: 1.0;
+
+    // Pointer position in document pixels, kept by the canvas itself while
+    // the cursor is over the paper; the status bar blanks the readout over
+    // the gray around it, where cursor-on-canvas is false.
+    in-out property <bool> cursor-on-canvas: false;
+    in-out property <float> cursor-x;
+    in-out property <float> cursor-y;
+}
+
+// The zoom ladder the status bar walks: 25% steps below 100, 100% steps
+// above, from 12.5% to 700%. Positions are slider units, one per notch.
+// pct-to-pos maps a zoom percentage onto the slider track and pos-to-pct
+// reads one back; whole numbers land exactly on notches either way, so
+// 100% sits at position 4 rather than in the middle.
+export global ZoomScale {
+    public pure function pct-to-pos(pct: float) -> float {
+        if (pct <= 25.0) {
+            return (pct - 12.5) / 12.5;
+        } else if (pct <= 50.0) {
+            return 1.0 + (pct - 25.0) / 25.0;
+        } else if (pct <= 75.0) {
+            return 2.0 + (pct - 50.0) / 25.0;
+        } else if (pct <= 100.0) {
+            return 3.0 + (pct - 75.0) / 25.0;
+        } else if (pct <= 200.0) {
+            return 4.0 + (pct - 100.0) / 100.0;
+        } else if (pct <= 300.0) {
+            return 5.0 + (pct - 200.0) / 100.0;
+        } else if (pct <= 400.0) {
+            return 6.0 + (pct - 300.0) / 100.0;
+        } else if (pct <= 500.0) {
+            return 7.0 + (pct - 400.0) / 100.0;
+        } else if (pct <= 600.0) {
+            return 8.0 + (pct - 500.0) / 100.0;
+        } else {
+            return 9.0 + (pct - 600.0) / 100.0;
+        }
+    }
+
+    public pure function pos-to-pct(pos: float) -> float {
+        if (pos <= 1.0) {
+            return 12.5 + pos * 12.5;
+        } else if (pos <= 2.0) {
+            return 25.0 + (pos - 1.0) * 25.0;
+        } else if (pos <= 3.0) {
+            return 50.0 + (pos - 2.0) * 25.0;
+        } else if (pos <= 4.0) {
+            return 75.0 + (pos - 3.0) * 25.0;
+        } else if (pos <= 5.0) {
+            return 100.0 + (pos - 4.0) * 100.0;
+        } else if (pos <= 6.0) {
+            return 200.0 + (pos - 5.0) * 100.0;
+        } else if (pos <= 7.0) {
+            return 300.0 + (pos - 6.0) * 100.0;
+        } else if (pos <= 8.0) {
+            return 400.0 + (pos - 7.0) * 100.0;
+        } else if (pos <= 9.0) {
+            return 500.0 + (pos - 8.0) * 100.0;
+        } else {
+            return 600.0 + (pos - 9.0) * 100.0;
+        }
+    }
+}
+
+export global DocumentState {
+    in property <int> canvas-width;
+    in property <int> canvas-height;
+    in property <bool> has-selection;
+    in property <bool> has-clipboard;
+    in property <int> selection-x;
+    in property <int> selection-y;
+    in property <int> selection-width;
+    in property <int> selection-height;
+
+    // Alternating light and dark runs covering the selection's border; both
+    // lists together are the complete outline, and both crawl as the phase
+    // advances.
+    in property <[SelectionDash]> ants-dark;
+    in property <[SelectionDash]> ants-light;
+
+    // Empty unless the selection tool is holding a selection big enough for
+    // the grips not to swallow the drag-inside-to-move target.
+    in property <[SelectionGrip]> grips;
+}
+
+export global ToolOptions {
+    in-out property <length> brush-size: 1px;
 }

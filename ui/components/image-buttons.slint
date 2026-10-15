@@ -4,6 +4,7 @@ import { Styles } from "../styles.slint";
 component ImageButtonBase inherits Rectangle {
     in-out property<bool> focused: false;
     in-out property<bool> force_hover: false;
+    in-out property<bool> enabled: true;
 
     in-out property<image> icon: @image-url("../../icons/paste.png");
     in-out property<length> font-size: Styles.bar-font-size;
@@ -13,6 +14,7 @@ component ImageButtonBase inherits Rectangle {
 
     callback clicked <=> touch.clicked;
 
+    opacity: enabled ? 1.0 : 0.4;
     border-radius: 0;
     border-width: 1px;
     border-color: focused ? #8dbcec : touch.pressed ? #a0c6ed : (force_hover || touch.has-hover) ? #bedbf8 : transparent;
@@ -20,6 +22,7 @@ component ImageButtonBase inherits Rectangle {
 
     touch := TouchArea {
         mouse-cursor: pointer;
+        enabled: root.enabled;
     }
 }
 
@@ -86,7 +89,7 @@ export component ColorButtonVertical inherits ImageButtonBase {
                 height: Styles.bar-large-icon-size;
                 background: colr;
                 border-width: 1px;
-                border-color: (colr.red + colr.blue + colr.green) / 3.0 > 0.2 ? black : white;
+                border-color: (colr.red + colr.blue + colr.green) / 3.0 > 51 ? black : white;
             }
         }
         txt := ButtonText { font-size: root.font-size; }

@@ -38,3 +38,6 @@ TODO.txt
 
 # CMake build directory
 build/
+
+# Agent goal/task state
+.pi/

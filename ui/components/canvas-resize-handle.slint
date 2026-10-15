@@ -1,0 +1,44 @@
+export component CanvasResizeHandle inherits Rectangle {
+    in property <bool> affects-width;
+    in property <bool> affects-height;
+    in property <MouseCursor> cursor;
+    out property <bool> active <=> touch.pressed;
+
+    callback dragged(length, length);
+    callback released(length, length);
+
+    property <length> origin-x;
+    property <length> origin-y;
+
+    width: 8px;
+    height: 8px;
+    background: white;
+    border-width: 1px;
+    border-color: #6d7f9b;
+
+    pure function delta-x() -> length {
+        return root.affects-width ? touch.mouse-x - root.origin-x : 0px;
+    }
+
+    pure function delta-y() -> length {
+        return root.affects-height ? touch.mouse-y - root.origin-y : 0px;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: root.cursor;
+
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.origin-x = touch.mouse-x;
+                root.origin-y = touch.mouse-y;
+                root.dragged(0px, 0px);
+            } else if (event.kind == PointerEventKind.up) {
+                root.released(root.delta-x(), root.delta-y());
+            }
+        }
+
+        moved => {
+            root.dragged(root.delta-x(), root.delta-y());
+        }
+    }
+}
