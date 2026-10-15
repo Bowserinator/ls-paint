@@ -722,6 +722,59 @@ int run_ui_tests() {
     CHECK(!h.dialogs().get_file_has_error());
     CHECK(h.doc().get_modified());
 
+    // 29. A brush preset reaches the next stroke: the square tip covers the
+    //     corners of its box, the dotted tip leaves gaps. This runs before the
+    //     resize below, which moves the view and so invalidates the window to
+    //     document mapping this harness learned from the marquee.
+    h.user().set_selected_tool(ETool::PENCIL);
+    h.user().set_primary_color(slint::Color::from_rgb_uint8(255, 0, 0));
+    h.tool_options().set_brush_size(8);
+    h.tool_options().set_brush_spacing(0.25);
+    h.tool_options().set_brush_square(true);
+    h.drag(origin.x + 620, origin.y + 60, origin.x + 680, origin.y + 60);
+    const int square_ink = h.count_color(612, 40, 688, 80, 255, 0, 0);
+    h.tool_options().set_brush_square(false);
+    h.drag(origin.x + 620, origin.y + 100, origin.x + 680, origin.y + 100);
+    const int round_ink = h.count_color(612, 80, 688, 120, 255, 0, 0);
+    h.tool_options().set_brush_spacing(1.0);
+    h.drag(origin.x + 620, origin.y + 140, origin.x + 680, origin.y + 140);
+    const int dotted_ink = h.count_color(612, 120, 688, 160, 255, 0, 0);
+    h.tool_options().set_brush_spacing(0.25);
+    CHECK(square_ink > 0);
+    CHECK(round_ink > 0);
+    CHECK(square_ink > round_ink);
+    CHECK(dotted_ink > 0);
+    CHECK(dotted_ink < round_ink);
+
+
+    // 28. The Resize dialog takes a new canvas size as one edit, and one undo
+    //     gives the old size back.
+    const int before_w = h.controller().document().width();
+    const int before_h = h.controller().document().height();
+    h.user().invoke_resize_dialog();
+    CHECK(h.dialogs().get_resize_visible());
+    h.dialogs().set_resize_width(slint::SharedString("1200"));
+    h.dialogs().set_resize_height(slint::SharedString("900"));
+    h.dialogs().invoke_resize_ok();
+    CHECK(!h.dialogs().get_resize_visible());
+    CHECK(h.controller().document().width() == 1200);
+    CHECK(h.controller().document().height() == 900);
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
+    CHECK(h.controller().document().width() == before_w);
+    CHECK(h.controller().document().height() == before_h);
+
+    // ... and a size the canvas cannot take is refused with a reason, leaving
+    // the dialog up so it can be corrected.
+    h.user().invoke_resize_dialog();
+    h.dialogs().set_resize_width(slint::SharedString(""));
+    h.dialogs().invoke_resize_ok();
+    CHECK(h.dialogs().get_resize_visible());
+    CHECK(h.dialogs().get_message_visible());
+    h.dialogs().invoke_message_ok();
+    h.dialogs().invoke_resize_cancel();
+    CHECK(!h.dialogs().get_resize_visible());
+
     std::filesystem::remove(save_path);
 
     if (g_failures != 0) {

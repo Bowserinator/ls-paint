@@ -8,6 +8,7 @@ import { CanvasShadow } from "components/canvas-shadow.slint";
 import { FileDialog } from "dialogs/file-dialog.slint";
 import { ConfirmDialog } from "dialogs/confirm-dialog.slint";
 import { MessageDialog } from "dialogs/message-dialog.slint";
+import { ResizeDialog } from "dialogs/resize-dialog.slint";
 
 import { UserState, DocumentState, DialogState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay } from "globals.slint";
 export * from "globals.slint";
@@ -489,6 +490,8 @@ export component AppWindow inherits Window {
         // Modal surfaces, declared last so they cover the whole window.
         if DialogState.file-visible : FileDialog {}
         if DialogState.confirm-visible : ConfirmDialog {}
+        if DialogState.resize-visible : ResizeDialog {}
+        // Last, so a report is never hidden by the surface that raised it.
         if DialogState.message-visible : MessageDialog {}
     }
 }

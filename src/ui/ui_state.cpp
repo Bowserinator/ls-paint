@@ -18,6 +18,19 @@ namespace lsp {
 
 namespace {
 
+// The canvas size fields hold digits and nothing else, so anything else is a
+// size the user has not finished typing.
+[[nodiscard]] int parse_canvas_size(const slint::SharedString& text) {
+    const std::string value(text);
+    if (value.empty() || value.size() > 9) return 0;
+    for (const char c : value) {
+        if (c < '0' || c > '9') return 0;
+    }
+    const long long size = std::stoll(value);
+    if (size < 1 || size > kMaxCanvasDimension) return 0;
+    return static_cast<int>(size);
+}
+
 // Marching ants: alternating light and dark runs three pixels long, advanced
 // one pixel per tick. The whole pattern is rebuilt from the selection's
 // border on every tick, so the animation is just the phase moving forward.
@@ -35,10 +48,6 @@ constexpr float kDoubleClickSlop = 4.0f;
 
 // The picker draws every glyph in this box, whatever the size it shows it at.
 constexpr int kGlyphBox = 26;
-
-// How many kinds the ribbon shape box shows before the chevron expands it:
-// three rows of seven, leaving the last two for the gallery popup.
-constexpr std::size_t kShapeRibbonCells = 21;
 
 // Picker order, which the Pickup of the gallery follows: rows of six, starting
 // with the line and the curve and ending with the bolt.
@@ -206,16 +215,12 @@ UiState::UiState(AppWindow& window, AppController& controller)
     m_window.global<UserState>().set_color_palette(palette);
 
     auto gallery = std::make_shared<slint::VectorModel<ShapeGlyph>>();
-    auto ribbon = std::make_shared<slint::VectorModel<ShapeGlyph>>();
-    for (std::size_t i = 0; i < kShapeGalleryOrder.size(); ++i) {
+    for (const EShapeKind kind : kShapeGalleryOrder) {
         const std::string commands =
-            shape::gallery_commands(shape_from_slint(kShapeGalleryOrder[i]), {0, 0, kGlyphBox, kGlyphBox});
-        ShapeGlyph glyph{slint::SharedString(commands), kShapeGalleryOrder[i]};
-        gallery->push_back(glyph);
-        if (i < kShapeRibbonCells) ribbon->push_back(glyph);
+            shape::gallery_commands(shape_from_slint(kind), {0, 0, kGlyphBox, kGlyphBox});
+        gallery->push_back(ShapeGlyph{slint::SharedString(commands), kind});
     }
     m_window.global<ShapeGallery>().set_items(gallery);
-    m_window.global<ShapeGallery>().set_ribbon(ribbon);
 
     m_window.global<UserState>().on_commit_text([this](const slint::SharedString& text) {
         do_commit_text(std::string(text));
@@ -228,8 +233,12 @@ UiState::UiState(AppWindow& window, AppController& controller)
         if (text_open()) do_commit_text(std::string(m_window.global<TextOverlay>().get_content()));
         sync_colors();
         sync_shape_style();
+        auto& tool_options = m_window.global<ToolOptions>();
         m_controller.brush().size =
-            std::max(1, static_cast<int>(std::lround(m_window.global<ToolOptions>().get_brush_size())));
+            std::max(1, static_cast<int>(std::lround(tool_options.get_brush_size())));
+        m_controller.brush().shape =
+            tool_options.get_brush_square() ? BrushShape::Square : BrushShape::Round;
+        m_controller.brush().spacing = tool_options.get_brush_spacing();
 
         const ToolId tool = tool_from_slint(state.get_selected_tool());
         // Slint reports no click count, so a press on the same spot right after
@@ -344,6 +353,9 @@ UiState::UiState(AppWindow& window, AppController& controller)
     dialog.on_file_filter_changed([this](int index) { do_file_filter_changed(index); });
     dialog.on_file_ok([this] { do_file_ok(); });
     dialog.on_file_cancel([this] { do_file_cancel(); });
+    dialog.on_resize_ok([this] { do_resize_ok(); });
+    dialog.on_resize_cancel([this] { do_resize_cancel(); });
+    m_window.global<UserState>().on_resize_dialog([this] { do_open_resize_dialog(); });
     dialog.on_confirm_save([this, &dialog] {
         dialog.set_confirm_visible(false);
         m_window.invoke_focus_app();
@@ -756,6 +768,34 @@ void UiState::do_file_cancel() {
     m_window.global<DialogState>().set_file_visible(false);
     m_window.invoke_focus_app();
     m_pending = PendingAction::None;
+}
+
+void UiState::do_open_resize_dialog() {
+    auto& dialog = m_window.global<DialogState>();
+    dialog.set_resize_width(slint::SharedString(std::to_string(m_controller.document().width())));
+    dialog.set_resize_height(slint::SharedString(std::to_string(m_controller.document().height())));
+    dialog.set_resize_visible(true);
+}
+
+void UiState::do_resize_ok() {
+    auto& dialog = m_window.global<DialogState>();
+    const int width = parse_canvas_size(dialog.get_resize_width());
+    const int height = parse_canvas_size(dialog.get_resize_height());
+    if (width == 0 || height == 0) {
+        show_message("Resize image", "Enter a whole number of pixels between 1 and " +
+                                          std::to_string(kMaxCanvasDimension) + ".");
+        return;
+    }
+    dialog.set_resize_visible(false);
+    m_window.invoke_focus_app();
+    m_controller.resize_canvas(width, height,
+                               to_rgba(m_window.global<UserState>().get_secondary_color()));
+    refresh();
+}
+
+void UiState::do_resize_cancel() {
+    m_window.global<DialogState>().set_resize_visible(false);
+    m_window.invoke_focus_app();
 }
 
 }  // namespace lsp

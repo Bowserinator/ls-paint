@@ -59,6 +59,12 @@ private:
     void do_file_ok();
     void do_file_cancel();
 
+    // The canvas size dialog: the current size is offered, and only a size
+    // inside the canvas limits is applied.
+    void do_open_resize_dialog();
+    void do_resize_ok();
+    void do_resize_cancel();
+
     void show_message(const std::string& title, const std::string& text);
     // Pushes the file name and the unsaved marker into the window title.
     void set_title();

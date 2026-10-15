@@ -66,6 +66,7 @@ export global UserState  {
     callback file-save-as();
     callback file-exit();
     callback paste-from-file();
+    callback resize-dialog();
 
     in property <[color]> color_palette;
     in-out property <int> color_idx: 0;
@@ -168,6 +169,10 @@ export global DocumentState {
 
 export global ToolOptions {
     in-out property <length> brush-size: 1px;
+    // A brush preset picks the kind of tip and how tightly the stamps are laid
+    // down; both take effect on the next stroke.
+    in-out property <bool> brush-square: false;
+    in-out property <float> brush-spacing: 0.25;
 }
 
 // Shape tool settings, set by the Shapes, Outline and Fill ribbon dropdowns.
@@ -185,8 +190,6 @@ export struct ShapeGlyph {
 }
 export global ShapeGallery {
     in property <[ShapeGlyph]> items;
-    // The kinds the ribbon box shows without expanding it: two rows of seven.
-    in property <[ShapeGlyph]> ribbon;
     // The glyph shown on the picker button itself, kept in step with kind.
     in property <string> current-commands: "";
 }
@@ -258,4 +261,12 @@ export global DialogState {
     callback confirm-discard();
     callback confirm-cancel();
     callback message-ok();
+
+    // Resize the canvas in pixels. The fields are text so the user can clear
+    // them while typing; the entries are checked before anything is resized.
+    in-out property <bool> resize-visible: false;
+    in-out property <string> resize-width: "800";
+    in-out property <string> resize-height: "600";
+    callback resize-ok();
+    callback resize-cancel();
 }
