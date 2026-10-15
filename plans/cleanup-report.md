@@ -64,8 +64,9 @@ and what was done about it.
   dropdown and in the canvas menu, and the brush preset list repeats the Size
   list. The menu and the ribbon are separate components with no shared model, and
   the two lists set different options, so they stay separate.
-- `ui/globals.slint` — `cursor-x`/`cursor-y` are written by the canvas hover path
-  and are read by the M5 status-bar readout, which is out of scope here.
+- `ui/globals.slint` — the review listed `cursor-x`/`cursor-y` as unused; they
+  feed the status bar's pointer cell (`ui/statusbar.slint:43`) and are kept. The
+  Edit colors button is the only ribbon control without a handler until M6.
 - `ui/bar/bar-home.slint` — the Edit colors button has no picker until M6.
 - `ui/bar/bar-home.slint` — the `grp-*` ids name the ribbon groups for the
   measurement and snapshot tooling.
