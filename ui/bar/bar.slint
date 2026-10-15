@@ -22,6 +22,9 @@ export component BarDivider inherits Rectangle {
 
 export component BarItemGroup {  
     in-out property <string> title;
+    // False when the group is merged into one button that already carries the
+    // group's name, which would otherwise read twice.
+    in property <bool> show-title: true;
 
     height: Styles.bar-height;
     min-width: 45px;
@@ -35,6 +38,7 @@ export component BarItemGroup {
     }
 
     Text {
+        visible: show-title;
         text: title;
         y: Styles.bar-height - Styles.bar-font-size - 2 * Styles.bar-padding;
         color: #555;

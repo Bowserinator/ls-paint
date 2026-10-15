@@ -22,9 +22,6 @@ void AppController::commit_text(Point2f origin, std::string_view text, Rgba8 col
     raster::Target target{m_document.active_layer().pixels, clip.empty() ? nullptr : clip.data()};
     StrokeRecorder recorder(m_document);
     const RectI touched = draw_text(target, origin, text, m_text_options, color);
-    std::fprintf(stderr, "Debug paint text='%s' at (%.0f,%.0f) touched=(%d,%d,%dx%d)\n",
-                 std::string(text).c_str(), origin.x, origin.y, touched.x, touched.y, touched.width,
-                 touched.height);
     if (touched.empty()) return;
     recorder.touch(touched);
     recorder.commit(m_history);

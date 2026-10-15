@@ -34,6 +34,9 @@ constexpr float kDoubleClickSlop = 4.0f;
 // The picker draws every glyph in this box, whatever the size it shows it at.
 constexpr int kGlyphBox = 26;
 
+// How many kinds the ribbon box shows before the chevron expands it.
+constexpr std::size_t kShapeRibbonCells = 14;
+
 // Picker order, which the Pickup of the gallery follows: rows of six, starting
 // with the line and the curve and ending with the bolt.
 constexpr std::array<EShapeKind, 23> kShapeGalleryOrder{
@@ -200,12 +203,16 @@ UiState::UiState(AppWindow& window, AppController& controller)
     m_window.global<UserState>().set_color_palette(palette);
 
     auto gallery = std::make_shared<slint::VectorModel<ShapeGlyph>>();
-    for (const EShapeKind kind : kShapeGalleryOrder) {
+    auto ribbon = std::make_shared<slint::VectorModel<ShapeGlyph>>();
+    for (std::size_t i = 0; i < kShapeGalleryOrder.size(); ++i) {
         const std::string commands =
-            shape::gallery_commands(shape_from_slint(kind), {0, 0, kGlyphBox, kGlyphBox});
-        gallery->push_back(ShapeGlyph{slint::SharedString(commands), kind});
+            shape::gallery_commands(shape_from_slint(kShapeGalleryOrder[i]), {0, 0, kGlyphBox, kGlyphBox});
+        ShapeGlyph glyph{slint::SharedString(commands), kShapeGalleryOrder[i]};
+        gallery->push_back(glyph);
+        if (i < kShapeRibbonCells) ribbon->push_back(glyph);
     }
     m_window.global<ShapeGallery>().set_items(gallery);
+    m_window.global<ShapeGallery>().set_ribbon(ribbon);
 
     m_window.global<UserState>().on_commit_text([this](const slint::SharedString& text) {
         do_commit_text(std::string(text));

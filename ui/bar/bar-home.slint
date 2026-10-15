@@ -90,58 +90,67 @@ export component HomeBar inherits Bar {
     private property <length> strip-width: 0px;
     changed width => { root.strip-width = self.width; }
 
-    private property <length> right-of-colors: Styles.ribbon-width-about;
-    private property <length> right-of-size:
-        Styles.ribbon-width-colors + Styles.ribbon-divider + right-of-colors;
-    private property <length> right-of-shapes:
-        Styles.ribbon-width-size + Styles.ribbon-divider + right-of-size;
-    private property <length> right-of-brushes:
-        Styles.ribbon-width-shapes + Styles.ribbon-divider + right-of-shapes;
-    private property <length> right-of-tools:
-        Styles.ribbon-width-brushes + Styles.ribbon-divider + right-of-brushes;
-    private property <length> right-of-image:
-        Styles.ribbon-width-tools + Styles.ribbon-divider + right-of-tools;
-    private property <length> right-of-clipboard:
-        Styles.ribbon-width-image + Styles.ribbon-divider + right-of-image;
+    // The groups left of each collapsible group, expanded. The width of a group
+    // to the right of another is read through its width-* property instead, so a
+    // group gives way only once the groups after it are not enough on their own.
+    private property <length> left-of-image:
+        Styles.ribbon-width-clipboard + Styles.ribbon-divider;
+    private property <length> left-of-tools:
+        left-of-image + Styles.ribbon-width-image + Styles.ribbon-divider;
+    private property <length> left-of-brushes:
+        left-of-tools + Styles.ribbon-width-tools + Styles.ribbon-divider;
+    private property <length> left-of-shapes:
+        left-of-brushes + Styles.ribbon-width-brushes + Styles.ribbon-divider;
+    private property <length> left-of-size:
+        left-of-shapes + Styles.ribbon-width-shapes + Styles.ribbon-divider;
+    private property <length> left-of-colors:
+        left-of-size + Styles.ribbon-width-size + Styles.ribbon-divider;
 
-    private property <bool> collapsed-clipboard:
-        root.strip-width < Styles.ribbon-width-clipboard + Styles.ribbon-divider
-            + right-of-clipboard + Styles.ribbon-overflow-margin;
-    private property <length> width-clipboard:
-        collapsed-clipboard ? Styles.ribbon-merged-width : Styles.ribbon-width-clipboard;
-
-    private property <bool> collapsed-image:
-        root.strip-width < width-clipboard + Styles.ribbon-divider + Styles.ribbon-width-image
-            + Styles.ribbon-divider + right-of-image + Styles.ribbon-overflow-margin;
-    private property <length> width-image:
-        collapsed-image ? Styles.ribbon-merged-width : Styles.ribbon-width-image;
-
-    private property <bool> collapsed-tools:
-        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
-            + Styles.ribbon-divider + Styles.ribbon-width-tools
-            + Styles.ribbon-divider + right-of-tools + Styles.ribbon-overflow-margin;
-    private property <length> width-tools:
-        collapsed-tools ? Styles.ribbon-merged-width : Styles.ribbon-width-tools;
+    private property <bool> collapsed-colors:
+        root.strip-width < left-of-colors + Styles.ribbon-width-colors + Styles.ribbon-divider
+            + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
+    private property <length> width-colors:
+        collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
 
     private property <bool> collapsed-shapes:
-        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
-            + Styles.ribbon-divider + width-tools + Styles.ribbon-divider
-            + Styles.ribbon-width-brushes + Styles.ribbon-divider + Styles.ribbon-width-shapes
-            + Styles.ribbon-divider + right-of-shapes + Styles.ribbon-overflow-margin;
+        root.strip-width < left-of-shapes + Styles.ribbon-width-shapes + Styles.ribbon-divider
+            + Styles.ribbon-width-size + Styles.ribbon-divider + width-colors
+            + Styles.ribbon-divider + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
     private property <length> width-shapes:
         collapsed-shapes ? Styles.ribbon-merged-width : Styles.ribbon-width-shapes;
 
-    private property <bool> collapsed-colors:
-        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
-            + Styles.ribbon-divider + width-tools + Styles.ribbon-divider
+    private property <bool> collapsed-tools:
+        root.strip-width < left-of-tools + Styles.ribbon-width-tools + Styles.ribbon-divider
             + Styles.ribbon-width-brushes + Styles.ribbon-divider + width-shapes
             + Styles.ribbon-divider + Styles.ribbon-width-size + Styles.ribbon-divider
-            + Styles.ribbon-width-colors + Styles.ribbon-divider + right-of-colors
+            + width-colors + Styles.ribbon-divider + Styles.ribbon-width-about
             + Styles.ribbon-overflow-margin;
+    private property <length> width-tools:
+        collapsed-tools ? Styles.ribbon-merged-width : Styles.ribbon-width-tools;
+
+    private property <bool> collapsed-image:
+        root.strip-width < left-of-image + Styles.ribbon-width-image + Styles.ribbon-divider
+            + width-tools + Styles.ribbon-divider + Styles.ribbon-width-brushes
+            + Styles.ribbon-divider + width-shapes + Styles.ribbon-divider
+            + Styles.ribbon-width-size + Styles.ribbon-divider + width-colors
+            + Styles.ribbon-divider + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
+    private property <length> width-image:
+        collapsed-image ? Styles.ribbon-merged-width : Styles.ribbon-width-image;
+
+    private property <bool> collapsed-clipboard:
+        root.strip-width < Styles.ribbon-width-clipboard + Styles.ribbon-divider
+            + width-image + Styles.ribbon-divider + width-tools + Styles.ribbon-divider
+            + Styles.ribbon-width-brushes + Styles.ribbon-divider + width-shapes
+            + Styles.ribbon-divider + Styles.ribbon-width-size + Styles.ribbon-divider
+            + width-colors + Styles.ribbon-divider + Styles.ribbon-width-about
+            + Styles.ribbon-overflow-margin;
+    private property <length> width-clipboard:
+        collapsed-clipboard ? Styles.ribbon-merged-width : Styles.ribbon-width-clipboard;
 
     HorizontalLayout {
         grp-clipboard := BarItemGroup {
             title: "Clipboard";
+            show-title: !collapsed-clipboard;
             width: width-clipboard;
 
             clipboard-dropdown := PopupWindow {
@@ -205,6 +214,7 @@ export component HomeBar inherits Bar {
 
         grp-image := BarItemGroup {
             title: "Image";
+            show-title: !collapsed-image;
             width: width-image;
 
             rotate-dropdown := PopupWindow {
@@ -328,7 +338,9 @@ export component HomeBar inherits Bar {
 
             image-merged := ImageButtonVerticalDropdown {
                 visible: collapsed-image;
-                width: Styles.ribbon-merged-button;
+                // No width while the group is expanded: an invisible element
+                // still holds its slot, which would squeeze the group's content.
+                width: collapsed-image ? Styles.ribbon-merged-button : 0px;
                 text: "Image";
                 icon: @image-url("../../icons/resize.png");
                 clicked => { image-menu.show(); }
@@ -382,6 +394,7 @@ export component HomeBar inherits Bar {
 
         grp-tools := BarItemGroup {
             title: "Tools";
+            show-title: !collapsed-tools;
             width: width-tools;
 
             tools-menu := PopupWindow {
@@ -424,7 +437,9 @@ export component HomeBar inherits Bar {
 
             tools-merged := ImageButtonVerticalDropdown {
                 visible: collapsed-tools;
-                width: Styles.ribbon-merged-button;
+                // No width while the group is expanded: an invisible element
+                // still holds its slot, which would squeeze the group's content.
+                width: collapsed-tools ? Styles.ribbon-merged-button : 0px;
                 text: "Tools";
                 icon: @image-url("../../icons/pencil.png");
                 clicked => { tools-menu.show(); }
@@ -491,8 +506,8 @@ export component HomeBar inherits Bar {
             width: width-shapes;
 
             shape-gallery-dropdown := PopupWindow {
-                y: (collapsed-shapes ? shape-merged.y + shape-merged.height : shape-picker.y + shape-picker.height) - Styles.bar-padding;
-                x: collapsed-shapes ? shape-merged.x : shape-picker.x;
+                y: (collapsed-shapes ? shape-merged.y + shape-merged.height : shape-box.y + shape-box.height) - Styles.bar-padding;
+                x: collapsed-shapes ? shape-merged.x : shape-box.x;
 
                 BarDropdown {
                     HorizontalLayout {
@@ -612,57 +627,11 @@ export component HomeBar inherits Bar {
                 }
             }
 
-            thickness-dropdown := PopupWindow {
-                y: thickness-btn.y + thickness-btn.height - Styles.bar-padding;
-                x: thickness-btn.x;
-
-                BarDropdown {
-                    BarSizeDropdownItem {
-                        text: "1px"; size: 1px;
-                        clicked => { ShapeStyle.thickness = 1; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "2px"; size: 2px;
-                        clicked => { ShapeStyle.thickness = 2; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "3px"; size: 3px;
-                        clicked => { ShapeStyle.thickness = 3; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "4px"; size: 4px;
-                        clicked => { ShapeStyle.thickness = 4; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "6px"; size: 6px;
-                        clicked => { ShapeStyle.thickness = 6; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "8px"; size: 8px;
-                        clicked => { ShapeStyle.thickness = 8; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "12px"; size: 12px;
-                        clicked => { ShapeStyle.thickness = 12; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "16px"; size: 16px;
-                        clicked => { ShapeStyle.thickness = 16; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "24px"; size: 24px;
-                        clicked => { ShapeStyle.thickness = 24; }
-                    }
-                    BarSizeDropdownItem {
-                        text: "32px"; size: 32px;
-                        clicked => { ShapeStyle.thickness = 32; }
-                    }
-                }
-            }
-
             shape-merged := ShapePickerButton {
                 visible: collapsed-shapes;
-                width: Styles.ribbon-merged-button;
+                // No width while the group is expanded: an invisible element
+                // still holds its slot, which would squeeze the group's content.
+                width: collapsed-shapes ? Styles.ribbon-merged-button : 0px;
                 commands: ShapeGallery.current-commands;
                 focused: UserState.selected-tool == ETool.SHAPE;
                 clicked => {
@@ -671,47 +640,69 @@ export component HomeBar inherits Bar {
                 }
             }
 
-            VerticalLayout {
+            Rectangle {
                 visible: !collapsed-shapes;
-                spacing: Styles.bar-list-spacing;
+                width: 300px;
+                height: 2 * Styles.ribbon-shape-cell;
 
-                HorizontalLayout {
-                    spacing: Styles.bar-list-spacing;
+                // The shape box: two rows of kinds with the rest behind the
+                // chevron, and the outline and fill choices beside it.
+                shape-box := Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: 7 * Styles.ribbon-shape-cell;
+                    height: 2 * Styles.ribbon-shape-cell;
 
-                    shape-picker := ShapePickerButton {
-                        width: 90px;
-                        commands: ShapeGallery.current-commands;
-                        focused: UserState.selected-tool == ETool.SHAPE;
+                    for glyph[i] in ShapeGallery.ribbon: ShapeGlyphButton {
+                        x: mod(i, 7) * Styles.ribbon-shape-cell;
+                        y: floor(i / 7) * Styles.ribbon-shape-cell;
+                        commands: glyph.commands;
+                        focused: ShapeStyle.kind == glyph.kind;
                         clicked => {
+                            ShapeStyle.kind = glyph.kind;
                             UserState.selected-tool = ETool.SHAPE;
-                            shape-gallery-dropdown.show();
                         }
-                    }
-
-                    outline-btn := ImageButtonHorizontal {
-                        width: 72px;
-                        text: "Outline ▾";
-                        icon: @image-url("../../icons/shape-outline.png");
-                        clicked => { outline-dropdown.show(); }
                     }
                 }
 
-                HorizontalLayout {
-                    spacing: Styles.bar-list-spacing;
+                Rectangle {
+                    x: 184px;
+                    y: 0px;
+                    width: 16px;
+                    height: 2 * Styles.ribbon-shape-cell;
+                    background: transparent;
 
-                    thickness-btn := ImageButtonHorizontal {
-                        width: 90px;
-                        text: "Size ▾";
-                        icon: @image-url("../../icons/size.png");
-                        clicked => { thickness-dropdown.show(); }
+                    TouchArea {
+                        clicked => { shape-gallery-dropdown.show(); }
                     }
 
-                    fill-btn := ImageButtonHorizontal {
-                        width: 72px;
-                        text: "Fill ▾";
-                        icon: @image-url("../../icons/shape-fill.png");
-                        clicked => { fill-dropdown.show(); }
+                    Text {
+                        text: "▾";
+                        color: #555555;
+                        font-size: Styles.bar-font-size;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
+                }
+
+                outline-btn := ImageButtonHorizontal {
+                    x: 204px;
+                    y: 0px;
+                    width: 96px;
+                    height: Styles.ribbon-shape-cell;
+                    text: "Outline ▾";
+                    icon: @image-url("../../icons/shape-outline.png");
+                    clicked => { outline-dropdown.show(); }
+                }
+
+                fill-btn := ImageButtonHorizontal {
+                    x: 204px;
+                    y: Styles.ribbon-shape-cell;
+                    width: 96px;
+                    height: Styles.ribbon-shape-cell;
+                    text: "Fill ▾";
+                    icon: @image-url("../../icons/shape-fill.png");
+                    clicked => { fill-dropdown.show(); }
                 }
             }
         }
@@ -728,31 +719,31 @@ export component HomeBar inherits Bar {
                 BarDropdown {
                     BarSizeDropdownItem {
                         text: "1px"; size: 1px;
-                        clicked => { ToolOptions.brush-size = self.size; }
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 1; }
                     }
                     BarSizeDropdownItem {
                         text: "2px"; size: 2px;
-                        clicked => { ToolOptions.brush-size = self.size; }
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 2; }
                     }
                     BarSizeDropdownItem {
                         text: "3px"; size: 3px;
-                        clicked => { ToolOptions.brush-size = self.size; }
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 3; }
                     }
                     BarSizeDropdownItem {
                         text: "4px"; size: 4px;
-                        clicked => { ToolOptions.brush-size = self.size; }
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 4; }
                     }
                     BarSizeDropdownItem {
                         text: "5px"; size: 5px;
-                        clicked => { ToolOptions.brush-size = self.size; }
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 5; }
                     }
                     BarSizeDropdownItem {
                         text: "8px"; size: 8px;
-                        clicked => { ToolOptions.brush-size = self.size; }
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 8; }
                     }
                     BarSizeDropdownItem {
                         text: "10px"; size: 10px;
-                        clicked => { ToolOptions.brush-size = self.size; }
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 10; }
                     }
                 }
             }
@@ -773,6 +764,7 @@ export component HomeBar inherits Bar {
 
         grp-colors := BarItemGroup {
             title: "Colors";
+            show-title: !collapsed-colors;
             width: collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
 
             colors-menu := PopupWindow {
@@ -821,12 +813,14 @@ export component HomeBar inherits Bar {
                 // space back when it collapses.
                 if (!collapsed-colors) : HorizontalLayout {
                     ColorButtonVertical {
+                        width: 58px;
                         colr: UserState.primary-color;
                         text: "Color 1";
                         focused: UserState.color_idx == 0;
                         clicked => { UserState.color_idx = 0; }
                     }
                     ColorButtonVertical {
+                        width: 58px;
                         colr: UserState.secondary-color;
                         text: "Color 2";
                         focused: UserState.color_idx == 1;
@@ -857,8 +851,8 @@ export component HomeBar inherits Bar {
                     }
 
                     ImageButtonVertical {
-                        width: 57px;
-                        text: "Edit Colors";
+                        width: 84px;
+                        text: "Edit colors";
                         icon: @image-url("../../icons/edit-colors.png");
                     }
                 }
@@ -878,7 +872,7 @@ export component HomeBar inherits Bar {
         grp-about := BarItemGroup {
             title: "";
             ImageButtonVertical {
-                width: 80px;
+                width: 92px;
                 icon: @image-url("../../icons/about.png");
                 text: "About Program";
 
@@ -943,6 +937,7 @@ export component HomeBar inherits Bar {
                 }
             }
         }
+
     }
 
 }
