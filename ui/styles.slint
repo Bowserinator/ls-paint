@@ -13,15 +13,18 @@ export global Styles {
     out property<length> ribbon-divider: 2px;
     // A merged group measured from outside, and the button inside it. The
     // difference is the group's own padding.
-    out property<length> ribbon-merged-width: 72px;
-    out property<length> ribbon-merged-button: 64px;
+    out property<length> ribbon-merged-width: 64px;
+    out property<length> ribbon-merged-button: 56px;
     // One shape glyph cell in the Shapes box.
     out property<length> ribbon-shape-cell: 26px;
     out property<length> ribbon-width-clipboard: 132px;
     out property<length> ribbon-width-image: 206px;
     out property<length> ribbon-width-tools: 164px;
     out property<length> ribbon-width-brushes: 88px;
-    out property<length> ribbon-width-shapes: 308px;
+    out property<length> ribbon-width-shapes: 288px;
+    // A merged Shapes group keeps the outline and fill buttons, so it is wider
+    // than the other merged groups.
+    out property<length> ribbon-width-shapes-merged: 170px;
     out property<length> ribbon-width-size: 62px;
     out property<length> ribbon-width-colors: 458px;
     out property<length> ribbon-width-about: 100px;
@@ -38,6 +41,10 @@ export global Styles {
 
     // Height of the strip a tool can show between the ribbon and the paper.
     out property<length> text-options-height: 28px;
+
+    // The tab strip above the ribbon.
+    out property<length> tab-height: 24px;
+    out property<color> tab-backstage: #1a6fc4;
 
     // The canvas right click menu: compact, one column, square corners.
     out property<length> menu-width: 168px;

@@ -1,0 +1,49 @@
+import { Bar } from "bar.slint";
+import { BarButton } from "../components/image-buttons.slint";
+import { UserState } from "../globals.slint";
+import { Styles } from "../styles.slint";
+
+// The File tab. No icons exist for these actions, so the buttons carry text.
+export component FileBar inherits Bar {
+    HorizontalLayout {
+        padding: Styles.bar-padding;
+        spacing: 0px;
+        alignment: start;
+
+        VerticalLayout {
+            alignment: start;
+            spacing: 0px;
+
+            BarButton {
+                width: 130px;
+                height: 20px;
+                text: "New";
+                clicked => { UserState.file-new(); }
+            }
+            BarButton {
+                width: 130px;
+                height: 20px;
+                text: "Open";
+                clicked => { UserState.file-open(); }
+            }
+            BarButton {
+                width: 130px;
+                height: 20px;
+                text: "Save";
+                clicked => { UserState.file-save(); }
+            }
+            BarButton {
+                width: 130px;
+                height: 20px;
+                text: "Save As";
+                clicked => { UserState.file-save-as(); }
+            }
+            BarButton {
+                width: 130px;
+                height: 20px;
+                text: "Exit";
+                clicked => { UserState.file-exit(); }
+            }
+        }
+    }
+}

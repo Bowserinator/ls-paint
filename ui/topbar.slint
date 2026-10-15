@@ -1,21 +1,88 @@
-import { HorizontalBox, VerticalBox, Palette, Button, TabWidget } from "std-widgets.slint";
-import { UserState } from "globals.slint";
+import { Styles } from "./styles.slint";
 
-import { ViewBar } from "./bar/bar-view.slint";
+import { FileBar } from "./bar/bar-file.slint";
 import { HomeBar } from "./bar/bar-home.slint";
+import { ViewBar } from "./bar/bar-view.slint";
 
+// One tab of the ribbon strip.
+component RibbonTab inherits Rectangle {
+    in property <string> title;
+    in property <bool> selected;
+    // The File tab carries the backstage page, so it is tinted when it is up.
+    in property <bool> backstage: false;
+    callback clicked;
+
+    width: caption.preferred-width + 20px;
+    height: Styles.tab-height;
+    background: selected ? (backstage ? Styles.tab-backstage : white) : transparent;
+    border-width: 1px;
+    border-color: selected ? (backstage ? Styles.tab-backstage : #b6b6b6) : transparent;
+
+    caption := Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.title;
+        wrap: no-wrap;
+        color: selected && root.backstage ? white : Styles.bar-text-color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        font-size: Styles.bar-font-size;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The tab strip and the bar of the selected tab. Nothing here takes part in the
+// window's layout: a layout child would pin the window's width to its preferred
+// size, and the window has to be freely resizable.
 export component TopBar inherits Rectangle {
-    HorizontalLayout {
-        TabWidget {
-            Tab {
-                title: "Home";
-                HomeBar {}
-                
+    // The window opens on Home, as Paint does.
+    private property <int> tab: 1;
+
+    height: Styles.tab-height + Styles.bar-height;
+
+    Rectangle {
+        y: 0px;
+        width: 100%;
+        height: Styles.tab-height;
+        background: transparent;
+
+        HorizontalLayout {
+            alignment: start;
+            spacing: 0;
+
+            RibbonTab {
+                title: "File";
+                backstage: true;
+                selected: root.tab == 0;
+                clicked => { root.tab = 0; }
             }
-            Tab {
+            RibbonTab {
+                title: "Home";
+                selected: root.tab == 1;
+                clicked => { root.tab = 1; }
+            }
+            RibbonTab {
                 title: "View";
-                ViewBar {}
+                selected: root.tab == 2;
+                clicked => { root.tab = 2; }
             }
         }
+    }
+
+    if (root.tab == 0) : FileBar {
+        y: Styles.tab-height;
+        width: 100%;
+    }
+    if (root.tab == 1) : HomeBar {
+        y: Styles.tab-height;
+        width: 100%;
+    }
+    if (root.tab == 2) : ViewBar {
+        y: Styles.tab-height;
+        width: 100%;
     }
 }

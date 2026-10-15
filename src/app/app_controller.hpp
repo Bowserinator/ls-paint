@@ -1,15 +1,29 @@
 #pragma once
 
+#include <filesystem>
+#include <string>
+#include <vector>
+
 #include "app/input_router.hpp"
 #include "brushes/brush.hpp"
 #include "core/canvas_document.hpp"
 #include "history/history_stack.hpp"
+#include "io/document_io.hpp"
 #include "selection/selection_ops.hpp"
-#include "tools/selection_tool.hpp"
 #include "tools/tool_context.hpp"
 #include "tools/tool_registry.hpp"
 
 namespace lsp {
+
+// What a file or clipboard action reports back to the UI. A failed action
+// leaves the document untouched.
+struct IoResult {
+    bool ok = false;
+    std::string error;
+
+    [[nodiscard]] static IoResult success() noexcept { return {true, {}}; }
+    [[nodiscard]] static IoResult failure(std::string message) { return {false, std::move(message)}; }
+};
 
 class AppController {
 public:
@@ -50,10 +64,33 @@ public:
     [[nodiscard]] const ClipboardContent& clipboard() const noexcept { return m_clipboard; }
     [[nodiscard]] bool has_selection() const noexcept { return m_document.selection().active(); }
 
+    // File. Each of these leaves the document untouched when it fails.
+    IoResult new_document();
+    IoResult open_document(const std::filesystem::path& path);
+    IoResult save_document(const std::filesystem::path& path, ImageFormat format);
+    IoResult save_document();
+    [[nodiscard]] bool has_current_path() const noexcept { return !m_current_path.empty(); }
+    [[nodiscard]] const std::filesystem::path& current_path() const noexcept { return m_current_path; }
+    [[nodiscard]] std::string display_name() const;
+    [[nodiscard]] std::filesystem::path default_directory() const;
+    [[nodiscard]] std::vector<std::filesystem::path> list_directory(
+        const std::filesystem::path& directory, bool images_only) const;
+
+    // The system clipboard. Copy and cut also feed the selection clipboard, so
+    // the pixels can leave the application and come back.
+    IoResult copy_to_clipboard();
+    IoResult paste_from_clipboard();
+    IoResult paste_from_file(const std::filesystem::path& path);
+    [[nodiscard]] bool selection_clipboard_empty() const noexcept { return m_clipboard.empty(); }
+
 private:
     void commit_selection_contents();
     void push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before);
     void push_selection_edit(SelectionEdit edit);
+    IoResult paste_pixels(PixelBuffer image);
+    // The region Copy and Cut take: the selection when there is one, otherwise
+    // the whole canvas.
+    [[nodiscard]] RectI copy_source_rect() const;
 
     CanvasDocument m_document;
     HistoryStack m_history;
@@ -68,6 +105,7 @@ private:
     ToolContext m_context;
     ToolRegistry m_registry;
     InputRouter m_router;
+    std::filesystem::path m_current_path;
 };
 
 }  // namespace lsp

@@ -17,6 +17,11 @@ target_link_libraries(lsp_text_tests PRIVATE lsp_core)
 target_include_directories(lsp_text_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME lsp_text_tests COMMAND lsp_text_tests)
 
+add_executable(lsp_io_tests io_test.cpp)
+target_link_libraries(lsp_io_tests PRIVATE lsp_core)
+target_include_directories(lsp_io_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME lsp_io_tests COMMAND lsp_io_tests)
+
 add_executable(lsp_ui_tests
     ui_tests.cpp
     ${CMAKE_SOURCE_DIR}/src/render/slint_bridge.cpp
@@ -38,11 +43,11 @@ add_custom_target(snapshots
 )
 
 if(MSVC)
-    foreach(target lsp_tests lsp_raster_tests lsp_text_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_raster_tests lsp_text_tests lsp_io_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE /W4)
     endforeach()
 else()
-    foreach(target lsp_tests lsp_raster_tests lsp_text_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_raster_tests lsp_text_tests lsp_io_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE -Wall -Wextra)
     endforeach()
 endif()

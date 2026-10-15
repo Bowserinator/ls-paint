@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstddef>
+#include <string_view>
 
 #include "core/types.hpp"
 
@@ -10,8 +11,13 @@ namespace lsp {
 inline constexpr int kDefaultCanvasWidth = 800;
 inline constexpr int kDefaultCanvasHeight = 600;
 inline constexpr int kMaxCanvasDimension = 4096;
+// Images larger than this are refused on load and never produced by growth.
+inline constexpr int kMaxImageDimension = 16384;
 inline constexpr std::size_t kMaxHistoryEntries = 200;
 inline constexpr int kCustomColorSlots = 10;
+
+// Extensions the file dialogs offer and document_io can write.
+inline constexpr std::array<std::string_view, 4> kImageExtensions{".png", ".bmp", ".jpg", ".jpeg"};
 
 inline constexpr std::array<Rgba8, 20> kDefaultPalette{{
     {0, 0, 0},       {120, 120, 120}, {130, 0, 0},     {255, 0, 0},     {255, 98, 0},

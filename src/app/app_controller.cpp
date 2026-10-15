@@ -1,9 +1,13 @@
 #include "app/app_controller.hpp"
 
+#include <algorithm>
+#include <system_error>
+
 #include "config.hpp"
 #include "history/commands/canvas_resize_command.hpp"
 #include "history/commands/paint_stroke_command.hpp"
 #include "history/commands/selection_edit_command.hpp"
+#include "io/clipboard.hpp"
 #include "selection/selection_ops.hpp"
 #include "tools/stroke_recorder.hpp"
 
@@ -124,9 +128,12 @@ void AppController::push_selection_edit(SelectionEdit edit) {
 void AppController::copy_selection() {
     if (m_document.floating()) {
         m_clipboard = capture_floating(*m_document.floating(), m_document.bounds());
-        return;
+    } else {
+        m_clipboard = capture_clipboard(m_document.active_layer().pixels, m_document.selection());
     }
-    m_clipboard = capture_clipboard(m_document.active_layer().pixels, m_document.selection());
+    // The same pixels also go to the system clipboard, so they can be pasted
+    // into another application. The selection clipboard already holds them.
+    (void)copy_to_clipboard();
 }
 
 void AppController::cut_selection() {
@@ -151,6 +158,138 @@ void AppController::transform_selection_contents(ContentTransform transform) {
     push_selection_edit(transform_contents(m_document.active_layer().pixels, m_document.selection(),
                                            m_document.floating(), transform,
                                            m_colors.ink(PointerButton::Secondary)));
+}
+
+IoResult AppController::new_document() {
+    m_document.restore({PixelBuffer(kDefaultCanvasWidth, kDefaultCanvasHeight, Rgba8{255, 255, 255, 255})});
+    m_history.clear();
+    m_current_path.clear();
+    return IoResult::success();
+}
+
+IoResult AppController::open_document(const std::filesystem::path& path) {
+    std::error_code error;
+    if (std::filesystem::is_directory(path, error)) return IoResult::failure("Not a file: " + path.string());
+
+    LoadResult loaded = load(path);
+    if (!loaded.ok) return IoResult::failure(loaded.error);
+    if (loaded.pixels.width() > kMaxCanvasDimension || loaded.pixels.height() > kMaxCanvasDimension)
+        return IoResult::failure("Image is larger than the canvas limit: " + path.string());
+
+    m_document.restore({std::move(loaded.pixels)});
+    m_history.clear();
+    m_current_path = path;
+    return IoResult::success();
+}
+
+IoResult AppController::save_document(const std::filesystem::path& path, ImageFormat format) {
+    (void)m_document.flush();
+    std::string error;
+    // Qualified: inside a member named save_document the free function is still
+    // found, but naming it makes the intent obvious.
+    if (!lsp::save(m_document, path, format, &error)) return IoResult::failure(error);
+    m_current_path = path;
+    m_history.mark_clean();
+    return IoResult::success();
+}
+
+IoResult AppController::save_document() {
+    if (!has_current_path()) return IoResult::failure("No file name yet");
+    const std::optional<ImageFormat> format = format_from_extension(m_current_path);
+    if (!format) return IoResult::failure("Unknown file extension: " + m_current_path.string());
+    return save_document(m_current_path, *format);
+}
+
+std::string AppController::display_name() const {
+    return has_current_path() ? m_current_path.filename().string() : "untitled";
+}
+
+std::filesystem::path AppController::default_directory() const {
+    if (has_current_path()) {
+        const std::filesystem::path parent = m_current_path.parent_path();
+        if (!parent.empty()) return parent;
+    }
+    return std::filesystem::current_path();
+}
+
+std::vector<std::filesystem::path> AppController::list_directory(const std::filesystem::path& directory,
+                                                                bool images_only) const {
+    std::vector<std::filesystem::path> directories;
+    std::vector<std::filesystem::path> files;
+    std::error_code error;
+    if (std::filesystem::is_directory(directory, error)) {
+        for (const std::filesystem::directory_entry& entry :
+             std::filesystem::directory_iterator(directory, error)) {
+            std::error_code kind_error;
+            if (entry.is_directory(kind_error)) {
+                directories.push_back(entry.path());
+            } else if (entry.is_regular_file(kind_error) &&
+                       (!images_only || format_from_extension(entry.path()).has_value())) {
+                files.push_back(entry.path());
+            }
+        }
+    }
+    const auto by_name = [](const std::filesystem::path& left, const std::filesystem::path& right) {
+        return left.filename().string() < right.filename().string();
+    };
+    std::sort(directories.begin(), directories.end(), by_name);
+    std::sort(files.begin(), files.end(), by_name);
+
+    std::vector<std::filesystem::path> entries;
+    entries.push_back(directory / "..");
+    entries.insert(entries.end(), directories.begin(), directories.end());
+    entries.insert(entries.end(), files.begin(), files.end());
+    return entries;
+}
+
+RectI AppController::copy_source_rect() const {
+    const SelectionMask& selection = m_document.selection();
+    if (selection.active()) return selection.bounds().intersected(m_document.bounds());
+    return m_document.bounds();
+}
+
+IoResult AppController::copy_to_clipboard() {
+    (void)m_document.flush();
+    const RectI region = copy_source_rect();
+    if (region.empty()) return IoResult::failure("There is nothing to copy");
+    if (!Clipboard::set_image(m_document.flattened().copy_region(region)))
+        return IoResult::failure("The system clipboard is not available");
+    return IoResult::success();
+}
+
+IoResult AppController::paste_from_clipboard() {
+    std::optional<PixelBuffer> image = Clipboard::get_image();
+    if (!image) return IoResult::failure("The clipboard does not contain an image");
+    return paste_pixels(std::move(*image));
+}
+
+IoResult AppController::paste_from_file(const std::filesystem::path& path) {
+    LoadResult loaded = load(path);
+    if (!loaded.ok) return IoResult::failure(loaded.error);
+    return paste_pixels(std::move(loaded.pixels));
+}
+
+IoResult AppController::paste_pixels(PixelBuffer image) {
+    if (image.width() <= 0 || image.height() <= 0) return IoResult::failure("There is nothing to paste");
+    if (image.width() > kMaxCanvasDimension || image.height() > kMaxCanvasDimension)
+        return IoResult::failure("The image is larger than the canvas limit");
+
+    commit_selection_contents();
+    const int width = std::max(m_document.width(), image.width());
+    const int height = std::max(m_document.height(), image.height());
+    std::vector<PixelBuffer> before = m_document.snapshot();
+    SelectionMask selection_before = m_document.selection();
+
+    // Paint grows the canvas only where the pasted image needs it.
+    if (width != m_document.width() || height != m_document.height())
+        m_document.resize(width, height, Rgba8{255, 255, 255, 255});
+    m_document.active_layer().pixels.blit(0, 0, image);
+    m_document.mark_dirty(m_document.bounds());
+
+    // A whole-layer snapshot is what a canvas change needs: undo has to restore
+    // the pixels and the previous size together.
+    push_geometry_edit(std::move(before), std::move(selection_before));
+    return IoResult::success();
 }
 
 }  // namespace lsp

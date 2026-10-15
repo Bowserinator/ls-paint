@@ -59,6 +59,14 @@ export global UserState  {
     // the C++ side when the user clicks elsewhere or leaves the tool.
     callback commit-text(string);
 
+    // File tab.
+    callback file-new();
+    callback file-open();
+    callback file-save();
+    callback file-save-as();
+    callback file-exit();
+    callback paste-from-file();
+
     in property <[color]> color_palette;
     in-out property <int> color_idx: 0;
     in-out property <color> primary-color: black;
@@ -135,6 +143,9 @@ export global ZoomScale {
 }
 
 export global DocumentState {
+    // The document's name and whether it has been touched since it was saved.
+    in property <string> title: "untitled";
+    in property <bool> modified: false;
     in property <int> canvas-width;
     in property <int> canvas-height;
     in property <bool> has-selection;
@@ -207,4 +218,44 @@ export global TextOverlay {
     in-out property <length> y: 0px;
     in-out property <color> color: black;
     in-out property <string> content: "";
+}
+
+// Which question a file dialog is asking.
+export enum EFileDialogMode { OPEN, SAVE, PASTE }
+
+// The modal surfaces the window can raise: the file picker, the question about
+// unsaved changes, and plain messages. Only one is visible at a time.
+export global DialogState {
+    // Unsaved changes: Save / Don't Save / Cancel.
+    in-out property <bool> confirm-visible: false;
+    in-out property <string> confirm-message: "";
+
+    in-out property <bool> message-visible: false;
+    in-out property <string> message-title: "";
+    in-out property <string> message-text: "";
+
+    in-out property <bool> file-visible: false;
+    in-out property <EFileDialogMode> file-mode: OPEN;
+    in-out property <string> file-title: "Open";
+    in-out property <string> file-accept-text: "Open";
+    in-out property <string> file-path: "";
+    in-out property <string> file-directory: "";
+    // One label per row of the listing, plus the path each label stands for.
+    in-out property <[string]> file-labels: [];
+    in-out property <[string]> file-paths: [];
+    in-out property <int> file-filter: 0;
+    in-out property <int> file-format: 0;
+    in-out property <bool> file-has-error: false;
+    in-out property <string> file-error: "";
+
+    callback file-up();
+    callback file-navigate(int);
+    callback file-choose(int);
+    callback file-filter-changed(int);
+    callback file-ok();
+    callback file-cancel();
+    callback confirm-save();
+    callback confirm-discard();
+    callback confirm-cancel();
+    callback message-ok();
 }

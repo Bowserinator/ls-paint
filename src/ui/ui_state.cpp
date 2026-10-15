@@ -4,12 +4,14 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "config.hpp"
+#include "io/document_io.hpp"
 #include "ui/shortcuts.hpp"
 
 namespace lsp {
@@ -34,8 +36,9 @@ constexpr float kDoubleClickSlop = 4.0f;
 // The picker draws every glyph in this box, whatever the size it shows it at.
 constexpr int kGlyphBox = 26;
 
-// How many kinds the ribbon box shows before the chevron expands it.
-constexpr std::size_t kShapeRibbonCells = 14;
+// How many kinds the ribbon shape box shows before the chevron expands it:
+// three rows of seven, leaving the last two for the gallery popup.
+constexpr std::size_t kShapeRibbonCells = 21;
 
 // Picker order, which the Pickup of the gallery follows: rows of six, starting
 // with the line and the curve and ending with the bolt.
@@ -291,6 +294,10 @@ UiState::UiState(AppWindow& window, AppController& controller)
             case ShortcutAction::Copy: m_controller.copy_selection(); break;
             case ShortcutAction::Paste: m_controller.paste_clipboard(); break;
             case ShortcutAction::SelectAll: m_controller.select_all(); break;
+            case ShortcutAction::New: do_file_new(); break;
+            case ShortcutAction::Open: do_file_open(); break;
+            case ShortcutAction::Save: do_file_save(); break;
+            case ShortcutAction::SaveAs: do_file_save_as(); break;
         }
         refresh();
     });
@@ -322,6 +329,57 @@ UiState::UiState(AppWindow& window, AppController& controller)
             m_controller.transform_selection_contents(transform_from_slint(transform));
             refresh();
         });
+
+    m_window.global<UserState>().on_file_new([this] { do_file_new(); });
+    m_window.global<UserState>().on_file_open([this] { do_file_open(); });
+    m_window.global<UserState>().on_file_save([this] { do_file_save(); });
+    m_window.global<UserState>().on_file_save_as([this] { do_file_save_as(); });
+    m_window.global<UserState>().on_file_exit([this] { do_file_exit(); });
+    m_window.global<UserState>().on_paste_from_file([this] { do_paste_from_file(); });
+
+    auto& dialog = m_window.global<DialogState>();
+    dialog.on_file_up([this] { do_file_up(); });
+    dialog.on_file_navigate([this](int row) { do_file_navigate(row); });
+    dialog.on_file_choose([this](int row) { do_file_navigate(row); });
+    dialog.on_file_filter_changed([this](int index) { do_file_filter_changed(index); });
+    dialog.on_file_ok([this] { do_file_ok(); });
+    dialog.on_file_cancel([this] { do_file_cancel(); });
+    dialog.on_confirm_save([this, &dialog] {
+        dialog.set_confirm_visible(false);
+        m_window.invoke_focus_app();
+        if (!m_controller.has_current_path()) {
+            // The pending action waits while the picker asks where to put it.
+            show_file_dialog(EFileDialogMode::SAVE);
+            return;
+        }
+        if (const IoResult result = m_controller.save_document(); !result.ok) {
+            show_message("Save failed", result.error);
+            return;
+        }
+        set_title();
+        run_pending();
+    });
+    dialog.on_confirm_discard([this, &dialog] {
+        dialog.set_confirm_visible(false);
+        m_window.invoke_focus_app();
+        run_pending();
+    });
+    dialog.on_confirm_cancel([this, &dialog] {
+        dialog.set_confirm_visible(false);
+        m_window.invoke_focus_app();
+        m_pending = PendingAction::None;
+    });
+    dialog.on_message_ok([this, &dialog] {
+        dialog.set_message_visible(false);
+        m_window.invoke_focus_app();
+    });
+
+    // The window's close button asks the same question as File > Exit.
+    m_window.window().on_close_requested([this] {
+        if (!m_controller.history().is_modified()) return slint::CloseRequestResponse::HideWindow;
+        do_file_exit();
+        return slint::CloseRequestResponse::KeepWindowShown;
+    });
 
     refresh();
 
@@ -426,6 +484,7 @@ void UiState::refresh() {
     text_box.set_color(
         slint::Color::from_argb_uint8(text.color.a, text.color.r, text.color.g, text.color.b));
 
+    set_title();
     update_ants();
 }
 
@@ -464,6 +523,239 @@ void UiState::update_ants() {
         grips = grip_anchors(bounds);
     }
     state.set_grips(std::make_shared<slint::VectorModel<SelectionGrip>>(std::move(grips)));
+}
+
+void UiState::set_title() {
+    auto& state = m_window.global<DocumentState>();
+    state.set_title(slint::SharedString(m_controller.display_name()));
+    state.set_modified(m_controller.history().is_modified());
+}
+void UiState::after_document_change() {
+    // A document nobody has moved around yet starts at its own size.
+    m_window.global<UserState>().set_zoom(1.0f);
+    sync_colors();
+    set_title();
+    refresh();
+}
+
+void UiState::ask_unsaved(PendingAction action) {
+    m_pending = action;
+    auto& dialog = m_window.global<DialogState>();
+    dialog.set_confirm_message(slint::SharedString("Do you want to save changes to " +
+                                                  m_controller.display_name() + "?"));
+    dialog.set_confirm_visible(true);
+}
+
+void UiState::run_pending() {
+    const PendingAction action = m_pending;
+    m_pending = PendingAction::None;
+    switch (action) {
+        case PendingAction::None: break;
+        case PendingAction::New:
+            (void)m_controller.new_document();
+            after_document_change();
+            break;
+        case PendingAction::Open: show_file_dialog(EFileDialogMode::OPEN); break;
+        case PendingAction::Exit: m_window.hide(); break;
+    }
+}
+
+void UiState::do_file_new() {
+    // New and Open both throw away what is on the paper, so both ask first.
+    if (m_controller.history().is_modified()) {
+        ask_unsaved(PendingAction::New);
+        return;
+    }
+    m_pending = PendingAction::New;
+    run_pending();
+}
+
+void UiState::do_file_open() {
+    if (m_controller.history().is_modified()) {
+        ask_unsaved(PendingAction::Open);
+        return;
+    }
+    show_file_dialog(EFileDialogMode::OPEN);
+}
+
+void UiState::do_file_save() {
+    if (!m_controller.has_current_path()) {
+        show_file_dialog(EFileDialogMode::SAVE);
+        return;
+    }
+    if (const IoResult result = m_controller.save_document(); !result.ok) {
+        show_message("Save failed", result.error);
+        return;
+    }
+    set_title();
+}
+
+void UiState::do_file_save_as() { show_file_dialog(EFileDialogMode::SAVE); }
+
+void UiState::do_file_exit() {
+    if (m_controller.history().is_modified()) {
+        ask_unsaved(PendingAction::Exit);
+        return;
+    }
+    m_window.hide();
+}
+
+void UiState::do_paste_from_file() { show_file_dialog(EFileDialogMode::PASTE); }
+
+void UiState::show_message(const std::string& title, const std::string& text) {
+    auto& dialog = m_window.global<DialogState>();
+    dialog.set_message_title(slint::SharedString(title));
+    dialog.set_message_text(slint::SharedString(text));
+    dialog.set_message_visible(true);
+}
+
+void UiState::show_file_dialog(EFileDialogMode mode) {
+    auto& dialog = m_window.global<DialogState>();
+    dialog.set_file_mode(mode);
+    dialog.set_file_has_error(false);
+    dialog.set_file_error(slint::SharedString());
+    dialog.set_file_filter(0);
+
+    switch (mode) {
+        case EFileDialogMode::OPEN:
+            dialog.set_file_title(slint::SharedString("Open"));
+            dialog.set_file_accept_text(slint::SharedString("Open"));
+            dialog.set_file_path(slint::SharedString());
+            m_file_dir = m_controller.default_directory();
+            break;
+        case EFileDialogMode::SAVE: {
+            dialog.set_file_title(slint::SharedString("Save As"));
+            dialog.set_file_accept_text(slint::SharedString("Save"));
+            const ImageFormat format = format_from_index(dialog.get_file_format());
+            const std::string stem = m_controller.has_current_path()
+                                         ? m_controller.current_path().stem().string()
+                                         : std::string("untitled");
+            dialog.set_file_path(slint::SharedString(stem + extension_for(format)));
+            m_file_dir = m_controller.default_directory();
+            break;
+        }
+        case EFileDialogMode::PASTE:
+            dialog.set_file_title(slint::SharedString("Paste from file"));
+            dialog.set_file_accept_text(slint::SharedString("Paste"));
+            dialog.set_file_path(slint::SharedString());
+            m_file_dir = m_controller.default_directory();
+            break;
+    }
+
+    dialog.set_file_visible(true);
+    refresh_file_dialog();
+}
+
+void UiState::refresh_file_dialog() {
+    auto& dialog = m_window.global<DialogState>();
+    dialog.set_file_directory(slint::SharedString(m_file_dir.string()));
+
+    const bool images_only = dialog.get_file_filter() == 0;
+    m_listing = m_controller.list_directory(m_file_dir, images_only);
+
+    auto labels = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    auto paths = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    for (const std::filesystem::path& entry : m_listing) {
+        std::string name = entry.filename().string();
+        if (std::filesystem::is_directory(entry)) name += "/";
+        labels->push_back(slint::SharedString(name));
+        paths->push_back(slint::SharedString(entry.string()));
+    }
+    dialog.set_file_labels(labels);
+    dialog.set_file_paths(paths);
+}
+
+void UiState::do_file_up() {
+    if (!m_file_dir.has_parent_path()) return;
+    m_file_dir = m_file_dir.parent_path();
+    refresh_file_dialog();
+}
+
+void UiState::do_file_navigate(int row) {
+    if (row < 0 || static_cast<std::size_t>(row) >= m_listing.size()) return;
+
+    const std::filesystem::path& entry = m_listing[static_cast<std::size_t>(row)];
+    if (std::filesystem::is_directory(entry)) {
+        m_file_dir = entry;
+        refresh_file_dialog();
+        return;
+    }
+    // A file click only names it: the accept button does the opening, so a
+    // misclick cannot replace the document.
+    m_window.global<DialogState>().set_file_path(slint::SharedString(entry.filename().string()));
+}
+
+void UiState::do_file_filter_changed(int index) {
+    auto& dialog = m_window.global<DialogState>();
+    if (dialog.get_file_mode() == EFileDialogMode::SAVE) {
+        dialog.set_file_format(index);
+        std::filesystem::path path(std::string(dialog.get_file_path()));
+        if (!path.empty()) {
+            path.replace_extension(extension_for(format_from_index(index)));
+            dialog.set_file_path(slint::SharedString(path.string()));
+        }
+    } else {
+        dialog.set_file_filter(index);
+    }
+    refresh_file_dialog();
+}
+
+void UiState::do_file_ok() {
+    auto& dialog = m_window.global<DialogState>();
+    std::filesystem::path path(std::string(dialog.get_file_path()));
+    if (path.empty()) return;
+    if (path.is_relative()) path = m_file_dir / path;
+
+    const auto report = [&dialog](const std::string& error) {
+        dialog.set_file_error(slint::SharedString(error));
+        dialog.set_file_has_error(true);
+    };
+
+    if (dialog.get_file_mode() == EFileDialogMode::SAVE) {
+        const ImageFormat format = format_from_index(dialog.get_file_format());
+        if (!path.has_extension()) path += extension_for(format);
+        const IoResult result = m_controller.save_document(path, format);
+        if (!result.ok) {
+            report(result.error);
+            return;
+        }
+        dialog.set_file_visible(false);
+        dialog.set_file_has_error(false);
+        set_title();
+        m_window.invoke_focus_app();
+        // A save that was asked for by the unsaved-changes question finishes
+        // whatever the user was doing when it appeared.
+        run_pending();
+        return;
+    }
+
+    if (dialog.get_file_mode() == EFileDialogMode::PASTE) {
+        const IoResult result = m_controller.paste_from_file(path);
+        if (!result.ok) {
+            report(result.error);
+            return;
+        }
+        dialog.set_file_visible(false);
+        m_window.invoke_focus_app();
+        refresh();
+        return;
+    }
+
+    const IoResult result = m_controller.open_document(path);
+    if (!result.ok) {
+        report(result.error);
+        return;
+    }
+    dialog.set_file_visible(false);
+    dialog.set_file_has_error(false);
+    m_window.invoke_focus_app();
+    after_document_change();
+}
+
+void UiState::do_file_cancel() {
+    m_window.global<DialogState>().set_file_visible(false);
+    m_window.invoke_focus_app();
+    m_pending = PendingAction::None;
 }
 
 }  // namespace lsp

@@ -171,6 +171,20 @@ export component ImageButtonHorizontal inherits ImageButtonBase {
     }
 }
 
+// A text-only ribbon button, for the File tab where no icon exists.
+export component BarButton inherits ImageButtonBase {
+    in-out property text <=> txt.text;
+
+    HorizontalLayout {
+        padding: Styles.bar-padding;
+        padding-top: Styles.bar-padding / 2;
+        padding-bottom: Styles.bar-padding / 2;
+        alignment: center;
+
+        txt := ButtonText { font-size: root.font-size; }
+    }
+}
+
 // Just a small icon button
 export component ImageButtonIcon inherits ImageButtonBase {
     width: Styles.bar-small-icon-size + 2 * Styles.bar-padding;

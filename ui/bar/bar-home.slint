@@ -90,62 +90,67 @@ export component HomeBar inherits Bar {
     private property <length> strip-width: 0px;
     changed width => { root.strip-width = self.width; }
 
-    // The groups left of each collapsible group, expanded. The width of a group
-    // to the right of another is read through its width-* property instead, so a
-    // group gives way only once the groups after it are not enough on their own.
-    private property <length> left-of-image:
-        Styles.ribbon-width-clipboard + Styles.ribbon-divider;
-    private property <length> left-of-tools:
-        left-of-image + Styles.ribbon-width-image + Styles.ribbon-divider;
-    private property <length> left-of-brushes:
-        left-of-tools + Styles.ribbon-width-tools + Styles.ribbon-divider;
-    private property <length> left-of-shapes:
-        left-of-brushes + Styles.ribbon-width-brushes + Styles.ribbon-divider;
-    private property <length> left-of-size:
-        left-of-shapes + Styles.ribbon-width-shapes + Styles.ribbon-divider;
-    private property <length> left-of-colors:
-        left-of-size + Styles.ribbon-width-size + Styles.ribbon-divider;
-
-    private property <bool> collapsed-colors:
-        root.strip-width < left-of-colors + Styles.ribbon-width-colors + Styles.ribbon-divider
-            + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
-    private property <length> width-colors:
-        collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
-
-    private property <bool> collapsed-shapes:
-        root.strip-width < left-of-shapes + Styles.ribbon-width-shapes + Styles.ribbon-divider
-            + Styles.ribbon-width-size + Styles.ribbon-divider + width-colors
-            + Styles.ribbon-divider + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
-    private property <length> width-shapes:
-        collapsed-shapes ? Styles.ribbon-merged-width : Styles.ribbon-width-shapes;
-
-    private property <bool> collapsed-tools:
-        root.strip-width < left-of-tools + Styles.ribbon-width-tools + Styles.ribbon-divider
-            + Styles.ribbon-width-brushes + Styles.ribbon-divider + width-shapes
-            + Styles.ribbon-divider + Styles.ribbon-width-size + Styles.ribbon-divider
-            + width-colors + Styles.ribbon-divider + Styles.ribbon-width-about
-            + Styles.ribbon-overflow-margin;
-    private property <length> width-tools:
-        collapsed-tools ? Styles.ribbon-merged-width : Styles.ribbon-width-tools;
-
-    private property <bool> collapsed-image:
-        root.strip-width < left-of-image + Styles.ribbon-width-image + Styles.ribbon-divider
-            + width-tools + Styles.ribbon-divider + Styles.ribbon-width-brushes
-            + Styles.ribbon-divider + width-shapes + Styles.ribbon-divider
-            + Styles.ribbon-width-size + Styles.ribbon-divider + width-colors
-            + Styles.ribbon-divider + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
-    private property <length> width-image:
-        collapsed-image ? Styles.ribbon-merged-width : Styles.ribbon-width-image;
+    // The groups give way from the left: the Clipboard merges first and the
+    // Colors group last, so the palette stays up for as long as the ribbon can
+    // hold it. A group merges once the ribbon is narrower than the groups up to
+    // and including it, every one of them showing its full content, so no group
+    // is ever squeezed and the ribbon never runs out of room.
+    //
+    // The span-* sums are constant. Only a group's own width-* property is
+    // decided by its own condition, and each condition reads the width-*
+    // properties of the groups to its left, which are already decided.
+    private property <length> span-image:
+        Styles.ribbon-width-image + Styles.ribbon-divider + Styles.ribbon-width-tools
+            + Styles.ribbon-divider + Styles.ribbon-width-brushes + Styles.ribbon-divider
+            + Styles.ribbon-width-shapes + Styles.ribbon-divider + Styles.ribbon-width-size
+            + Styles.ribbon-divider + Styles.ribbon-width-colors + Styles.ribbon-divider
+            + Styles.ribbon-width-about;
+    private property <length> span-tools:
+        Styles.ribbon-width-tools + Styles.ribbon-divider + Styles.ribbon-width-brushes
+            + Styles.ribbon-divider + Styles.ribbon-width-shapes + Styles.ribbon-divider
+            + Styles.ribbon-width-size + Styles.ribbon-divider + Styles.ribbon-width-colors
+            + Styles.ribbon-divider + Styles.ribbon-width-about;
+    private property <length> span-shapes:
+        Styles.ribbon-width-shapes + Styles.ribbon-divider + Styles.ribbon-width-size
+            + Styles.ribbon-divider + Styles.ribbon-width-colors + Styles.ribbon-divider
+            + Styles.ribbon-width-about;
+    private property <length> span-colors:
+        Styles.ribbon-width-colors + Styles.ribbon-divider + Styles.ribbon-width-about;
 
     private property <bool> collapsed-clipboard:
-        root.strip-width < Styles.ribbon-width-clipboard + Styles.ribbon-divider
-            + width-image + Styles.ribbon-divider + width-tools + Styles.ribbon-divider
-            + Styles.ribbon-width-brushes + Styles.ribbon-divider + width-shapes
-            + Styles.ribbon-divider + Styles.ribbon-width-size + Styles.ribbon-divider
-            + width-colors + Styles.ribbon-divider + Styles.ribbon-width-about
+        root.strip-width < Styles.ribbon-width-clipboard + Styles.ribbon-divider + span-image
             + Styles.ribbon-overflow-margin;
     private property <length> width-clipboard:
         collapsed-clipboard ? Styles.ribbon-merged-width : Styles.ribbon-width-clipboard;
+
+    private property <bool> collapsed-image:
+        root.strip-width < width-clipboard + Styles.ribbon-divider + span-image
+            + Styles.ribbon-overflow-margin;
+    private property <length> width-image:
+        collapsed-image ? Styles.ribbon-merged-width : Styles.ribbon-width-image;
+
+    private property <bool> collapsed-tools:
+        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
+            + Styles.ribbon-divider + span-tools + Styles.ribbon-overflow-margin;
+    private property <length> width-tools:
+        collapsed-tools ? Styles.ribbon-merged-width : Styles.ribbon-width-tools;
+
+    private property <bool> collapsed-shapes:
+        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
+            + Styles.ribbon-divider + width-tools + Styles.ribbon-divider
+            + Styles.ribbon-width-brushes + Styles.ribbon-divider + span-shapes
+            + Styles.ribbon-overflow-margin;
+    private property <length> width-shapes:
+        collapsed-shapes ? Styles.ribbon-width-shapes-merged : Styles.ribbon-width-shapes;
+
+    private property <bool> collapsed-colors:
+        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
+            + Styles.ribbon-divider + width-tools + Styles.ribbon-divider
+            + Styles.ribbon-width-brushes + Styles.ribbon-divider + width-shapes
+            + Styles.ribbon-divider + Styles.ribbon-width-size + Styles.ribbon-divider
+            + span-colors + Styles.ribbon-overflow-margin;
+    private property <length> width-colors:
+        collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
 
     HorizontalLayout {
         grp-clipboard := BarItemGroup {
@@ -183,7 +188,7 @@ export component HomeBar inherits Bar {
 
             HorizontalLayout {
                 clipboard-dropdown-btn := ImageButtonVerticalDropdown {
-                    text: collapsed-clipboard ? "Clipboard" : "Paste";
+                    text: "Paste";
                     icon: @image-url("../../icons/paste.png");
 
                     clicked => { UserState.paste-selection(); }
@@ -642,16 +647,17 @@ export component HomeBar inherits Bar {
 
             Rectangle {
                 visible: !collapsed-shapes;
-                width: 300px;
-                height: 2 * Styles.ribbon-shape-cell;
+                width: collapsed-shapes ? 0px : 7 * Styles.ribbon-shape-cell + 18px;
+                height: 3 * Styles.ribbon-shape-cell;
 
-                // The shape box: two rows of kinds with the rest behind the
-                // chevron, and the outline and fill choices beside it.
+                // The shape box: three rows of kinds, with the whole gallery
+                // behind the chevron.
                 shape-box := Rectangle {
                     x: 0px;
                     y: 0px;
                     width: 7 * Styles.ribbon-shape-cell;
-                    height: 2 * Styles.ribbon-shape-cell;
+                    height: 3 * Styles.ribbon-shape-cell;
+                    clip: true;
 
                     for glyph[i] in ShapeGallery.ribbon: ShapeGlyphButton {
                         x: mod(i, 7) * Styles.ribbon-shape-cell;
@@ -666,10 +672,10 @@ export component HomeBar inherits Bar {
                 }
 
                 Rectangle {
-                    x: 184px;
+                    x: 7 * Styles.ribbon-shape-cell;
                     y: 0px;
                     width: 16px;
-                    height: 2 * Styles.ribbon-shape-cell;
+                    height: 3 * Styles.ribbon-shape-cell;
                     background: transparent;
 
                     TouchArea {
@@ -684,22 +690,23 @@ export component HomeBar inherits Bar {
                         vertical-alignment: center;
                     }
                 }
+            }
+
+            // The outline and fill choices stay up whether or not the shape box
+            // is showing: only the box itself goes into the popup.
+            VerticalLayout {
+                alignment: center;
+                spacing: Styles.bar-list-spacing;
 
                 outline-btn := ImageButtonHorizontal {
-                    x: 204px;
-                    y: 0px;
                     width: 96px;
-                    height: Styles.ribbon-shape-cell;
                     text: "Outline ▾";
                     icon: @image-url("../../icons/shape-outline.png");
                     clicked => { outline-dropdown.show(); }
                 }
 
                 fill-btn := ImageButtonHorizontal {
-                    x: 204px;
-                    y: Styles.ribbon-shape-cell;
                     width: 96px;
-                    height: Styles.ribbon-shape-cell;
                     text: "Fill ▾";
                     icon: @image-url("../../icons/shape-fill.png");
                     clicked => { fill-dropdown.show(); }
@@ -872,9 +879,9 @@ export component HomeBar inherits Bar {
         grp-about := BarItemGroup {
             title: "";
             ImageButtonVertical {
-                width: 92px;
+                width: 76px;
                 icon: @image-url("../../icons/about.png");
-                text: "About Program";
+                text: "About";
 
                 clicked => { about-window.show(); }
             }

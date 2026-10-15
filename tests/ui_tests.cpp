@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <memory>
+#include <string>
 
 #include "app/app_controller.hpp"
 #include "appwindow.h"
@@ -57,6 +59,8 @@ public:
 
     [[nodiscard]] const UserState& user() const { return m_window->global<UserState>(); }
     [[nodiscard]] const DocumentState& doc() const { return m_window->global<DocumentState>(); }
+    [[nodiscard]] const DialogState& dialogs() const { return m_window->global<DialogState>(); }
+    [[nodiscard]] const ToolOptions& tool_options() const { return m_window->global<ToolOptions>(); }
     [[nodiscard]] AppController& controller() { return m_controller; }
 
     [[nodiscard]] const ShapeStyle& shapes() const { return m_window->global<ShapeStyle>(); }
@@ -628,6 +632,97 @@ int run_ui_tests() {
     h.release_ctrl();
     h.scroll(origin.x + 300, origin.y + 300, 60);
     CHECK(std::abs(h.user().get_zoom() - z_bank * 1.25) < 0.0001);  // pan only
+
+    // 20. A drawing carries the unsaved marker, and the title names the paper.
+    CHECK(h.doc().get_modified());
+    CHECK(h.doc().get_title() == "untitled");
+
+    // 21. Ctrl+S on a document that was never named asks where to put it, and
+    //     walking away from the question changes nothing.
+    h.press_ctrl();
+    h.key("s");
+    h.release_ctrl();
+    CHECK(h.dialogs().get_file_visible());
+    CHECK(h.dialogs().get_file_mode() == EFileDialogMode::SAVE);
+    h.dialogs().invoke_file_cancel();
+    CHECK(!h.dialogs().get_file_visible());
+
+    // 22. Ctrl+N over unsaved work asks first: cancelling keeps the paper.
+    h.press_ctrl();
+    h.key("n");
+    h.release_ctrl();
+    CHECK(h.dialogs().get_confirm_visible());
+    h.dialogs().invoke_confirm_cancel();
+    CHECK(!h.dialogs().get_confirm_visible());
+    CHECK(h.doc().get_modified());
+
+    // 23. Saving names the document, clears the marker, and the file it writes
+    //     opens again. The mark is drawn in a corner no earlier step touched.
+    h.user().set_selected_tool(ETool::PENCIL);
+    h.user().set_primary_color(slint::Color::from_rgb_uint8(0, 0, 255));
+    h.tool_options().set_brush_size(8);
+    h.drag(origin.x + 600, origin.y + 60, origin.x + 700, origin.y + 60);
+    CHECK(h.count_color(600, 54, 700, 66, 0, 0, 255) > 0);
+
+    const std::filesystem::path save_path =
+        std::filesystem::temp_directory_path() / "ls_paint_ui_round_trip.png";
+    std::filesystem::remove(save_path);
+    h.press_ctrl();
+    h.key("s");
+    h.release_ctrl();
+    CHECK(h.dialogs().get_file_visible());
+    h.dialogs().set_file_path(slint::SharedString(save_path.string()));
+    h.dialogs().invoke_file_ok();
+    CHECK(!h.dialogs().get_file_visible());
+    CHECK(std::filesystem::exists(save_path));
+    CHECK(h.doc().get_title() == "ls_paint_ui_round_trip.png");
+    CHECK(!h.doc().get_modified());
+
+    // 24. Ctrl+N over a saved document asks nothing and empties the paper.
+    h.press_ctrl();
+    h.key("n");
+    h.release_ctrl();
+    CHECK(!h.dialogs().get_confirm_visible());
+    CHECK(h.doc().get_title() == "untitled");
+    CHECK(!h.doc().get_modified());
+    CHECK(h.count_color(600, 54, 700, 66, 0, 0, 255) == 0);
+
+    // 25. Ctrl+O brings the saved file back, mark and all.
+    h.press_ctrl();
+    h.key("o");
+    h.release_ctrl();
+    CHECK(h.dialogs().get_file_visible());
+    CHECK(h.dialogs().get_file_mode() == EFileDialogMode::OPEN);
+    h.dialogs().set_file_path(slint::SharedString(save_path.string()));
+    h.dialogs().invoke_file_ok();
+    CHECK(!h.dialogs().get_file_visible());
+    CHECK(h.count_color(600, 54, 700, 66, 0, 0, 255) > 0);
+    CHECK(h.doc().get_title() == "ls_paint_ui_round_trip.png");
+    CHECK(!h.doc().get_modified());
+
+    // 26. A file that is not there reports itself inside the dialog and leaves
+    //     the dialog up, so the mistake can be corrected.
+    h.press_ctrl();
+    h.key("o");
+    h.release_ctrl();
+    h.dialogs().set_file_path(slint::SharedString("/nonexistent/ls_paint_none.png"));
+    h.dialogs().invoke_file_ok();
+    CHECK(h.dialogs().get_file_visible());
+    CHECK(h.dialogs().get_file_has_error());
+    h.dialogs().invoke_file_cancel();
+    CHECK(!h.dialogs().get_file_visible());
+
+    // 27. Paste from file adds the picture to the paper as an edit.
+    h.user().invoke_paste_from_file();
+    CHECK(h.dialogs().get_file_visible());
+    CHECK(h.dialogs().get_file_mode() == EFileDialogMode::PASTE);
+    h.dialogs().set_file_path(slint::SharedString(save_path.string()));
+    h.dialogs().invoke_file_ok();
+    CHECK(!h.dialogs().get_file_visible());
+    CHECK(!h.dialogs().get_file_has_error());
+    CHECK(h.doc().get_modified());
+
+    std::filesystem::remove(save_path);
 
     if (g_failures != 0) {
         std::fprintf(stderr, "%d UI check(s) failed\n", g_failures);

@@ -1,12 +1,15 @@
-import { Button, VerticalBox, ScrollView } from "std-widgets.slint";
+import { Button, VerticalBox, ScrollView, Palette } from "std-widgets.slint";
 import { TopBar } from "topbar.slint";
 import { TextOptionsBar } from "bar/bar-options.slint";
 import { StatusBar } from "statusbar.slint";
 import { CanvasResizeHandle } from "components/canvas-resize-handle.slint";
 import { CanvasMenuItem, CanvasMenuDivider, CanvasMenuFrame } from "components/canvas-menu.slint";
 import { CanvasShadow } from "components/canvas-shadow.slint";
+import { FileDialog } from "dialogs/file-dialog.slint";
+import { ConfirmDialog } from "dialogs/confirm-dialog.slint";
+import { MessageDialog } from "dialogs/message-dialog.slint";
 
-import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay } from "globals.slint";
+import { UserState, DocumentState, DialogState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay } from "globals.slint";
 export * from "globals.slint";
 
 export component AppWindow inherits Window {
@@ -40,9 +43,13 @@ export component AppWindow inherits Window {
     preferred-height: 600px;
     preferred-width: 900px;
 
+    // A dialog takes the keyboard while it is up; this hands it back when it
+    // closes, because a control that goes away does not give focus back.
+    public function focus-app() { focus-scope.focus(); }
+
     // Global styles
     default-font-family: "Segoe UI";
-    title: "LS Paint";
+    title: (DocumentState.modified ? DocumentState.title + " *" : DocumentState.title) + " - LS Paint";
 
     function resize-canvas(dx: length, dy: length) {
         // The grips report screen deltas; the document only grows by their
@@ -116,7 +123,13 @@ export component AppWindow inherits Window {
         }
     }
 
-    init => { focus-scope.focus(); }
+    init => {
+        // The chrome this program draws is light, so the stock widgets are held
+        // to the light palette too: on a dark desktop they would otherwise draw
+        // white text on our white dialogs.
+        Palette.color-scheme = ColorScheme.light;
+        focus-scope.focus();
+    }
 
     focus-scope := FocusScope {
         width: 100%;
@@ -472,5 +485,10 @@ export component AppWindow inherits Window {
                 zoom-step(dir) => { root.step-zoom(dir); }
             }
         }
+
+        // Modal surfaces, declared last so they cover the whole window.
+        if DialogState.file-visible : FileDialog {}
+        if DialogState.confirm-visible : ConfirmDialog {}
+        if DialogState.message-visible : MessageDialog {}
     }
 }

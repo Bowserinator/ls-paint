@@ -2,8 +2,45 @@
 
 ## Status
 
-Everything below was verified by reading the repo (and the vendored Slint 1.17.1 sources
-under `build/_deps/slint-src`), not assumed.
+**Built.** The "As built" section below records what shipped; the rest of this
+document is the original design and stays as the record of what was planned.
+
+## As built
+
+- `src/io/document_io.{hpp,cpp}` — `ImageFormat`, `LoadResult`, `load`, `save`,
+  `format_from_extension`, `extension_for`, `format_from_index`, `index_from`,
+  `flatten_to_opaque`, over stb_image and stb_image_write.
+- `src/io/stb_impl.cpp` — the single implementation unit for both stb image
+  headers.
+- `src/io/clipboard.{hpp,cpp}` — `Clipboard::set_image`/`get_image` over the
+  vendored `third_party/clip`, converting between its RGBA spec and `Rgba8`.
+- `src/history/history_stack.{hpp,cpp}` — gained `clear()`, `is_modified()` and
+  `mark_clean()`; every push, undo and redo marks the document modified.
+- `src/app/app_controller.{hpp,cpp}` — `IoResult`, `new_document`,
+  `open_document`, `save_document`, `display_name`, `default_directory`,
+  `list_directory`, `copy_to_clipboard`, `paste_from_clipboard`,
+  `paste_from_file`, `copy_source_rect`.
+- `ui/topbar.slint` — the classic File/Home/View tab strip; the std-widgets
+  tabs looked like a different application's chrome.
+- `ui/bar/bar-file.slint` — the File menu: New, Open, Save, Save As, Exit.
+- `ui/dialogs/{file-dialog,confirm-dialog,message-dialog}.slint` — the modal
+  file browser, the unsaved-changes question and the error box.
+- `ui/globals.slint` — `DocumentState.title`/`modified`, `DialogState`,
+  `EFileDialogMode`, and the `file-*` / `paste-from-file` callbacks.
+- `src/ui/ui_state.{hpp,cpp}` — the dialog driving, the pending-action state
+  machine, the window title and the close request handler.
+- `tests/io_test.cpp` and the file steps in `tests/ui_tests.cpp`.
+
+Differences from the design above: `CanvasDocument` needed no new API —
+`restore(...)` replaces the planned `replace_contents()` and `resize(w, h, fill)`
+is the planned `set_size()`, keeping the overlap and filling the new area; the
+planned `ClipboardPasteCommand` was not written because the existing
+`CanvasResizeCommand` already expresses a whole-image paste, so one undo restores
+the pixels *and* the old canvas size; the size guard is `kMaxImageDimension`
+beside the existing `kMaxCanvasDimension`; stb is fetched with `FetchContent`,
+while clip and the DejaVu faces are vendored copies.
+
+The tree before this milestone (verified by reading the code, not assumed):
 
 Already present:
 
