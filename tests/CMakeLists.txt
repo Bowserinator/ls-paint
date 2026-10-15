@@ -17,6 +17,16 @@ target_include_directories(lsp_ui_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/appwindow.slint)
 add_test(NAME lsp_ui_tests COMMAND lsp_ui_tests)
 
+# Screenshot tool: renders the app at a matrix of window sizes and writes one
+# PNG per size, for checking ribbon layout by eye.
+add_custom_target(snapshots
+    COMMAND tests/snapshots/snapshot.sh $<TARGET_FILE:ls_paint> ${CMAKE_BINARY_DIR}/snapshots
+    DEPENDS ls_paint
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Writing window screenshots to ${CMAKE_BINARY_DIR}/snapshots"
+    VERBATIM
+)
+
 if(MSVC)
     foreach(target lsp_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE /W4)
