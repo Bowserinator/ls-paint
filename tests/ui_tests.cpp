@@ -59,7 +59,20 @@ public:
     [[nodiscard]] const DocumentState& doc() const { return m_window->global<DocumentState>(); }
     [[nodiscard]] AppController& controller() { return m_controller; }
 
-    void move(float x, float y) { m_window->window().dispatch_pointer_move_event(slint::LogicalPosition({x, y})); }
+    [[nodiscard]] const ShapeStyle& shapes() const { return m_window->global<ShapeStyle>(); }
+
+    [[nodiscard]] const ShapeOverlay& overlay() const { return m_window->global<ShapeOverlay>(); }
+
+    [[nodiscard]] const TextOverlay& text_box() const { return m_window->global<TextOverlay>(); }
+
+    [[nodiscard]] std::size_t gallery_size() const {
+        return m_window->global<ShapeGallery>().get_items()->row_count();
+    }
+
+    void move(float x, float y) {
+        CHECK(in_window(x, y));
+        m_window->window().dispatch_pointer_move_event(slint::LogicalPosition({x, y}));
+    }
 
     void press(float x, float y, PointerEventButton button = PointerEventButton::Left) {
         move(x, y);
@@ -94,10 +107,20 @@ public:
 
     void release_alt() { m_window->window().dispatch_key_release_event(slint::SharedString("\x12")); }
 
+    // One press and release of a key, named by the text the platform reports
+    // for it: a character, "\n" for Enter and "\u{1b}" for Escape.
+    void key(const std::string& code) {
+        m_window->window().dispatch_key_press_event(slint::SharedString(code));
+        m_window->window().dispatch_key_release_event(slint::SharedString(code));
+    }
+
+    void type(const std::string& text) {
+        for (const char letter : text) key(std::string(1, letter));
+    }
+
     [[nodiscard]] std::size_t popups() const {
         return slint::private_api::testing::active_popup_count(&*m_window);
     }
-
     // True when any pixel in the document is (approximately) the given colour.
     [[nodiscard]] bool any_pixel_is(unsigned char r, unsigned char g, unsigned char b,
                                     int within = 2) {
@@ -139,7 +162,43 @@ public:
         return color_near(x, y, 255, 0, 0, radius);
     }
 
+    // How many document pixels near the given colour a rectangle holds.
+    // Ink is anti-aliased, so a glyph has few or no pixels of the pure ink
+    // colour. This counts darkened pixels instead, whatever shade they took.
+    [[nodiscard]] int count_ink(int x0, int y0, int x1, int y1) {
+        const PixelBuffer& buffer = m_controller.document().flattened();
+        int count = 0;
+        for (int y = std::max(0, y0); y <= std::min(buffer.height() - 1, y1); ++y) {
+            for (int x = std::max(0, x0); x <= std::min(buffer.width() - 1, x1); ++x) {
+                const Rgba8& pixel = buffer.at(x, y);
+                if (pixel.a > 200 && (pixel.r < 250 || pixel.g < 250 || pixel.b < 250)) ++count;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] int count_color(int x0, int y0, int x1, int y1, unsigned char r, unsigned char g,
+                                  unsigned char b) {
+        const PixelBuffer& buffer = m_controller.document().flattened();
+        int count = 0;
+        for (int y = std::max(0, y0); y <= std::min(buffer.height() - 1, y1); ++y) {
+            for (int x = std::max(0, x0); x <= std::min(buffer.width() - 1, x1); ++x) {
+                const Rgba8& pixel = buffer.at(x, y);
+                if (pixel.a > 200 && abs(int(pixel.r) - int(r)) <= 2 &&
+                    abs(int(pixel.g) - int(g)) <= 2 && abs(int(pixel.b) - int(b)) <= 2)
+                    ++count;
+            }
+        }
+        return count;
+    }
+
 private:
+    // An event outside the window is dropped, which would leave a tool mid
+    // drag and look like a broken tool rather than a bad test coordinate.
+    [[nodiscard]] static bool in_window(float x, float y) {
+        return x >= 0 && y >= 0 && x <= kWindowWidth && y <= kWindowHeight;
+    }
+
     slint::ComponentHandle<AppWindow> m_window;
     AppController m_controller;
     std::unique_ptr<UiState> m_ui;
@@ -326,6 +385,168 @@ int run_ui_tests() {
 
     h.move(origin.x - 2, origin.y - 2);
     CHECK(!h.user().get_cursor_on_canvas());
+
+    // 15c. The Shapes tool: a press shows a live overlay that never touches the
+    //      raster, and the release commits the whole shape as one entry, so a
+    //      single undo takes it back to blank paper.
+    h.user().set_primary_color(slint::Color::from_rgb_uint8(0, 0, 255));
+    h.user().set_secondary_color(slint::Color::from_rgb_uint8(255, 255, 0));
+    h.shapes().set_kind(EShapeKind::OVAL);
+    h.shapes().set_mode(EShapeMode::OUTLINE);
+    h.shapes().set_thickness(1);
+    h.user().set_selected_tool(ETool::SHAPE);
+
+    h.press(origin.x + 420, origin.y + 60);
+    h.move(origin.x + 470, origin.y + 110);
+    CHECK(h.controller().tool_ui().shape.visible);
+    CHECK(!h.controller().tool_ui().shape.commands.empty());
+    CHECK(h.overlay().get_visible());
+    CHECK(h.count_color(418, 58, 472, 112, 0, 0, 255) == 0);
+    h.release(origin.x + 470, origin.y + 110);
+    CHECK(!h.overlay().get_visible());
+    CHECK(h.count_color(418, 58, 472, 112, 0, 0, 255) > 0);
+    CHECK(!h.color_near(445, 85, 0, 0, 255));  // an outline leaves the middle empty
+
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
+    CHECK(h.count_color(418, 58, 472, 112, 0, 0, 255) == 0);
+
+    //      Every kind the picker offers draws inside its own drag box, and one
+    //      undo takes each of them back. The polygon has its own step below:
+    //      it closes on a click instead of on the button release.
+    const EShapeKind kinds[] = {
+        EShapeKind::LINE,           EShapeKind::CURVE,          EShapeKind::OVAL,
+        EShapeKind::RECTANGLE,      EShapeKind::ROUNDEDRECTANGLE, EShapeKind::TRIANGLE,
+        EShapeKind::RIGHTTRIANGLE,  EShapeKind::DIAMOND,        EShapeKind::PENTAGON,
+        EShapeKind::HEXAGON,        EShapeKind::ARROWRIGHT,     EShapeKind::ARROWLEFT,
+        EShapeKind::ARROWUP,        EShapeKind::ARROWDOWN,      EShapeKind::STAR4,
+        EShapeKind::STAR5,          EShapeKind::STAR6,          EShapeKind::CALLOUTROUNDED,
+        EShapeKind::CALLOUTOVAL,    EShapeKind::CALLOUTCLOUD,   EShapeKind::HEART,
+        EShapeKind::LIGHTNING};
+    constexpr int kKindColumns = 5;
+    for (int i = 0; i < int(sizeof(kinds) / sizeof(kinds[0])); ++i) {
+        const int x0 = 420 + (i % kKindColumns) * 70;
+        const int y0 = 60 + (i / kKindColumns) * 70;
+        h.shapes().set_kind(kinds[i]);
+        h.drag(origin.x + float(x0), origin.y + float(y0), origin.x + float(x0 + 50),
+               origin.y + float(y0 + 50));
+        CHECK(h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 0, 0, 255) > 0);
+        h.controller().history().undo();
+        (void)h.controller().document().flush();
+        CHECK(h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 0, 0, 255) == 0);
+    }
+
+    // 15d. Outline, fill and both: the fill reaches the middle in the second
+    //      colour, and a thicker outline covers more pixels than a thin one.
+    h.shapes().set_kind(EShapeKind::OVAL);
+    h.shapes().set_mode(EShapeMode::OUTLINE);
+    h.shapes().set_thickness(1);
+    h.drag(origin.x + 420, origin.y + 60, origin.x + 470, origin.y + 110);
+    const int thin_outline = h.count_color(418, 58, 472, 112, 0, 0, 255);
+
+    h.shapes().set_thickness(6);
+    h.drag(origin.x + 560, origin.y + 60, origin.x + 610, origin.y + 110);
+    CHECK(h.count_color(558, 58, 612, 112, 0, 0, 255) > thin_outline);
+
+    h.shapes().set_mode(EShapeMode::FILL);
+    h.shapes().set_thickness(1);
+    h.drag(origin.x + 630, origin.y + 60, origin.x + 680, origin.y + 110);
+    CHECK(h.color_near(655, 85, 255, 255, 0));  // the fill takes Color 2, and
+    CHECK(h.count_color(628, 58, 682, 112, 0, 0, 255) == 0);  // no outline at all
+
+    h.shapes().set_mode(EShapeMode::BOTH);
+    h.drag(origin.x + 700, origin.y + 60, origin.x + 750, origin.y + 110);
+    CHECK(h.color_near(725, 85, 255, 255, 0));  // the interior takes Color 2
+    CHECK(h.count_color(698, 58, 752, 112, 0, 0, 255) > 0);
+
+    // 15e. The polygon builds up click by click, and a click back on its first
+    //      vertex closes it into one committed shape.
+    h.shapes().set_kind(EShapeKind::POLYGON);
+    h.shapes().set_mode(EShapeMode::OUTLINE);
+    h.shapes().set_thickness(1);
+    h.press(origin.x + 420, origin.y + 200);
+    h.release(origin.x + 420, origin.y + 200);
+    h.press(origin.x + 520, origin.y + 200);
+    h.release(origin.x + 520, origin.y + 200);
+    h.press(origin.x + 470, origin.y + 290);
+    h.release(origin.x + 470, origin.y + 290);
+    CHECK(h.count_color(418, 198, 522, 292, 0, 0, 255) == 0);  // still open
+    h.press(origin.x + 424, origin.y + 203);  // inside the closing radius
+    h.release(origin.x + 424, origin.y + 203);
+    CHECK(!h.controller().tool_ui().shape.visible);
+    CHECK(h.count_color(418, 198, 522, 292, 0, 0, 255) > 0);
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
+    CHECK(h.count_color(418, 198, 522, 292, 0, 0, 255) == 0);
+
+    // 15f. An active selection clips the shape: the drag reaches past it, but
+    //      nothing outside the selection is written. The tool is left as the
+    //      pencil, which is what the view steps below expect.
+    h.shapes().set_kind(EShapeKind::RECTANGLE);
+    h.shapes().set_mode(EShapeMode::OUTLINE);
+    h.shapes().set_thickness(1);
+    h.user().set_selected_tool(ETool::SELECTION);
+    h.drag(origin.x + 400, origin.y + 300, origin.x + 500, origin.y + 350);
+    CHECK(h.doc().get_has_selection());
+    h.user().set_selected_tool(ETool::SHAPE);
+    h.drag(origin.x + 400, origin.y + 300, origin.x + 560, origin.y + 350);
+    CHECK(h.count_color(402, 296, 498, 354, 0, 0, 255) > 0);
+    CHECK(h.count_color(505, 296, 565, 354, 0, 0, 255) == 0);
+    h.user().invoke_clear_selection();
+    CHECK(!h.doc().get_has_selection());
+    h.user().set_selected_tool(ETool::PENCIL);
+
+    // 15g. The picker carries one glyph per kind, built from the geometry the
+    //      tool draws with.
+    CHECK(h.gallery_size() == 23);
+
+    // 15h. The text tool: a click opens a box that takes focus, and typing
+    //      reaches the box only. Nothing is painted until the box closes.
+    h.user().set_primary_color(slint::Color::from_rgb_uint8(0, 0, 255));
+    h.user().set_selected_tool(ETool::TEXT);
+    CHECK(h.count_ink(58, 58, 240, 84) == 0);  // the band starts blank
+    h.press(origin.x + 60, origin.y + 60);
+    h.release(origin.x + 60, origin.y + 60);
+    CHECK(h.text_box().get_visible());
+    h.type("Hello");
+    CHECK(h.text_box().get_content() == "Hello");
+    CHECK(h.count_ink(58, 58, 240, 84) == 0);
+    h.key("\x1b");  // Escape closes the box and draws what is in it
+    CHECK(!h.text_box().get_visible());
+    CHECK(h.count_ink(58, 58, 240, 84) > 0);
+
+    //      One undo takes the whole box back.
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
+    CHECK(h.count_ink(58, 58, 240, 84) == 0);
+
+    // 15i. Enter starts a second line, so one box can hold several lines.
+    h.press(origin.x + 60, origin.y + 120);
+    h.release(origin.x + 60, origin.y + 120);
+    h.type("A");
+    h.key("\n");
+    h.type("B");
+    CHECK(h.text_box().get_content() == "A\nB");
+    h.key("\x1b");
+    CHECK(h.count_ink(58, 118, 140, 140) > 0);
+    CHECK(h.count_ink(58, 140, 140, 166) > 0);
+
+    // 15j. A click elsewhere commits the box, and the press that dismissed it
+    //      opens the next one. Leaving the tool with an empty box writes nothing.
+    h.press(origin.x + 40, origin.y + 250);
+    h.release(origin.x + 40, origin.y + 250);
+    CHECK(h.text_box().get_visible());
+    h.type("Hi");
+    CHECK(h.text_box().get_content() == "Hi");
+    h.press(origin.x + 450, origin.y + 250);
+    h.release(origin.x + 450, origin.y + 250);
+    CHECK(h.count_ink(38, 248, 130, 274) > 0);  // "Hi" landed where it was typed
+    CHECK(h.text_box().get_visible());          // and a new box is open
+    h.user().set_selected_tool(ETool::PENCIL);
+    h.press(origin.x + 700, origin.y + 350);  // any canvas event runs the tool switch
+    h.release(origin.x + 700, origin.y + 350);
+    CHECK(!h.text_box().get_visible());
+    CHECK(h.count_ink(448, 248, 560, 280) == 0);  // the empty box painted nothing
 
     // 16. Ctrl+wheel over the gray outside the paper zooms with the transform
     //     origin at the canvas' top-left: the viewport does not slide, so the

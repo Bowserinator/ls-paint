@@ -1,10 +1,21 @@
 export enum ETool {
     NONE, SELECTION, RESIZE, ROTATE,
-    PENCIL, FILL, TEXT, ERASER, DROPPER, MAGNIFY
+    PENCIL, FILL, SHAPE, TEXT, ERASER, DROPPER, MAGNIFY
 }
 export enum ESelectionType { RECTANGULAR, FREEHAND, POLYGON }
 export enum ERotation { CW90, CCW90, R180 }
 export enum EContentTransform { ROTATE_CW90, ROTATE_CCW90, ROTATE_180, FLIP_HORIZONTAL, FLIP_VERTICAL }
+
+// Every shape the Shapes picker offers, in the order it shows them.
+export enum EShapeKind {
+    LINE, CURVE, OVAL, RECTANGLE, ROUNDED_RECTANGLE, POLYGON,
+    TRIANGLE, RIGHT_TRIANGLE, DIAMOND, PENTAGON, HEXAGON,
+    ARROW_RIGHT, ARROW_LEFT, ARROW_UP, ARROW_DOWN,
+    STAR_4, STAR_5, STAR_6,
+    CALLOUT_ROUNDED, CALLOUT_OVAL, CALLOUT_CLOUD,
+    HEART, LIGHTNING
+}
+export enum EShapeMode { FILL, OUTLINE, BOTH }
 
 // One run of the marching-ants outline, in document pixels. The pattern is
 // rebuilt from the C++ side on every animation tick.
@@ -43,6 +54,10 @@ export global UserState  {
     callback copy-selection();
     callback paste-selection();
     callback transform-selection-content(EContentTransform);
+
+    // The text box is committed by the editor (Enter, Escape, focus loss) and by
+    // the C++ side when the user clicks elsewhere or leaves the tool.
+    callback commit-text(string);
 
     in property <[color]> color_palette;
     in-out property <int> color_idx: 0;
@@ -142,4 +157,52 @@ export global DocumentState {
 
 export global ToolOptions {
     in-out property <length> brush-size: 1px;
+}
+
+// Shape tool settings, set by the Shapes, Outline and Fill ribbon dropdowns.
+export global ShapeStyle {
+    in-out property <EShapeKind> kind: RECTANGLE;
+    in-out property <EShapeMode> mode: OUTLINE;
+    in-out property <int> thickness: 2;
+}
+
+// One entry of the Shapes picker palette. The commands come from the same
+// geometry the rasterizer uses, so a glyph always shows what the tool draws.
+export struct ShapeGlyph {
+    commands: string,
+    kind: EShapeKind,
+}
+export global ShapeGallery {
+    in property <[ShapeGlyph]> items;
+    // The glyph shown on the picker button itself, kept in step with kind.
+    in property <string> current-commands: "";
+}
+
+// The shape being dragged, as an outline the view draws over the paper. The
+// commands are document-space path data, so the raster commit and the preview
+// share one geometry.
+export global ShapeOverlay {
+    in-out property <bool> visible: false;
+    in-out property <string> commands: "";
+    in-out property <bool> draw-fill: false;
+    in-out property <bool> draw-outline: true;
+    in-out property <color> color: black;
+}
+
+// Text tool settings, set by the font controls in the options strip.
+export global FontStyle {
+    in-out property <string> family: "DejaVu Sans";
+    in-out property <length> size: 16px;
+    in-out property <bool> bold: false;
+    in-out property <bool> italic: false;
+}
+
+// The text box being edited. The content is written by the editor, and the
+// rest is document-space state the text tool owns.
+export global TextOverlay {
+    in-out property <bool> visible: false;
+    in-out property <length> x: 0px;
+    in-out property <length> y: 0px;
+    in-out property <color> color: black;
+    in-out property <string> content: "";
 }

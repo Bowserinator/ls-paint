@@ -45,8 +45,14 @@ for size in "${sizes[@]}"; do
     file="$out_dir/window-$size.png"
     xdotool windowmove "$window" 0 0
     xdotool windowsize "$window" "${size%x*}" "${size#*x}"
-    # Give the compositor and the app time to settle on the new size.
-    sleep 0.5
+    # A resize request is asynchronous: wait until the window reports the new
+    # size, then give the app a moment to redraw at it before reading pixels.
+    for _ in $(seq 1 30); do
+        eval "$(xdotool getwindowgeometry --shell "$window")"
+        [ "${WIDTH}x${HEIGHT}" = "$size" ] && break
+        sleep 0.1
+    done
+    sleep 0.3
     import -window "$window" "$file"
     actual=$(identify -format '%wx%h' "$file")
     if [ "$actual" != "$size" ]; then

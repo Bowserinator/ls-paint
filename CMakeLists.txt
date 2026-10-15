@@ -33,6 +33,7 @@ add_library(lsp_core STATIC
     src/core/canvas_document.cpp
     src/core/compositor.cpp
     src/core/pixel_buffer.cpp
+    src/core/raster.cpp
     src/history/history_stack.cpp
     src/history/commands/paint_stroke_command.cpp
     src/history/commands/selection_edit_command.cpp
@@ -42,11 +43,17 @@ add_library(lsp_core STATIC
     src/tools/dropper_tool.cpp
     src/tools/fill_tool.cpp
     src/tools/selection_tool.cpp
+    src/tools/shape_tool.cpp
     src/tools/stroke_recorder.cpp
+    src/tools/text_tool.cpp
     src/tools/tool_registry.cpp
     src/ui/shortcuts.cpp
 )
 target_include_directories(lsp_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
+# The text tool rasterizes glyphs with stb_truetype and reads the bundled
+# DejaVu faces. Both are vendored, so no system font path is ever used.
+target_include_directories(lsp_core PRIVATE ${CMAKE_SOURCE_DIR}/third_party/stb)
+target_compile_definitions(lsp_core PRIVATE LSP_FONT_DIR="${CMAKE_SOURCE_DIR}/third_party/fonts")
 
 add_executable(ls_paint
     src/main.cpp

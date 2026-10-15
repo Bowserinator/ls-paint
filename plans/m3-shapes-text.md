@@ -2,9 +2,40 @@
 
 ## Status
 
-What already exists today (verified by reading the code, not assumed):
+**Built.** The "As built" section below records what shipped; the rest of this
+document is the original design and stays as the record of what was planned.
 
-- **Nothing of this milestone is implemented.** `src/tools/` contains only
+## As built
+
+- `src/core/raster.{hpp,cpp}` — hard-edged primitives over a `Target` (pixel
+  buffer + optional selection clip mask): line, rect, rounded rect, ellipse,
+  polyline, polygon fill, glyph blit, plus bounds helpers.
+- `src/tools/shape_tool.{hpp,cpp}` — `ShapeId` (23 kinds), `ShapeMode`,
+  `ShapeOptions`, `ShapePreview`, `namespace shape` (outline geometry,
+  `svg_commands`, `gallery_commands`), `rasterize_shape`, `ShapeTool`.
+- `src/tools/text_tool.{hpp,cpp}` — `TextOptions`, `TextOverlayState`,
+  `draw_text`, on vendored stb_truetype + bundled DejaVu faces.
+- `ui/globals.slint` gained `EShapeKind`, `EShapeMode`, `ShapeStyle`,
+  `ShapeGallery`, `ShapeOverlay`, `FontStyle`, `TextOverlay`; the preview is the
+  `Path` overlay in `ui/appwindow.slint` and the text box is the `TextInput`
+  host next to it.
+- `ui/bar/bar-options.slint` — the text options strip, shown while the text tool
+  is active and laid over the canvas area.
+
+Differences from the design above: the catalogue is 23 shapes instead of 5
+(rect/oval/rounded rect use the dedicated primitives, every other kind is a
+sampled vertex list filled by `draw_polygon_fill` and stroked by
+`draw_polyline`); picker glyphs are drawn by Slint from the same geometry the
+rasterizer uses, so no shape icon assets were added; Enter inserts a newline
+(Slint's `TextInput` has no commit-on-Return), so the commit keys are Escape, a
+click elsewhere, a tool switch, and leaving the tool; the options strip is laid
+over the canvas rather than inside the window's root layout, because a layout
+child pinned the window's maximum width.
+
+What existed before this milestone (verified by reading the code, not assumed):
+
+- *(This bullet described the pre-M3 tree; the milestone is now built — see
+  "As built" at the top of this file.)* `src/tools/` contains only
   `tool.hpp` (ITool/`ToolId`/`PointerButton`), `tool_context.hpp`
   (`ToolContext{document, history, brush, colors}`), `tool_registry.{hpp,cpp}`
   (registers **Pencil/Eraser/Fill/Dropper only**), `stroke_recorder.{hpp,cpp}`,

@@ -1,0 +1,48 @@
+import { Styles } from "../styles.slint";
+
+// One command line of the canvas right click menu.
+export component CanvasMenuItem inherits Rectangle {
+    in property <string> caption;
+    in property <bool> enabled: true;
+    callback activated;
+
+    height: Styles.menu-item-height;
+    width: Styles.menu-width;
+    background: touch.has-hover && enabled ? Styles.menu-hover : transparent;
+    opacity: enabled ? 1.0 : 0.4;
+
+    Text {
+        x: Styles.bar-padding;
+        width: parent.width - 2 * Styles.bar-padding;
+        height: parent.height;
+        text: root.caption;
+        font-size: Styles.bar-font-size;
+        color: Styles.bar-text-color;
+        vertical-alignment: center;
+        wrap: no-wrap;
+        overflow: elide;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            if (root.enabled) {
+                root.activated();
+            }
+        }
+    }
+}
+
+// A divider between groups of entries.
+export component CanvasMenuDivider inherits Rectangle {
+    width: Styles.menu-width;
+    height: 1px;
+    background: Styles.bar-border-light;
+}
+
+// The frame the entries sit in: white, square, one pixel border.
+export component CanvasMenuFrame inherits Rectangle {
+    width: Styles.menu-width + 2px;
+    background: white;
+    border-width: 1px;
+    border-color: Styles.bar-border-light;
+}

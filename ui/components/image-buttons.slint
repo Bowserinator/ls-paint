@@ -46,7 +46,10 @@ component PaddedLayoutH inherits HorizontalLayout {
 
 component ButtonText inherits Text {
     color: Styles.bar-text-color;
-    wrap: word-wrap;
+    // A caption stays on one line: a squeezed button shortens it instead of
+    // stacking its letters.
+    wrap: no-wrap;
+    overflow: elide;
     horizontal-alignment: center;
 }
 

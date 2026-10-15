@@ -1,0 +1,159 @@
+import { Styles } from "../styles.slint";
+import { BarDropdown, BarDropdownItem, BarDropdownTitle, BarDropdownDivider } from "../components/bar-dropdown.slint";
+import { UserState, ETool, FontStyle } from "../globals.slint";
+
+// A plain ribbon button that shows its current value and drops a list of the
+// other ones. The Font and Size controls below are both of this shape.
+component ValueButton inherits Rectangle {
+    in property <string> caption;
+    in-out property <bool> focused: false;
+    callback clicked;
+
+    height: 22px;
+    background: focused ? #c9e0f7 : touch.has-hover ? #e5f1fb : white;
+    border-width: 1px;
+    border-color: focused ? #8dbcec : #c8c8c8;
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 4px;
+        spacing: 4px;
+
+        Text {
+            text: root.caption;
+            font-size: Styles.bar-font-size;
+            color: Styles.bar-text-color;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+
+        Text {
+            text: "▾";
+            font-size: Styles.bar-font-size;
+            color: #555;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// Bold and Italic: the glyph shows the style it turns on.
+component StyleToggle inherits Rectangle {
+    in property <string> glyph;
+    in property <bool> active: false;
+    in property <bool> bold-glyph: false;
+    in property <bool> italic-glyph: false;
+    callback clicked;
+
+    width: 24px;
+    height: 22px;
+    background: active ? #c9e0f7 : touch.has-hover ? #e5f1fb : transparent;
+    border-width: 1px;
+    border-color: active ? #8dbcec : transparent;
+
+    Text {
+        text: root.glyph;
+        font-size: 13px;
+        font-weight: root.bold-glyph ? 700 : 400;
+        font-italic: root.italic-glyph;
+        color: Styles.bar-text-color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// The text tool's own strip, shown only while that tool is selected. It sits
+// between the ribbon and the paper, like the one over the canvas in Paint.
+export component TextOptionsBar inherits Rectangle {
+    height: Styles.text-options-height;
+    visible: UserState.selected-tool == ETool.TEXT;
+    // The popups are declared outside the layout so that they take no part
+    // in it: they only borrow their anchor from the button they open under.
+family-dropdown := PopupWindow {
+            x: family-button.x;
+            y: root.height;
+
+            BarDropdown {
+                BarDropdownTitle { text: "Font"; }
+                BarDropdownDivider {}
+
+                for family in ["DejaVu Sans", "DejaVu Sans Mono", "DejaVu Serif"] : BarDropdownItem {
+                    text: family;
+                    focused: FontStyle.family == family;
+                    clicked => {
+                        FontStyle.family = family;
+                        family-dropdown.close();
+                        family-button.focused = false;
+                    }
+                }
+            }
+        }
+size-dropdown := PopupWindow {
+            x: size-button.x;
+            y: root.height;
+
+            BarDropdown {
+                BarDropdownTitle { text: "Font Size"; }
+                BarDropdownDivider {}
+
+                for size in [8px, 9px, 10px, 11px, 12px, 14px, 16px, 18px, 20px, 24px, 28px, 32px, 36px, 48px, 72px] : BarDropdownItem {
+                    text: size / 1px;
+                    focused: FontStyle.size == size;
+                    clicked => {
+                        FontStyle.size = size;
+                        size-dropdown.close();
+                        size-button.focused = false;
+                    }
+                }
+            }
+        }
+
+    background: white;
+    border-width: 0;
+
+    HorizontalLayout {
+        padding-left: Styles.bar-padding;
+        padding-right: Styles.bar-padding;
+        spacing: 4px;
+
+        family-button := ValueButton {
+            caption: FontStyle.family;
+            width: 148px;
+            clicked => {
+                family-dropdown.show();
+                family-button.focused = true;
+            }
+        }
+
+        size-button := ValueButton {
+            caption: FontStyle.size / 1px;
+            width: 60px;
+            clicked => {
+                size-dropdown.show();
+                size-button.focused = true;
+            }
+        }
+
+        StyleToggle {
+            glyph: "B";
+            bold-glyph: true;
+            active: FontStyle.bold;
+            clicked => { FontStyle.bold = !FontStyle.bold; }
+        }
+
+        StyleToggle {
+            glyph: "I";
+            italic-glyph: true;
+            active: FontStyle.italic;
+            clicked => { FontStyle.italic = !FontStyle.italic; }
+        }
+    }
+}

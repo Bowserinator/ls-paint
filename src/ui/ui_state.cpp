@@ -1,9 +1,11 @@
 #include "ui/ui_state.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -24,6 +26,25 @@ constexpr auto kAntTick = std::chrono::milliseconds(80);
 // Mirrors SelectionTool's minimum selection span: below this the grips would
 // swallow most of the "drag inside to move it" target.
 constexpr int kMinGripSpan = 8;
+
+// A second press on the same spot within this window counts as a double click.
+constexpr auto kDoubleClickWindow = std::chrono::milliseconds(400);
+constexpr float kDoubleClickSlop = 4.0f;
+
+// The picker draws every glyph in this box, whatever the size it shows it at.
+constexpr int kGlyphBox = 26;
+
+// Picker order, which the Pickup of the gallery follows: rows of six, starting
+// with the line and the curve and ending with the bolt.
+constexpr std::array<EShapeKind, 23> kShapeGalleryOrder{
+    EShapeKind::LINE,          EShapeKind::CURVE,        EShapeKind::OVAL,
+    EShapeKind::RECTANGLE,     EShapeKind::ROUNDEDRECTANGLE, EShapeKind::POLYGON,
+    EShapeKind::TRIANGLE,      EShapeKind::RIGHTTRIANGLE, EShapeKind::DIAMOND,
+    EShapeKind::PENTAGON,      EShapeKind::HEXAGON,      EShapeKind::ARROWRIGHT,
+    EShapeKind::ARROWLEFT,     EShapeKind::ARROWUP,      EShapeKind::ARROWDOWN,
+    EShapeKind::STAR4,         EShapeKind::STAR5,        EShapeKind::STAR6,
+    EShapeKind::CALLOUTROUNDED, EShapeKind::CALLOUTOVAL, EShapeKind::CALLOUTCLOUD,
+    EShapeKind::HEART,         EShapeKind::LIGHTNING};
 
 // Walks the selection's border as a closed polyline — top, right, bottom,
 // left — and emits one unit run per border cell, coloured by the marching
@@ -111,6 +132,7 @@ ToolId tool_from_slint(ETool tool) {
         case ETool::ROTATE: return ToolId::Rotate;
         case ETool::PENCIL: return ToolId::Pencil;
         case ETool::FILL: return ToolId::Fill;
+        case ETool::SHAPE: return ToolId::Shape;
         case ETool::TEXT: return ToolId::Text;
         case ETool::ERASER: return ToolId::Eraser;
         case ETool::DROPPER: return ToolId::Dropper;
@@ -118,6 +140,44 @@ ToolId tool_from_slint(ETool tool) {
         case ETool::NONE: break;
     }
     return ToolId::None;
+}
+
+ShapeId shape_from_slint(EShapeKind kind) {
+    switch (kind) {
+        case EShapeKind::LINE: return ShapeId::Line;
+        case EShapeKind::CURVE: return ShapeId::Curve;
+        case EShapeKind::OVAL: return ShapeId::Oval;
+        case EShapeKind::RECTANGLE: return ShapeId::Rectangle;
+        case EShapeKind::ROUNDEDRECTANGLE: return ShapeId::RoundedRect;
+        case EShapeKind::POLYGON: return ShapeId::Polygon;
+        case EShapeKind::TRIANGLE: return ShapeId::Triangle;
+        case EShapeKind::RIGHTTRIANGLE: return ShapeId::RightTriangle;
+        case EShapeKind::DIAMOND: return ShapeId::Diamond;
+        case EShapeKind::PENTAGON: return ShapeId::Pentagon;
+        case EShapeKind::HEXAGON: return ShapeId::Hexagon;
+        case EShapeKind::ARROWRIGHT: return ShapeId::ArrowRight;
+        case EShapeKind::ARROWLEFT: return ShapeId::ArrowLeft;
+        case EShapeKind::ARROWUP: return ShapeId::ArrowUp;
+        case EShapeKind::ARROWDOWN: return ShapeId::ArrowDown;
+        case EShapeKind::STAR4: return ShapeId::Star4;
+        case EShapeKind::STAR5: return ShapeId::Star5;
+        case EShapeKind::STAR6: return ShapeId::Star6;
+        case EShapeKind::CALLOUTROUNDED: return ShapeId::CalloutRounded;
+        case EShapeKind::CALLOUTOVAL: return ShapeId::CalloutOval;
+        case EShapeKind::CALLOUTCLOUD: return ShapeId::CalloutCloud;
+        case EShapeKind::HEART: return ShapeId::Heart;
+        case EShapeKind::LIGHTNING: return ShapeId::Lightning;
+    }
+    return ShapeId::Rectangle;
+}
+
+ShapeMode mode_from_slint(EShapeMode mode) {
+    switch (mode) {
+        case EShapeMode::FILL: return ShapeMode::Fill;
+        case EShapeMode::OUTLINE: return ShapeMode::Outline;
+        case EShapeMode::BOTH: return ShapeMode::Both;
+    }
+    return ShapeMode::Outline;
 }
 
 Rgba8 to_rgba(slint::Color color) {
@@ -139,14 +199,43 @@ UiState::UiState(AppWindow& window, AppController& controller)
         palette->push_back(slint::Color::from_rgb_uint8(255, 255, 255));
     m_window.global<UserState>().set_color_palette(palette);
 
+    auto gallery = std::make_shared<slint::VectorModel<ShapeGlyph>>();
+    for (const EShapeKind kind : kShapeGalleryOrder) {
+        const std::string commands =
+            shape::gallery_commands(shape_from_slint(kind), {0, 0, kGlyphBox, kGlyphBox});
+        gallery->push_back(ShapeGlyph{slint::SharedString(commands), kind});
+    }
+    m_window.global<ShapeGallery>().set_items(gallery);
+
+    m_window.global<UserState>().on_commit_text([this](const slint::SharedString& text) {
+        do_commit_text(std::string(text));
+    });
+
     m_window.global<UserState>().on_pointer_down([this](float x, float y, bool secondary) {
         const auto& state = m_window.global<UserState>();
+        // A click anywhere else closes an open text box first; the press that
+        // dismissed it still reaches its tool.
+        if (text_open()) do_commit_text(std::string(m_window.global<TextOverlay>().get_content()));
         sync_colors();
+        sync_shape_style();
         m_controller.brush().size =
             std::max(1, static_cast<int>(std::lround(m_window.global<ToolOptions>().get_brush_size())));
 
-        m_controller.input().pointer_down(tool_from_slint(state.get_selected_tool()), {x, y},
+        const ToolId tool = tool_from_slint(state.get_selected_tool());
+        // Slint reports no click count, so a press on the same spot right after
+        // the previous one is timed here as the double click that a polygon uses
+        // to close itself.
+        const auto now = std::chrono::steady_clock::now();
+        const bool double_click =
+            m_have_last_press && now - m_last_press < kDoubleClickWindow &&
+            std::hypot(x - m_last_press_position.x, y - m_last_press_position.y) <= kDoubleClickSlop;
+        m_have_last_press = true;
+        m_last_press = now;
+        m_last_press_position = {x, y};
+
+        m_controller.input().pointer_down(tool, {x, y},
                                           secondary ? PointerButton::Secondary : PointerButton::Primary);
+        if (double_click) m_controller.input().double_click(tool);
 
         const ColorPair& colors = m_controller.colors();
         const Rgba8 primary_ink = colors.ink(PointerButton::Primary);
@@ -159,7 +248,8 @@ UiState::UiState(AppWindow& window, AppController& controller)
     });
 
     m_window.global<UserState>().on_pointer_move([this](float x, float y) {
-        m_controller.input().pointer_move({x, y});
+        m_controller.input().pointer_move(
+            tool_from_slint(m_window.global<UserState>().get_selected_tool()), {x, y});
         refresh();
     });
 
@@ -177,6 +267,13 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
     m_window.global<UserState>().on_key_pressed([this](const slint::SharedString& text, bool ctrl, bool shift) {
         if (m_controller.input().active()) return;  // never act mid-stroke
+        // While a text box is open every key belongs to it, including the ones
+        // that would otherwise be shortcuts.
+        if (text_open()) return;
+        // Enter and Escape end the active tool's own gesture (a polygon); the
+        // shortcut table below only ever sees what that leaves behind.
+        m_controller.input().key(
+            tool_from_slint(m_window.global<UserState>().get_selected_tool()), std::string_view(text));
         const auto action = lookup_shortcut(std::string_view(text), ctrl, shift);
         if (!action) return;
         sync_colors();  // the controller otherwise only sees colors set by a pointer press
@@ -233,6 +330,40 @@ void UiState::sync_colors() {
     m_controller.colors() = {to_rgba(state.get_primary_color()), to_rgba(state.get_secondary_color())};
 }
 
+void UiState::sync_shape_style() {
+    const auto& style = m_window.global<ShapeStyle>();
+    ShapeOptions& options = m_controller.shape_options();
+    options.kind = shape_from_slint(style.get_kind());
+    options.mode = mode_from_slint(style.get_mode());
+    options.thickness = style.get_thickness();
+}
+
+void UiState::sync_font_style() {
+    const auto& style = m_window.global<FontStyle>();
+    TextOptions& options = m_controller.text_options();
+    options.family = std::string(style.get_family());
+    options.size = style.get_size();
+    options.bold = style.get_bold();
+    options.italic = style.get_italic();
+}
+
+bool UiState::text_open() const noexcept { return m_controller.tool_ui().text.visible; }
+
+void UiState::do_commit_text(const std::string& text) {
+    const TextOverlayState state = m_controller.tool_ui().text;
+    if (!state.visible) return;
+    // Close the box first: an empty commit then leaves nothing behind, and the
+    // overlay cannot come back when refresh() republishes the tool state.
+    m_controller.input().deactivate(ToolId::Text);
+    if (!text.empty()) {
+        sync_font_style();
+        m_controller.commit_text(state.origin, text, state.color);
+    }
+    // The commit both wrote pixels and closed the box, so push them out now
+    // instead of waiting for whatever event comes next.
+    refresh();
+}
+
 void UiState::refresh() {
     CanvasDocument& document = m_controller.document();
     if (const auto region = document.flush()) {
@@ -252,6 +383,41 @@ void UiState::refresh() {
     state.set_selection_y(bounds.y);
     state.set_selection_width(bounds.width);
     state.set_selection_height(bounds.height);
+
+    // A tool that is left while it holds a gesture has to release it: nothing
+    // else tells the shape tool that its polygon will never be finished.
+    const ToolId tool = tool_from_slint(m_window.global<UserState>().get_selected_tool());
+    if (tool != m_last_tool) {
+        // The box goes with the tool: leaving it draws what was typed first.
+        if (m_last_tool == ToolId::Text && m_window.global<TextOverlay>().get_visible())
+            do_commit_text(std::string(m_window.global<TextOverlay>().get_content()));
+        m_controller.input().deactivate(m_last_tool);
+        m_last_tool = tool;
+    }
+
+    const ShapePreview& preview = m_controller.tool_ui().shape;
+    auto& overlay = m_window.global<ShapeOverlay>();
+    overlay.set_visible(preview.visible);
+    overlay.set_commands(slint::SharedString(preview.commands));
+    overlay.set_draw_fill(preview.draw_fill);
+    overlay.set_draw_outline(preview.draw_outline);
+    overlay.set_color(slint::Color::from_argb_uint8(preview.color.a, preview.color.r,
+                                                    preview.color.g, preview.color.b));
+
+    const std::string current = shape::gallery_commands(
+        shape_from_slint(m_window.global<ShapeStyle>().get_kind()), {0, 0, kGlyphBox, kGlyphBox});
+    m_window.global<ShapeGallery>().set_current_commands(slint::SharedString(current));
+
+    const TextOverlayState& text = m_controller.tool_ui().text;
+    auto& text_box = m_window.global<TextOverlay>();
+    text_box.set_visible(text.visible);
+    // A box that has just opened starts empty; after that the editor owns it.
+    if (text.visible && !m_text_open) text_box.set_content(slint::SharedString());
+    m_text_open = text.visible;
+    text_box.set_x(text.origin.x);
+    text_box.set_y(text.origin.y);
+    text_box.set_color(
+        slint::Color::from_argb_uint8(text.color.a, text.color.r, text.color.g, text.color.b));
 
     update_ants();
 }

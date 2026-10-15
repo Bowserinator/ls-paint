@@ -1,14 +1,20 @@
 import { Button, VerticalBox, ScrollView } from "std-widgets.slint";
 import { TopBar } from "topbar.slint";
+import { TextOptionsBar } from "bar/bar-options.slint";
 import { StatusBar } from "statusbar.slint";
 import { CanvasResizeHandle } from "components/canvas-resize-handle.slint";
+import { CanvasMenuItem, CanvasMenuDivider, CanvasMenuFrame } from "components/canvas-menu.slint";
 import { CanvasShadow } from "components/canvas-shadow.slint";
 
-import { UserState, DocumentState, ETool, EContentTransform, ZoomScale } from "globals.slint";
+import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay } from "globals.slint";
 export * from "globals.slint";
 
 export component AppWindow inherits Window {
     in property <image> texture <=> canvas.source;
+
+    // Where the canvas right click menu is asked to open.
+    in-out property <length> menu-x: 0px;
+    in-out property <length> menu-y: 0px;
 
     property <length> canvas-origin: 4px;
     // Document size: canvas-w/h are what the screen shows at the current
@@ -168,76 +174,83 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // The selection tool owns the right-click menu. It is shown
-                    // programmatically because the TouchArea child grabs the
-                    // press before the ContextMenuArea would ever see it.
-                    canvas-area := ContextMenuArea {
+                    // The selection tool owns the right-click menu. It is a
+                    // plain popup because the TouchArea child grabs the press
+                    // before a ContextMenuArea would ever see it.
+                    Rectangle {
                         x: root.canvas-origin;
                         y: root.canvas-origin;
                         width: root.canvas-w;
                         height: root.canvas-h;
+                        background: transparent;
 
-                        enabled: UserState.selected-tool == ETool.SELECTION;
+                        canvas-menu := PopupWindow {
+                            x: root.menu-x;
+                            y: root.menu-y;
 
-                        // Submenus keep the menu short: rotation and flipping
-                        // are each one line here instead of five.
-                        Menu {
-                            MenuItem {
-                                title: @tr("Cut");
-                                enabled: DocumentState.has-selection;
-                                activated => { UserState.cut-selection(); }
-                            }
-                            MenuItem {
-                                title: @tr("Copy");
-                                enabled: DocumentState.has-selection;
-                                activated => { UserState.copy-selection(); }
-                            }
-                            MenuItem {
-                                title: @tr("Paste");
-                                enabled: DocumentState.has-clipboard;
-                                activated => { UserState.paste-selection(); }
-                            }
-                            MenuSeparator {}
-                            Menu {
-                                title: @tr("Rotate");
-                                MenuItem {
-                                    title: @tr("90° CW");
-                                    enabled: DocumentState.has-selection;
-                                    activated => { UserState.transform-selection-content(EContentTransform.ROTATE_CW90); }
+                            CanvasMenuFrame {
+                                VerticalLayout {
+                                    padding: 1px;
+
+                                    CanvasMenuItem {
+                                        caption: @tr("Cut");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.cut-selection(); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Copy");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.copy-selection(); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Paste");
+                                        enabled: DocumentState.has-clipboard;
+                                        activated => { canvas-menu.close(); UserState.paste-selection(); }
+                                    }
+
+                                    CanvasMenuDivider { }
+
+                                    CanvasMenuItem {
+                                        caption: @tr("Rotate 90° right");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.ROTATE_CW90); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Rotate 90° left");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.ROTATE_CCW90); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Rotate 180°");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.ROTATE_180); }
+                                    }
+
+                                    CanvasMenuDivider { }
+
+                                    CanvasMenuItem {
+                                        caption: @tr("Flip horizontal");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.FLIP_HORIZONTAL); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Flip vertical");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.FLIP_VERTICAL); }
+                                    }
+
+                                    CanvasMenuDivider { }
+
+                                    CanvasMenuItem {
+                                        caption: @tr("Select all");
+                                        activated => { canvas-menu.close(); UserState.select-all(); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Deselect");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.clear-selection(); }
+                                    }
                                 }
-                                MenuItem {
-                                    title: @tr("90° CCW");
-                                    enabled: DocumentState.has-selection;
-                                    activated => { UserState.transform-selection-content(EContentTransform.ROTATE_CCW90); }
-                                }
-                                MenuItem {
-                                    title: @tr("180°");
-                                    enabled: DocumentState.has-selection;
-                                    activated => { UserState.transform-selection-content(EContentTransform.ROTATE_180); }
-                                }
-                            }
-                            Menu {
-                                title: @tr("Flip");
-                                MenuItem {
-                                    title: @tr("Horizontal");
-                                    enabled: DocumentState.has-selection;
-                                    activated => { UserState.transform-selection-content(EContentTransform.FLIP_HORIZONTAL); }
-                                }
-                                MenuItem {
-                                    title: @tr("Vertical");
-                                    enabled: DocumentState.has-selection;
-                                    activated => { UserState.transform-selection-content(EContentTransform.FLIP_VERTICAL); }
-                                }
-                            }
-                            MenuSeparator {}
-                            MenuItem {
-                                title: @tr("Select all");
-                                activated => { UserState.select-all(); }
-                            }
-                            MenuItem {
-                                title: @tr("Deselect");
-                                enabled: DocumentState.has-selection;
-                                activated => { UserState.clear-selection(); }
                             }
                         }
 
@@ -267,7 +280,9 @@ export component AppWindow inherits Window {
                                         // The menu takes over input from here on, so the press is
                                         // not handed to the tool: a half-finished stroke would
                                         // never see its button-up and would swallow the next click.
-                                        canvas-area.show({ x: touch.mouse-x, y: touch.mouse-y });
+                                        root.menu-x = touch.mouse-x;
+                                        root.menu-y = touch.mouse-y;
+                                        canvas-menu.show();
                                     } else {
                                         UserState.pointer-down(touch.mouse-x / UserState.zoom,
                                                                touch.mouse-y / UserState.zoom,
@@ -311,6 +326,58 @@ export component AppWindow inherits Window {
                         border-width: 1px;
                         border-color: black;
                         visible: right-handle.active || bottom-handle.active || corner-handle.active;
+                    }
+
+                    // The shape being dragged, drawn from the same document-space
+                    // geometry the commit rasterizes, so preview and result agree
+                    // at every zoom. The viewbox scales it with the view.
+                    Path {
+                        x: root.canvas-origin;
+                        y: root.canvas-origin;
+                        width: root.canvas-w;
+                        height: root.canvas-h;
+                        visible: ShapeOverlay.visible && ShapeOverlay.commands != "";
+                        viewbox-width: max(1.0, root.doc-w / 1px);
+                        viewbox-height: max(1.0, root.doc-h / 1px);
+                        commands: ShapeOverlay.commands;
+                        fill: ShapeOverlay.draw-fill ? ShapeOverlay.color : transparent;
+                        stroke: ShapeOverlay.draw-outline ? ShapeOverlay.color : transparent;
+                        stroke-width: ShapeStyle.thickness * 1px;
+                    }
+
+                    // The text box being typed. It takes focus while it is open
+                    // and only reaches the paper when it closes: on Escape, on a
+                    // click elsewhere or when the tool is left.
+                    if TextOverlay.visible : Rectangle {
+                        x: root.canvas-origin + TextOverlay.x * UserState.zoom;
+                        y: root.canvas-origin + TextOverlay.y * UserState.zoom;
+                        width: max(24px, text-field.preferred-width);
+                        height: max(1px, text-field.preferred-height);
+                        background: transparent;
+                        border-width: 1px;
+                        border-color: #4a86c8;
+                        text-field := TextInput {
+                            width: 100%;
+                            height: 100%;
+                            text <=> TextOverlay.content;
+                            color: TextOverlay.color;
+                            font-family: FontStyle.family;
+                            font-size: FontStyle.size * UserState.zoom;
+                            font-italic: FontStyle.italic;
+                            font-weight: FontStyle.bold ? 700 : 400;
+                            wrap: no-wrap;
+                            single-line: false;
+                            vertical-alignment: top;
+                            horizontal-alignment: left;
+                            init => { self.focus(); }
+                            key-pressed(event) => {
+                                if (event.text == "\u{1b}") {
+                                    UserState.commit-text(TextOverlay.content);
+                                    return accept;
+                                }
+                                return reject;
+                            }
+                        }
                     }
 
                     // The outline of an active selection: alternating light and
@@ -380,6 +447,15 @@ export component AppWindow inherits Window {
                         dragged(dx, dy) => { root.resize-dx = dx; root.resize-dy = dy; }
                         released(dx, dy) => { root.resize-canvas(dx, dy); }
                     }
+                }
+
+                // The text tool's options float over the top of the canvas area,
+                // the way Paint's own text strip does: they are not a ribbon
+                // group and must not take part in the window's layout.
+                TextOptionsBar {
+                    x: 0px;
+                    y: 0px;
+                    width: 100%;
                 }
             }
 

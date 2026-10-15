@@ -27,7 +27,10 @@ struct Fixture {
     Brush brush{4, 0.25f, BrushShape::Round};
     ColorPair colors{{0, 0, 0, 255}, {255, 255, 255, 255}};
     SelectionShape shape = SelectionShape::Rectangular;
-    ToolContext ctx{doc, history, brush, colors, shape};
+    ShapeOptions shape_options;
+    TextOptions text_options;
+    ToolUiState tool_ui;
+    ToolContext ctx{doc, history, brush, colors, shape, shape_options, text_options, tool_ui};
 
     explicit Fixture(int width = 32, int height = 32) : doc(width, height), history(doc) {}
 };

@@ -5,14 +5,30 @@
 #include "history/commands/paint_stroke_command.hpp"
 #include "history/commands/selection_edit_command.hpp"
 #include "selection/selection_ops.hpp"
+#include "tools/stroke_recorder.hpp"
 
 namespace lsp {
 
 AppController::AppController()
     : m_document(kDefaultCanvasWidth, kDefaultCanvasHeight),
       m_history(m_document),
-      m_context{m_document, m_history, m_brush, m_colors, m_selection_shape},
+      m_context{m_document, m_history, m_brush, m_colors, m_selection_shape, m_shape_options,
+                m_text_options, m_tool_ui},
       m_router(m_registry, m_context) {}
+
+void AppController::commit_text(Point2f origin, std::string_view text, Rgba8 color) {
+    if (text.empty()) return;
+    const std::vector<std::uint8_t> clip = m_context.selection_clip();
+    raster::Target target{m_document.active_layer().pixels, clip.empty() ? nullptr : clip.data()};
+    StrokeRecorder recorder(m_document);
+    const RectI touched = draw_text(target, origin, text, m_text_options, color);
+    std::fprintf(stderr, "Debug paint text='%s' at (%.0f,%.0f) touched=(%d,%d,%dx%d)\n",
+                 std::string(text).c_str(), origin.x, origin.y, touched.x, touched.y, touched.width,
+                 touched.height);
+    if (touched.empty()) return;
+    recorder.touch(touched);
+    recorder.commit(m_history);
+}
 
 void AppController::resize_canvas(int width, int height, Rgba8 fill) {
     if (width == m_document.width() && height == m_document.height()) return;

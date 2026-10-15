@@ -4,6 +4,8 @@
 #include "core/canvas_document.hpp"
 #include "history/commands/selection_edit_command.hpp"
 #include "history/history_stack.hpp"
+#include "tools/shape_tool.hpp"
+#include "tools/text_tool.hpp"
 #include "tools/tool.hpp"
 
 namespace lsp {
@@ -30,6 +32,12 @@ struct ColorPair {
     }
 };
 
+// What the active tool tells the UI about a gesture that is still running.
+struct ToolUiState {
+    ShapePreview shape;
+    TextOverlayState text;
+};
+
 // Everything a tool is allowed to reach: the document it edits, the history it
 // records into, the brush/colors it paints with, and the selection shape the
 // ribbon is currently showing.
@@ -39,6 +47,9 @@ struct ToolContext {
     const Brush& brush;
     ColorPair& colors;
     const SelectionShape& shape;
+    ShapeOptions& shape_options;
+    TextOptions& text_options;
+    ToolUiState& ui;
 
     // Applies a floating selection: the contents are stamped into the layer and
     // the background color they were lifted with becomes real pixels. Anything
@@ -52,6 +63,13 @@ struct ToolContext {
         if (edit.empty()) return;
         document.mark_dirty(edit.region);
         history.push(make_selection_edit(layer_index, std::move(edit)));
+    }
+
+    // One byte per canvas pixel: 0 outside the current selection. Empty when
+    // nothing is selected, in which case the whole canvas is writable.
+    [[nodiscard]] std::vector<std::uint8_t> selection_clip() const {
+        if (!document.selection().active()) return {};
+        return document.selection().extract_region(document.bounds());
     }
 };
 
