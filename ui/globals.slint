@@ -190,8 +190,6 @@ export struct ShapeGlyph {
 }
 export global ShapeGallery {
     in property <[ShapeGlyph]> items;
-    // The glyph shown on the picker button itself, kept in step with kind.
-    in property <string> current-commands: "";
 }
 
 // The shape being dragged, as an outline the view draws over the paper. The
@@ -253,7 +251,6 @@ export global DialogState {
 
     callback file-up();
     callback file-navigate(int);
-    callback file-choose(int);
     callback file-filter-changed(int);
     callback file-ok();
     callback file-cancel();

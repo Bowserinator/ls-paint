@@ -1,5 +1,7 @@
 #include "core/canvas_document.hpp"
 
+#include <algorithm>
+
 #include "core/compositor.hpp"
 
 namespace lsp {
@@ -31,7 +33,11 @@ std::vector<PixelBuffer> CanvasDocument::snapshot() const {
 }
 
 void CanvasDocument::restore(std::vector<PixelBuffer> pixels) {
-    for (std::size_t i = 0; i < pixels.size(); ++i) m_layers.at(i).pixels = std::move(pixels[i]);
+    // A snapshot holds one buffer per layer; anything else would leave part of
+    // the stack at the old size.
+    const std::size_t count = std::min(pixels.size(), m_layers.layers().size());
+    if (count == 0) return;
+    for (std::size_t i = 0; i < count; ++i) m_layers.at(i).pixels = std::move(pixels[i]);
     const PixelBuffer& base = m_layers.at(0).pixels;
     m_flattened = PixelBuffer(base.width(), base.height());
     // Restoring pixels says nothing about the selection: geometry commands

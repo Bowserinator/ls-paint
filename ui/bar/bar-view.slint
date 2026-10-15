@@ -1,17 +1,38 @@
-import { Bar, BarDivider, BarItemGroup } from "bar.slint";
-import { ImageButtonVertical } from "../components/image-buttons.slint";
-import { Button } from "std-widgets.slint";
+import { Bar } from "bar.slint";
+import { BarButton } from "../components/image-buttons.slint";
+import { UserState } from "../globals.slint";
+import { Styles } from "../styles.slint";
 
+// The View tab. Rulers, gridlines and the other display toggles are not built,
+// so this tab carries the zoom commands only.
 export component ViewBar inherits Bar {
     HorizontalLayout {
-        BarItemGroup {
-            title: "Zoom";
-            ImageButtonVertical { text: "Paste"; }
-        }
-        BarDivider {}
-        BarItemGroup {
-            title: "Show or Hide";
-            Button { text: "Paste"; }
+        padding: Styles.bar-padding;
+        spacing: 0px;
+        alignment: start;
+
+        VerticalLayout {
+            alignment: start;
+            spacing: 0px;
+
+            BarButton {
+                width: 130px;
+                height: 20px;
+                text: "Zoom in";
+                clicked => { UserState.zoom = min(UserState.zoom * 1.25, 7.0); }
+            }
+            BarButton {
+                width: 130px;
+                height: 20px;
+                text: "Zoom out";
+                clicked => { UserState.zoom = max(UserState.zoom / 1.25, 0.125); }
+            }
+            BarButton {
+                width: 130px;
+                height: 20px;
+                text: "100%";
+                clicked => { UserState.zoom = 1.0; }
+            }
         }
     }
 }

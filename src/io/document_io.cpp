@@ -33,9 +33,9 @@ std::vector<std::uint8_t> to_rgb_bytes(const PixelBuffer& source) {
         const Rgba8* pixels = source.row(y).data();
         std::uint8_t* row = bytes.data() + static_cast<std::size_t>(y) * source.width() * 3;
         for (int x = 0; x < source.width(); ++x) {
-            row[x * 3] = pixels[x].r;
-            row[x * 3 + 1] = pixels[x].g;
-            row[x * 3 + 2] = pixels[x].b;
+            row[static_cast<std::size_t>(x) * 3] = pixels[x].r;
+            row[static_cast<std::size_t>(x) * 3 + 1] = pixels[x].g;
+            row[static_cast<std::size_t>(x) * 3 + 2] = pixels[x].b;
         }
     }
     return bytes;

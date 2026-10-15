@@ -38,11 +38,6 @@ std::vector<std::uint8_t> pixels_to_bytes(const PixelBuffer& pixels) {
     return bytes;
 }
 
-RectI centred_on(RectI original, int width, int height) {
-    return {original.x + (original.width - width) / 2, original.y + (original.height - height) / 2, width,
-            height};
-}
-
 // Writes only the masked pixels of `source`, so unselected destinations survive.
 void paste_masked(PixelBuffer& target, const PixelBuffer& source, int x, int y,
                   const std::vector<std::uint8_t>& mask) {
@@ -269,7 +264,9 @@ SelectionEdit transform_contents(const PixelBuffer& pixels, SelectionMask& mask,
 
     contents.source = transformed_source;
     contents.source_mask = transformed_source_mask;
-    contents.position = centred_on(old_position, transformed_content.width(), transformed_content.height());
+    contents.position = {old_position.x + (old_position.width - transformed_content.width()) / 2,
+                         old_position.y + (old_position.height - transformed_content.height()) / 2,
+                         transformed_content.width(), transformed_content.height()};
     contents.content = resample(contents.source, contents.position.width, contents.position.height);
     contents.mask = resample(contents.source_mask, contents.source.width(), contents.source.height(),
                              contents.position.width, contents.position.height);

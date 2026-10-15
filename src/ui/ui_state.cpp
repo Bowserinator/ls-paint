@@ -349,7 +349,6 @@ UiState::UiState(AppWindow& window, AppController& controller)
     auto& dialog = m_window.global<DialogState>();
     dialog.on_file_up([this] { do_file_up(); });
     dialog.on_file_navigate([this](int row) { do_file_navigate(row); });
-    dialog.on_file_choose([this](int row) { do_file_navigate(row); });
     dialog.on_file_filter_changed([this](int index) { do_file_filter_changed(index); });
     dialog.on_file_ok([this] { do_file_ok(); });
     dialog.on_file_cancel([this] { do_file_cancel(); });
@@ -481,9 +480,6 @@ void UiState::refresh() {
     overlay.set_color(slint::Color::from_argb_uint8(preview.color.a, preview.color.r,
                                                     preview.color.g, preview.color.b));
 
-    const std::string current = shape::gallery_commands(
-        shape_from_slint(m_window.global<ShapeStyle>().get_kind()), {0, 0, kGlyphBox, kGlyphBox});
-    m_window.global<ShapeGallery>().set_current_commands(slint::SharedString(current));
 
     const TextOverlayState& text = m_controller.tool_ui().text;
     auto& text_box = m_window.global<TextOverlay>();

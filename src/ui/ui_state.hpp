@@ -26,12 +26,12 @@ private:
     void sync_shape_style();
     // Pulls the font controls into the settings the text commit rasterizes.
     void sync_font_style();
-    // Closes the open text box, drawing its content into the paper. Safe to
-    // call when no box is open: the editor's own commit, a click elsewhere and
-    // a tool switch all land here.
     // True while a text box is being edited. The tool owns the flag, so the
     // editor's Slint side cannot get out of step with it.
     [[nodiscard]] bool text_open() const noexcept;
+    // Closes the open text box, drawing its content into the paper. Safe to
+    // call when no box is open: the editor's own commit, a click elsewhere and
+    // a tool switch all land here.
     void do_commit_text(const std::string& text);
     void refresh();
 

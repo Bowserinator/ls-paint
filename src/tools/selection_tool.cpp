@@ -32,8 +32,6 @@ bool contains_point(RectI rect, Point2f point) {
            point.x < static_cast<float>(rect.right()) && point.y < static_cast<float>(rect.bottom());
 }
 
-float distance_to(Point2f a, Point2f b) { return std::hypot(a.x - b.x, a.y - b.y); }
-
 // The grips sit on the border pixels of the selection, corners first so a small
 // selection prefers them over the edge grips.
 Point2f handle_anchor(RectI bounds, SelectionHandle handle) {
@@ -62,7 +60,7 @@ std::optional<SelectionHandle> handle_at(RectI bounds, Point2f position) {
                                   SelectionHandle::Sw, SelectionHandle::N,  SelectionHandle::E,
                                   SelectionHandle::S,  SelectionHandle::W};
     for (const SelectionHandle handle : kHandles)
-        if (distance_to(handle_anchor(bounds, handle), position) <= kHandleHitRadius) return handle;
+        if (distance(handle_anchor(bounds, handle), position) <= kHandleHitRadius) return handle;
     return std::nullopt;
 }
 
@@ -110,7 +108,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
     SelectionMask& selection = context.document.selection();
 
     if (shape == SelectionShape::Polygon && !m_polygon.empty()) {
-        if (m_polygon.size() >= 3 && distance_to(position, m_polygon.front()) <= kClosePolygonDistance) {
+        if (m_polygon.size() >= 3 && distance(position, m_polygon.front()) <= kClosePolygonDistance) {
             context.commit_selection();
             selection.fill_polygon(m_polygon);
             m_polygon.clear();

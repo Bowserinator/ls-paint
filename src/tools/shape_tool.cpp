@@ -23,8 +23,6 @@ constexpr float kTailTipRatio = 0.12f;
 constexpr float kTailLeftRatio = 0.20f;
 constexpr float kTailRightRatio = 0.44f;
 
-float distance(Point2f a, Point2f b) { return std::hypot(a.x - b.x, a.y - b.y); }
-
 Point2f point_at(Point2f center, float rx, float ry, float degrees) {
     return {center.x + rx * std::cos(degrees * kRadians),
             center.y + ry * std::sin(degrees * kRadians)};
@@ -205,28 +203,46 @@ std::vector<Point2f> callout_cloud_points(RectI box) {
 
 std::vector<Point2f> heart_points(RectI box) {
     constexpr int kSamples = 64;
-    const float x0 = static_cast<float>(box.x);
-    const float y0 = static_cast<float>(box.y);
-    const float width = static_cast<float>(box.width - 1);
-    const float height = static_cast<float>(box.height - 1);
     std::vector<Point2f> points;
     points.reserve(kSamples);
     for (int i = 0; i < kSamples; ++i) {
         const float t = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(kSamples);
         const float sine = std::sin(t);
-        const float left = 16.0f * sine * sine * sine;
-        const float up = 13.0f * std::cos(t) - 5.0f * std::cos(2.0f * t) -
-                         2.0f * std::cos(3.0f * t) - std::cos(4.0f * t);
-        // The curve spans x -16..16 and y -17..5, measured upwards.
-        points.push_back({x0 + (left + 16.0f) / 32.0f * width, y0 + (5.0f - up) / 22.0f * height});
+        points.push_back({16.0f * sine * sine * sine,
+                          13.0f * std::cos(t) - 5.0f * std::cos(2.0f * t) -
+                              2.0f * std::cos(3.0f * t) - std::cos(4.0f * t)});
+    }
+    // The curve is wider than it is tall, so it is fitted into the box with one
+    // uniform scale and centred in whichever direction has room to spare.
+    float min_x = points.front().x;
+    float max_x = min_x;
+    float min_y = points.front().y;
+    float max_y = min_y;
+    for (const Point2f& point : points) {
+        min_x = std::min(min_x, point.x);
+        max_x = std::max(max_x, point.x);
+        min_y = std::min(min_y, point.y);
+        max_y = std::max(max_y, point.y);
+    }
+    const float width = static_cast<float>(box.width - 1);
+    const float height = static_cast<float>(box.height - 1);
+    const float scale = std::min(width / (max_x - min_x), height / (max_y - min_y));
+    const float offset_x = static_cast<float>(box.x) + (width - (max_x - min_x) * scale) / 2.0f;
+    const float offset_y = static_cast<float>(box.y) + (height - (max_y - min_y) * scale) / 2.0f;
+    for (Point2f& point : points) {
+        const float curve_y = point.y;
+        point.x = offset_x + (point.x - min_x) * scale;
+        point.y = offset_y + (max_y - curve_y) * scale;
     }
     return points;
 }
 
 std::vector<Point2f> lightning_points(RectI box) {
-    const std::array<Point2f, 6> unit{Point2f{0.68f, 0.0f}, Point2f{0.30f, 0.50f},
-                                      Point2f{0.50f, 0.50f}, Point2f{0.32f, 1.0f},
-                                      Point2f{0.70f, 0.55f}, Point2f{0.48f, 0.55f}};
+    // A bolt: down the left half to the waist, on to the tip, then back up the
+    // right half. The loop never crosses itself, so its interior fills solid.
+    const std::array<Point2f, 6> unit{Point2f{0.62f, 0.0f}, Point2f{0.20f, 0.52f},
+                                      Point2f{0.42f, 0.52f}, Point2f{0.30f, 1.0f},
+                                      Point2f{0.80f, 0.44f}, Point2f{0.56f, 0.44f}};
     std::vector<Point2f> points;
     points.reserve(unit.size());
     const float x0 = static_cast<float>(box.x);

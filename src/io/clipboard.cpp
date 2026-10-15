@@ -39,9 +39,9 @@ std::uint32_t read_word(const unsigned char* pixel, int bytes) {
 std::uint8_t read_channel(std::uint32_t word, unsigned long mask, unsigned long shift) {
     if (mask == 0) return 255;
     const std::uint32_t value = (word & static_cast<std::uint32_t>(mask)) >> shift;
-    const unsigned long bits = std::popcount(mask);
-    const std::uint32_t full = (1u << bits) - 1u;
-    return static_cast<std::uint8_t>(value * 255u / full);
+    // A mask that fills the word leaves no room for the scaled value.
+    const std::uint64_t full = (std::uint64_t{1} << std::popcount(mask)) - 1u;
+    return static_cast<std::uint8_t>(static_cast<std::uint64_t>(value) * 255u / full);
 }
 
 }  // namespace

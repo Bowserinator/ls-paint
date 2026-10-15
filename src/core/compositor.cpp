@@ -15,6 +15,8 @@ void composite(const LayerStack& layers, RectI region, PixelBuffer& target) {
 
         for (const Layer& layer : layers.layers()) {
             if (!layer.visible) continue;
+            // A layer of another size has nothing to add to this region.
+            if (layer.pixels.width() != target.width() || layer.pixels.height() != target.height()) continue;
             const BlendFn blend = blend_fn_for(layer.blend_mode);
             const auto source = layer.pixels.row(y).subspan(offset, count);
             for (std::size_t i = 0; i < count; ++i)

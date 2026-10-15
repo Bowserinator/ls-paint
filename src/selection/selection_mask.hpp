@@ -9,12 +9,9 @@ namespace lsp {
 
 // Single-channel 1/0 coverage mask over the canvas.
 //
-// INVARIANT: a mask whose bounds are empty means "no selection", and a no
-// selection selects the whole canvas. Every mutation below restores that
-// invariant instead of leaving an allocated, all-zero mask behind — such a mask
-// used to report `active() == true` while `contains()` was false everywhere,
-// which silently clipped every pencil/eraser/fill stroke to nothing while the
-// UI showed no selection at all.
+// A mask with empty bounds means "no selection", and a canvas with no
+// selection is writable everywhere. Every mutation restores that state instead
+// of leaving an allocated, all-zero mask behind.
 class SelectionMask {
 public:
     SelectionMask() = default;

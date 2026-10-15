@@ -3,7 +3,7 @@ import { ImageButtonVertical, ImageButtonHorizontal, ImageButtonIcon, ImageButto
 import { BarDropdown, BarDropdownItem, BarDropdownTitle, BarDropdownDivider, BarSizeDropdownItem } from "../components/bar-dropdown.slint";
 import { StandardButton, AboutSlint } from "std-widgets.slint";
 import { Styles } from "../styles.slint";
-import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions, EShapeKind, EShapeMode, ShapeStyle, ShapeGallery } from "../globals.slint";
+import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions, EShapeMode, ShapeStyle, ShapeGallery } from "../globals.slint";
 
 // One glyph of the Shapes picker.
 component ShapeGlyphButton inherits Rectangle {
@@ -28,62 +28,6 @@ component ShapeGlyphButton inherits Rectangle {
         fill: transparent;
         stroke: Styles.bar-text-color;
         stroke-width: 1px;
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
-    }
-}
-
-// The button that carries the shape the tool would draw next, and opens the
-// picker with every kind.
-component ShapePickerButton inherits Rectangle {
-    in property <string> commands;
-    in property <string> text: "";
-    in property <bool> focused: false;
-    callback clicked;
-
-    height: root.text == "" ? Styles.bar-small-icon-size + 6px : Styles.bar-small-icon-size + 20px;
-    border-width: 1px;
-    border-color: focused ? #8dbcec : touch.has-hover ? #c3ddf8 : transparent;
-    background: focused ? #c9e0f7 : touch.pressed ? #d5e6f7 : transparent;
-
-    VerticalLayout {
-        padding: 3px;
-        spacing: 0px;
-        alignment: center;
-
-        HorizontalLayout {
-            spacing: 1px;
-            alignment: center;
-
-            Path {
-                width: Styles.bar-small-icon-size;
-                height: Styles.bar-small-icon-size;
-                viewbox-width: 26.0;
-                viewbox-height: 26.0;
-                commands: root.commands;
-                fill: transparent;
-                stroke: Styles.bar-text-color;
-                stroke-width: 1px;
-            }
-
-            Text {
-                text: "▾";
-                font-size: Styles.bar-font-size;
-                color: Styles.bar-text-color;
-                vertical-alignment: center;
-            }
-        }
-
-        // The merged button names its group, like the other merged groups do.
-        if (root.text != "") : Text {
-            text: root.text;
-            font-size: Styles.bar-font-size;
-            color: Styles.bar-text-color;
-            horizontal-alignment: center;
-        }
     }
 
     touch := TouchArea {
@@ -133,8 +77,10 @@ export component HomeBar inherits Bar {
 
     private property <bool> collapsed-clipboard:
         root.strip-width < Styles.ribbon-width-clipboard + Styles.ribbon-divider + span-image
-            + Styles.ribbon-overflow-margin;    private property <length> width-clipboard:
-        collapsed-clipboard ? Styles.ribbon-merged-width : Styles.ribbon-width-clipboard;
+            + Styles.ribbon-overflow-margin;
+    // The Clipboard caption is the longest of the merged group names.
+    private property <length> width-clipboard:
+        collapsed-clipboard ? Styles.ribbon-merged-width + 8px : Styles.ribbon-width-clipboard;
 
     // The About group is an addition of this build, so it is the first thing to
     // go: it shows only while the whole ribbon fits expanded. Reading constants
@@ -205,7 +151,7 @@ export component HomeBar inherits Bar {
                     }
                     BarDropdownItem {
                         icon: @image-url("../../icons/paste.png"); text: "Paste from file";
-                        enabled: false;
+                        clicked => { UserState.paste-from-file(); }
                     }
                     BarDropdownDivider {}
                     BarDropdownItem {
@@ -223,15 +169,18 @@ export component HomeBar inherits Bar {
 
             HorizontalLayout {
                 clipboard-dropdown-btn := ImageButtonVerticalDropdown {
-                    text: "Paste";
-                    icon: @image-url("../../icons/paste.png");
+                    // Merged, this button speaks for the whole group.
+                    text: collapsed-clipboard ? "Clipboard" : "Paste";
+                    icon: @image-url("../../icons/copy.png");
+                    font-size: collapsed-clipboard ? Styles.bar-merged-font-size : Styles.bar-font-size;
 
                     clicked => { UserState.paste-selection(); }
                     clicked_dropdown => { clipboard-dropdown.show(); }
                 }
 
-                VerticalLayout {
-                    visible: !collapsed-clipboard;
+                // Taken out of the layout rather than hidden, so a merged group
+                // is no wider than its button.
+                if (!collapsed-clipboard) : VerticalLayout {
                     max-width: 70px;
                     spacing: Styles.bar-list-spacing;
 
@@ -383,6 +332,7 @@ export component HomeBar inherits Bar {
                 width: collapsed-image ? Styles.ribbon-merged-button : 0px;
                 text: "Image";
                 icon: @image-url("../../icons/resize.png");
+                font-size: Styles.bar-merged-font-size;
                 clicked => { image-menu.show(); }
                 clicked_dropdown => { image-menu.show(); }
             }
@@ -480,7 +430,8 @@ export component HomeBar inherits Bar {
                 // still holds its slot, which would squeeze the group's content.
                 width: collapsed-tools ? Styles.ribbon-merged-button : 0px;
                 text: "Tools";
-                icon: @image-url("../../icons/pencil.png");
+                icon: @image-url("../../icons/tools.png");
+                font-size: Styles.bar-merged-font-size;
                 clicked => { tools-menu.show(); }
                 clicked_dropdown => { tools-menu.show(); }
             }
@@ -537,6 +488,7 @@ export component HomeBar inherits Bar {
                 // than the other merged buttons.
                 width: Styles.ribbon-merged-button + 8px;
                 text: "Brushes";
+                icon: @image-url("../../icons/brushes.png");
                 clicked => { brushes-dropdown.show(); }
                 clicked_dropdown => { brushes-dropdown.show(); }
             }
@@ -710,15 +662,21 @@ export component HomeBar inherits Bar {
                 }
             }
 
-            shape-merged := ShapePickerButton {
+            shape-merged := ImageButtonVerticalDropdown {
                 visible: collapsed-shapes;
                 // No width while the group is expanded: an invisible element
                 // still holds its slot, which would squeeze the group's content.
                 width: collapsed-shapes ? Styles.ribbon-merged-button : 0px;
-                commands: ShapeGallery.current-commands;
                 text: "Shapes";
-                focused: UserState.selected-tool == ETool.SHAPE;
+                icon: @image-url("../../icons/shapes.png");
+                font-size: Styles.bar-merged-font-size;
+                focused1: UserState.selected-tool == ETool.SHAPE;
+                focused2: UserState.selected-tool == ETool.SHAPE;
                 clicked => {
+                    UserState.selected-tool = ETool.SHAPE;
+                    shape-gallery-dropdown.show();
+                }
+                clicked_dropdown => {
                     UserState.selected-tool = ETool.SHAPE;
                     shape-gallery-dropdown.show();
                 }
@@ -935,6 +893,8 @@ export component HomeBar inherits Bar {
                     visible: collapsed-colors;
                     width: collapsed-colors ? Styles.ribbon-merged-button : 0px;
                     text: "Colors";
+                    icon: @image-url("../../icons/edit-colors.png");
+                    font-size: Styles.bar-merged-font-size;
                     clicked => { colors-menu.show(); }
                     clicked_dropdown => { colors-menu.show(); }
                 }
@@ -987,7 +947,6 @@ export component HomeBar inherits Bar {
                     Text {
                         color: #333;
                         text: "LS paint: A FOSS MS paint clone.\n\n" +
-                            "Github: [TODO github link]\n\n" +
                             "-- LICENSE: --\n" +
                             "Copyright (C) 2024 Bowserinator\n" +
                             "\n" +

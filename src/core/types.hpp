@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace lsp {
@@ -18,6 +19,12 @@ struct Point2f {
     float x = 0;
     float y = 0;
 };
+
+// Distance between two points, used to decide whether a click is close enough
+// to a handle or a vertex.
+[[nodiscard]] inline float distance(Point2f a, Point2f b) {
+    return std::hypot(a.x - b.x, a.y - b.y);
+}
 
 struct RectI {
     int x = 0;

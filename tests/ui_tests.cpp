@@ -11,6 +11,7 @@
 
 #include "app/app_controller.hpp"
 #include "appwindow.h"
+#include "io/document_io.hpp"
 #include "ui/ui_state.hpp"
 
 #include "private/slint_tests_helpers.h"
@@ -58,6 +59,7 @@ public:
     }
 
     [[nodiscard]] const UserState& user() const { return m_window->global<UserState>(); }
+    [[nodiscard]] slint::Window& window() { return m_window->window(); }
     [[nodiscard]] const DocumentState& doc() const { return m_window->global<DocumentState>(); }
     [[nodiscard]] const DialogState& dialogs() const { return m_window->global<DialogState>(); }
     [[nodiscard]] const ToolOptions& tool_options() const { return m_window->global<ToolOptions>(); }
@@ -132,8 +134,8 @@ public:
         for (int y = 0; y < buffer.height(); ++y) {
             for (int x = 0; x < buffer.width(); ++x) {
                 const Rgba8& pixel = buffer.at(x, y);
-                if (pixel.a > 200 && abs(int(pixel.r) - int(r)) <= within &&
-                    abs(int(pixel.g) - int(g)) <= within && abs(int(pixel.b) - int(b)) <= within) {
+                if (pixel.a > 200 && std::abs(int(pixel.r) - int(r)) <= within &&
+                    std::abs(int(pixel.g) - int(g)) <= within && std::abs(int(pixel.b) - int(b)) <= within) {
                     return true;
                 }
             }
@@ -152,8 +154,8 @@ public:
                 const int py = y + dy;
                 if (!buffer.contains(px, py)) continue;
                 const Rgba8& pixel = buffer.at(px, py);
-                if (pixel.a > 200 && abs(int(pixel.r) - int(r)) <= 2 && abs(int(pixel.g) - int(g)) <= 2 &&
-                    abs(int(pixel.b) - int(b)) <= 2) {
+                if (pixel.a > 200 && std::abs(int(pixel.r) - int(r)) <= 2 && std::abs(int(pixel.g) - int(g)) <= 2 &&
+                    std::abs(int(pixel.b) - int(b)) <= 2) {
                     return true;
                 }
             }
@@ -188,8 +190,8 @@ public:
         for (int y = std::max(0, y0); y <= std::min(buffer.height() - 1, y1); ++y) {
             for (int x = std::max(0, x0); x <= std::min(buffer.width() - 1, x1); ++x) {
                 const Rgba8& pixel = buffer.at(x, y);
-                if (pixel.a > 200 && abs(int(pixel.r) - int(r)) <= 2 &&
-                    abs(int(pixel.g) - int(g)) <= 2 && abs(int(pixel.b) - int(b)) <= 2)
+                if (pixel.a > 200 && std::abs(int(pixel.r) - int(r)) <= 2 &&
+                    std::abs(int(pixel.g) - int(g)) <= 2 && std::abs(int(pixel.b) - int(b)) <= 2)
                     ++count;
             }
         }
@@ -439,6 +441,34 @@ int run_ui_tests() {
         (void)h.controller().document().flush();
         CHECK(h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 0, 0, 255) == 0);
     }
+
+    //      The same kinds filled: every closed kind covers more ground than its
+    //      own outline does, and the interior takes the second colour. A kind
+    //      whose fill left a gap behind would cover fewer pixels than the
+    //      outline that drew its edge.
+    int filled_kinds = 0;
+    for (int i = 0; i < int(sizeof(kinds) / sizeof(kinds[0])); ++i) {
+        if (kinds[i] == EShapeKind::LINE || kinds[i] == EShapeKind::CURVE) continue;
+        const int x0 = 420 + (i % kKindColumns) * 70;
+        const int y0 = 60 + (i / kKindColumns) * 70;
+        h.shapes().set_kind(kinds[i]);
+        h.shapes().set_mode(EShapeMode::OUTLINE);
+        h.drag(origin.x + float(x0), origin.y + float(y0), origin.x + float(x0 + 50),
+               origin.y + float(y0 + 50));
+        const int outline_ink = h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 0, 0, 255);
+        h.controller().history().undo();
+        (void)h.controller().document().flush();
+
+        h.shapes().set_mode(EShapeMode::FILL);
+        h.drag(origin.x + float(x0), origin.y + float(y0), origin.x + float(x0 + 50),
+               origin.y + float(y0 + 50));
+        CHECK(h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 255, 255, 0) > outline_ink);
+        h.controller().history().undo();
+        (void)h.controller().document().flush();
+        CHECK(h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 255, 255, 0) == 0);
+        ++filled_kinds;
+    }
+    CHECK(filled_kinds == 20);
 
     // 15d. Outline, fill and both: the fill reaches the middle in the second
     //      colour, and a thicker outline covers more pixels than a thin one.
@@ -774,6 +804,46 @@ int run_ui_tests() {
     h.dialogs().invoke_message_ok();
     h.dialogs().invoke_resize_cancel();
     CHECK(!h.dialogs().get_resize_visible());
+
+    // 30. Pasting a picture larger than the canvas grows the canvas to fit,
+    //     and one undo restores both the pixels and the size.
+    const std::filesystem::path big_path = std::filesystem::temp_directory_path() / "ls_paint_ui_big.png";
+    {
+        CanvasDocument bigger(1200, 900);
+        bigger.active_layer().pixels.at(1190, 890) = Rgba8{255, 0, 0, 255};
+        bigger.mark_dirty(bigger.bounds());
+        (void)bigger.flush();
+        CHECK(save(bigger, big_path, ImageFormat::Png, nullptr));
+    }
+    const int small_w = h.controller().document().width();
+    const int small_h = h.controller().document().height();
+    CHECK(small_w < 1200);
+    h.user().invoke_paste_from_file();
+    CHECK(h.dialogs().get_file_visible());
+    h.dialogs().set_file_path(slint::SharedString(big_path.string()));
+    h.dialogs().invoke_file_ok();
+    CHECK(!h.dialogs().get_file_visible());
+    CHECK(h.controller().document().width() == 1200);
+    CHECK(h.controller().document().height() == 900);
+    CHECK(h.color_near(1190, 890, 255, 0, 0));
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
+    CHECK(h.controller().document().width() == small_w);
+    CHECK(h.controller().document().height() == small_h);
+    std::filesystem::remove(big_path);
+
+    // 31. Closing a document with unsaved work asks before it goes, and
+    //     cancelling keeps the window alive.
+    h.user().set_selected_tool(ETool::PENCIL);
+    h.move(origin.x + 500, origin.y + 300);
+    h.press(origin.x + 500, origin.y + 300);
+    h.move(origin.x + 560, origin.y + 300);
+    h.release(origin.x + 560, origin.y + 300);
+    CHECK(h.doc().get_modified());
+    h.window().dispatch_close_requested_event();
+    CHECK(h.dialogs().get_confirm_visible());
+    h.dialogs().invoke_confirm_cancel();
+    CHECK(!h.dialogs().get_confirm_visible());
 
     std::filesystem::remove(save_path);
 

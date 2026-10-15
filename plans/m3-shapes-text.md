@@ -32,6 +32,27 @@ click elsewhere, a tool switch, and leaving the tool; the options strip is laid
 over the canvas rather than inside the window's root layout, because a layout
 child pinned the window's maximum width.
 
+### Shape geometry rules
+
+Every closed kind draws from one simple outline. A self-crossing outline fills
+with a hole because the scanline rule counts the crossing twice. Two kinds were
+fixed for that reason: the heart is now fitted into its box with a single
+uniform scale and centred, so a square drag does not stand it up, and the bolt's
+waist no longer touches its lower edge. `tests/shape_tool_test.cpp` checks the
+rules for all 23 kinds (the outline never crosses itself, a fill leaves no
+enclosed background, a fill covers more ground than the outline, and the heart
+stays wider than it is tall), and `tests/ui_tests.cpp` walks every closed kind
+through the real pointer path in outline and in fill mode.
+
+### Ribbon interaction checks
+
+Every ribbon dropdown was opened in the real window and photographed: Clipboard,
+Select, Rotate, Outline, Fill, Size, Brushes, the shape gallery, the merged
+Tools and Colors menus, the File menu, and the Save As dialog. Each one opens
+under the ribbon's lower edge inside the window, with its options laid out in
+one column or grid and no option hidden behind another element. The merged forms
+were checked at the widths where they appear.
+
 What existed before this milestone (verified by reading the code, not assumed):
 
 - *(This bullet described the pre-M3 tree; the milestone is now built — see
