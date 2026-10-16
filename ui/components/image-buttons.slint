@@ -170,6 +170,40 @@ export component ImageButtonHorizontal inherits ImageButtonBase {
     }
 }
 
+export component ImageButtonHorizontalDropdown inherits ImageButtonBase {
+    in-out property text <=> txt.text;
+    // The arrow's own box, so the panel a button opens can sit under it.
+    out property <length> arrow-x: arrow.x;
+    out property <length> arrow-y: arrow.y;
+    out property <length> arrow-width: arrow.width;
+    out property <length> arrow-height: arrow.height;
+
+    HorizontalLayout {
+        padding: Styles.bar-padding;
+        padding-top: Styles.bar-padding / 2;
+        padding-bottom: Styles.bar-padding / 2;
+        spacing: Styles.bar-padding;
+        alignment: start;
+
+        VerticalLayout {
+            Image {
+                width: Styles.bar-small-icon-size;
+                height: Styles.bar-small-icon-size;
+                source: root.icon;
+            }
+        }
+
+        txt := ButtonText { font-size: root.font-size; }
+
+        arrow := Text {
+            text: "▾";
+            font-size: root.font-size;
+            color: Styles.bar-text-color;
+            vertical-alignment: center;
+        }
+    }
+}
+
 // A text-only ribbon button, for the File tab where no icon exists.
 export component BarButton inherits ImageButtonBase {
     in-out property text <=> txt.text;

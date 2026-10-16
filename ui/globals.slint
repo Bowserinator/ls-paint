@@ -1,6 +1,6 @@
 export enum ETool {
     NONE, SELECTION, RESIZE, ROTATE,
-    PENCIL, FILL, SHAPE, TEXT, ERASER, DROPPER, MAGNIFY
+    PENCIL, BRUSH, FILL, SHAPE, TEXT, ERASER, DROPPER, MAGNIFY
 }
 export enum ESelectionType { RECTANGULAR, FREEHAND, POLYGON }
 export enum ERotation { CW90, CCW90, R180 }
@@ -16,6 +16,19 @@ export enum EShapeKind {
     HEART, LIGHTNING
 }
 export enum EShapeMode { FILL, OUTLINE, BOTH }
+
+// The brush types the Brushes picker offers.
+export enum EBrushKind {
+    BRUSH,
+    CALLIGRAPHY_1,
+    CALLIGRAPHY_2,
+    AIRBRUSH,
+    OIL,
+    CRAYON,
+    MARKER,
+    NATURAL_PENCIL,
+    WATERCOLOR,
+}
 
 // One run of the marching-ants outline, in document pixels. The pattern is
 // rebuilt from the C++ side on every animation tick.
@@ -169,8 +182,9 @@ export global DocumentState {
 
 export global ToolOptions {
     in-out property <length> brush-size: 1px;
-    // A brush preset picks the kind of tip and how tightly the stamps are laid
-    // down; both take effect on the next stroke.
+    // The brush type picks the tip and how tightly the stamps are laid down on
+    // the next stroke; the plain brush keeps the settings below.
+    in-out property <EBrushKind> brush-kind: BRUSH;
     in-out property <bool> brush-square: false;
     in-out property <float> brush-spacing: 0.25;
 }
@@ -187,9 +201,30 @@ export global ShapeStyle {
 export struct ShapeGlyph {
     commands: string,
     kind: EShapeKind,
+    // Open kinds (line, curve) have no interior to fill.
+    filled: bool,
 }
 export global ShapeGallery {
     in property <[ShapeGlyph]> items;
+}
+
+// One entry of the Brushes picker, in the order the picker shows them.
+export struct BrushGlyph {
+    kind: EBrushKind,
+    image: image,
+}
+export global BrushGallery {
+    in property <[BrushGlyph]> items: [
+        { kind: EBrushKind.BRUSH, image: @image-url("../icons/brushes/brush.png") },
+        { kind: EBrushKind.CALLIGRAPHY_1, image: @image-url("../icons/brushes/calligraphy-1.png") },
+        { kind: EBrushKind.CALLIGRAPHY_2, image: @image-url("../icons/brushes/calligraphy-2.png") },
+        { kind: EBrushKind.AIRBRUSH, image: @image-url("../icons/brushes/airbrush.png") },
+        { kind: EBrushKind.OIL, image: @image-url("../icons/brushes/oil.png") },
+        { kind: EBrushKind.CRAYON, image: @image-url("../icons/brushes/crayon.png") },
+        { kind: EBrushKind.MARKER, image: @image-url("../icons/brushes/marker.png") },
+        { kind: EBrushKind.NATURAL_PENCIL, image: @image-url("../icons/brushes/natural-pencil.png") },
+        { kind: EBrushKind.WATERCOLOR, image: @image-url("../icons/brushes/watercolor.png") },
+    ];
 }
 
 // The shape being dragged, as an outline the view draws over the paper. The
@@ -200,7 +235,9 @@ export global ShapeOverlay {
     in-out property <string> commands: "";
     in-out property <bool> draw-fill: false;
     in-out property <bool> draw-outline: true;
-    in-out property <color> color: black;
+    // The preview carries the same two colors the commit rasterizes with.
+    in-out property <color> outline-color: black;
+    in-out property <color> fill-color: white;
 }
 
 // Text tool settings, set by the font controls in the options strip.

@@ -289,9 +289,59 @@ void publish(ToolContext& context, const std::vector<Point2f>& points, bool clos
     const ShapeMode mode = open && options.mode == ShapeMode::Fill ? ShapeMode::Outline : options.mode;
     preview.visible = true;
     preview.draw_fill = mode != ShapeMode::Outline;
-    preview.draw_outline = mode != ShapeMode::Fill;
-    preview.color = context.colors.ink(button);
+    // A shape always carries a border; the fill is the only thing the mode drops.
+    preview.draw_outline = true;
+    preview.outline_color = context.colors.ink(button);
+    preview.fill_color = context.colors.other_ink(button);
     preview.commands = shape::svg_commands(points, closed);
+}
+
+// The stroke follows the pixel grid, so along a diagonal edge it can leave a
+// one-pixel line of background between itself and the fill. Repaint such a
+// pixel with the fill colour: only a pixel that has the fill colour on one side
+// of it and the stroke colour on the other is repainted, so the repair cannot
+// reach outside the band between the two.
+void bridge_fill_to_outline(raster::Target target, RectI area, Rgba8 fill_color,
+                            Rgba8 outline_color) {
+    area = area.intersected(target.pixels.bounds());
+    if (area.empty()) return;
+    std::vector<std::pair<int, int>> bridges;
+    for (int y = area.y; y < area.bottom(); ++y) {
+        for (int x = area.x; x < area.right(); ++x) {
+            const Rgba8 here = target.pixels.at(x, y);
+            if (here == fill_color || here == outline_color || !target.allows(x, y)) continue;
+            bool fill_left = false, outline_left = false, fill_right = false, outline_right = false;
+            bool fill_up = false, outline_up = false, fill_down = false, outline_down = false;
+            for (int d = 1; d <= 2; ++d) {
+                if (x - d >= area.x) {
+                    const Rgba8 pixel = target.pixels.at(x - d, y);
+                    fill_left = fill_left || pixel == fill_color;
+                    outline_left = outline_left || pixel == outline_color;
+                }
+                if (x + d < area.right()) {
+                    const Rgba8 pixel = target.pixels.at(x + d, y);
+                    fill_right = fill_right || pixel == fill_color;
+                    outline_right = outline_right || pixel == outline_color;
+                }
+                if (y - d >= area.y) {
+                    const Rgba8 pixel = target.pixels.at(x, y - d);
+                    fill_up = fill_up || pixel == fill_color;
+                    outline_up = outline_up || pixel == outline_color;
+                }
+                if (y + d < area.bottom()) {
+                    const Rgba8 pixel = target.pixels.at(x, y + d);
+                    fill_down = fill_down || pixel == fill_color;
+                    outline_down = outline_down || pixel == outline_color;
+                }
+            }
+            const bool sideways = (fill_left && outline_right) || (outline_left && fill_right);
+            const bool upright = (fill_up && outline_down) || (outline_up && fill_down);
+            if (sideways || upright) bridges.emplace_back(x, y);
+        }
+    }
+    for (const std::pair<int, int>& pixel : bridges) {
+        target.pixels.at(pixel.first, pixel.second) = fill_color;
+    }
 }
 
 }  // namespace
@@ -383,7 +433,6 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
     const ShapeMode mode =
         open && options.mode == ShapeMode::Fill ? ShapeMode::Outline : options.mode;
     const bool wants_fill = mode != ShapeMode::Outline;
-    const bool wants_outline = mode != ShapeMode::Fill;
     const int thickness = std::clamp(options.thickness, 1, 32);
     const RectI box = shape::normalized_rect(a, b);
 
@@ -392,18 +441,17 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
     switch (kind) {
         case ShapeId::Rectangle:
             if (wants_fill) raster::draw_rect_fill(target, box, fill_color);
-            if (wants_outline) raster::draw_rect_outline(target, box, thickness, outline_color);
+            raster::draw_rect_outline(target, box, thickness, outline_color);
             return;
         case ShapeId::Oval:
             if (wants_fill) raster::draw_ellipse_fill(target, box, fill_color);
-            if (wants_outline) raster::draw_ellipse_outline(target, box, thickness, outline_color);
+            raster::draw_ellipse_outline(target, box, thickness, outline_color);
             return;
         case ShapeId::RoundedRect:
             if (wants_fill)
                 raster::draw_rounded_rect_fill(target, box, options.corner_radius, fill_color);
-            if (wants_outline)
-                raster::draw_rounded_rect_outline(target, box, options.corner_radius, thickness,
-                                                  outline_color);
+            raster::draw_rounded_rect_outline(target, box, options.corner_radius, thickness,
+                                              outline_color);
             return;
         default: break;
     }
@@ -411,7 +459,19 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
     const std::vector<Point2f> points = shape::outline(kind, a, b, polygon);
     if (points.size() < 2) return;
     if (wants_fill && !open) raster::draw_polygon_fill(target, points, fill_color);
-    if (wants_outline) raster::draw_polyline(target, points, thickness, outline_color, !open);
+    raster::draw_polyline(target, points, thickness, outline_color, !open);
+    if (wants_fill && !open) {
+        RectI area{};
+        for (const Point2f& point : points) {
+            const int x = static_cast<int>(std::floor(point.x));
+            const int y = static_cast<int>(std::floor(point.y));
+            area = area.united(RectI{x, y, 1, 1});
+        }
+        const int pad = thickness + 1;
+        bridge_fill_to_outline(target, RectI{area.x - pad, area.y - pad, area.width + 2 * pad,
+                                             area.height + 2 * pad},
+                               fill_color, outline_color);
+    }
 }
 
 void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerButton button) {
@@ -508,8 +568,7 @@ void ShapeTool::commit_drag(ToolContext& context, Point2f end) {
     if (region.empty()) return;
 
     const Rgba8 outline = context.colors.ink(m_button);
-    const Rgba8 fill = context.colors.ink(m_button == PointerButton::Primary ? PointerButton::Secondary
-                                                                            : PointerButton::Primary);
+    const Rgba8 fill = context.colors.other_ink(m_button);
     const std::vector<std::uint8_t> clip = context.selection_clip();
     raster::Target target{context.document.active_layer().pixels,
                           clip.empty() ? nullptr : clip.data()};
@@ -534,8 +593,7 @@ void ShapeTool::close_polygon(ToolContext& context) {
     if (region.empty()) return;
 
     const Rgba8 outline = context.colors.ink(m_button);
-    const Rgba8 fill = context.colors.ink(m_button == PointerButton::Primary ? PointerButton::Secondary
-                                                                            : PointerButton::Primary);
+    const Rgba8 fill = context.colors.other_ink(m_button);
     const std::vector<std::uint8_t> clip = context.selection_clip();
     raster::Target target{context.document.active_layer().pixels,
                           clip.empty() ? nullptr : clip.data()};

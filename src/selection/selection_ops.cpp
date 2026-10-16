@@ -210,6 +210,21 @@ SelectionEdit paste_clipboard(PixelBuffer& pixels, SelectionMask& mask, const Cl
     return edit;
 }
 
+FloatingContents float_block(PixelBuffer content, std::vector<std::uint8_t> mask, int x, int y) {
+    FloatingContents contents;
+    if (content.width() <= 0 || content.height() <= 0) return contents;
+
+    const std::size_t count = static_cast<std::size_t>(content.width()) * content.height();
+    if (mask.size() != count) mask.assign(count, 1);
+
+    contents.position = RectI{x, y, content.width(), content.height()};
+    contents.source = content;
+    contents.source_mask = mask;
+    contents.content = std::move(content);
+    contents.mask = std::move(mask);
+    return contents;
+}
+
 void lift_contents(const PixelBuffer& pixels, const SelectionMask& mask,
                    std::optional<FloatingContents>& floating, Rgba8 fill) {
     if (floating) return;

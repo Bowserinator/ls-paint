@@ -1,11 +1,22 @@
 export global Styles {
     out property<length> bar-font-size: 12px;
-    // Merged group buttons carry a smaller caption, so long group names fit.
-    out property<length> bar-merged-font-size: 10px;
     out property<length> bar-padding: 4px;
     out property<length> bar-list-spacing: 2px;
     out property<length> bar-height: 110px;
+    // The ribbon's button row: its buttons end at the drop line below, where a
+    // button's caption and its dropdown arrow sit.
+    out property<length> bar-button-height: 86px;
+    // Distance between the bottom of a button and the top of the panel its arrow
+    // opens. Every dropdown is placed from this one value: raise it to leave a
+    // gap under the buttons.
+    out property<length> bar-dropdown-gap: 0px;
+    // The line every dropdown opens on, measured inside the ribbon group: the
+    // buttons' bottom edge (the row height less its padding) plus that gap.
+    out property<length> bar-dropdown-y: bar-button-height - bar-padding + bar-dropdown-gap + 8px;
     out property<length> bar-vertical-btn-width: 54px;
+    // The Outline and Fill buttons beside the shape grid, wide enough for the
+    // longer caption.
+    out property<length> bar-shape-mode-btn-width: 66px;
 
     // Ribbon overflow. A group merges into a single dropdown button once the
     // ribbon is too narrow for the groups up to and including it. The widths
@@ -20,23 +31,43 @@ export global Styles {
     // One shape glyph cell in the Shapes box.
     out property<length> ribbon-shape-cell: 26px;
     out property<length> ribbon-width-clipboard: 132px;
-    out property<length> ribbon-width-image: 206px;
-    out property<length> ribbon-width-tools: 164px;
+    out property<length> ribbon-width-image: 142px;
+    out property<length> ribbon-width-tools: 100px;
     out property<length> ribbon-width-brushes: 72px;
-    out property<length> ribbon-width-shapes: 314px;
+    out property<length> ribbon-width-shapes: 312px;
     out property<length> ribbon-width-size: 62px;
     out property<length> ribbon-width-colors: 424px;
     out property<length> ribbon-width-about: 84px;
 
     out property<length> bar-small-icon-size: 20px;
     out property<length> bar-large-icon-size: 38px;
+    // One cell of the Brushes dropdown: twice a shape glyph cell, so the brush
+    // pictures read at a glance.
+    out property<length> bar-brush-cell-size: (bar-small-icon-size + 6px) * 2;
 
     out property<color> bar-border-light: #dadada;
     out property<color> bar-text-color: #333;
+    // The fixed fill the Shapes picker glyphs carry, so a filled shape reads as
+    // filled whatever the palette holds.
+    out property<color> shape-glyph-fill: #eef3f7;
+    // Blue like the reference, so an unpicked glyph is not drawn in black.
+    out property<color> shape-glyph-outline: #1979ca;
+    // The shape the picker shows as chosen.
+    out property<color> shape-glyph-selected-fill: #d6e8fa;
 
     out property<length> bar-dropdown-width: 192px;
     out property<length> bar-dropdown-height: 28px;
     out property<length> color-btn-spacing: 4px;
+
+    // The Colors dropdown is the one panel wider than the default: it puts the
+    // two swatches beside the ten wide palette and the picker tile.
+    out property<length> bar-colors-menu-width:
+        2px + 6px + 50px + 6px + 50px + 6px + (bar-small-icon-size + color-btn-spacing) * 10
+            + 6px + bar-vertical-btn-width + 6px;
+    // The Shapes dropdown holds the glyph grid and, beside it, the outline and
+    // fill buttons.
+    out property<length> bar-shapes-menu-width:
+        2px + 6px + 7 * (bar-small-icon-size + 6px) + 6px + bar-shape-mode-btn-width + 6px;
 
     // Height of the strip a tool can show between the ribbon and the paper.
     out property<length> text-options-height: 28px;

@@ -45,6 +45,7 @@ add_subdirectory(third_party/clip)
 add_library(lsp_core STATIC
     src/app/app_controller.cpp
     src/app/input_router.cpp
+    src/brushes/brush.cpp
     src/brushes/brush_engine.cpp
     src/core/blend_modes.cpp
     src/core/canvas_document.cpp

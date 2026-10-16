@@ -1,6 +1,9 @@
 import { Styles } from "../styles.slint";
 
 export component BarDropdown {
+    // Wider than the default only for the panels whose contents need it.
+    in property <length> panel-width: Styles.bar-dropdown-width + 2px;
+
     Rectangle {
         background: white;
         border-width: 1px;
@@ -8,7 +11,7 @@ export component BarDropdown {
     }
 
     VerticalLayout {
-        width: Styles.bar-dropdown-width + 2px;
+        width: root.panel-width;
         padding: 1px;
         @children
     }

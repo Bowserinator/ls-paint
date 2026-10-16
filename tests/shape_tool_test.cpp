@@ -141,6 +141,53 @@ void test_filled_shapes_leave_no_gap(const ShapeId kind, int width, int height) 
     CHECK(!encloses_background(pixels));
 }
 
+// A background pixel the fill leaves behind on one side and the outline on the
+// other, with every neighbour painted, is a line the user sees running through
+// the shape.
+int fill_outline_seams(const PixelBuffer& pixels, Rgba8 fill, Rgba8 outline) {
+    const auto painted = [&](int x, int y) { return pixels.at(x, y).a != 0; };
+    int seams = 0;
+    for (int y = 1; y + 1 < pixels.height(); ++y)
+        for (int x = 1; x + 1 < pixels.width(); ++x) {
+            if (painted(x, y)) continue;
+            if (!painted(x - 1, y) || !painted(x + 1, y) || !painted(x, y - 1) ||
+                !painted(x, y + 1))
+                continue;
+            bool fill_left = false, outline_left = false, fill_right = false, outline_right = false;
+            for (int d = 1; d <= 2; ++d) {
+                if (x - d >= 0) {
+                    fill_left = fill_left || pixels.at(x - d, y) == fill;
+                    outline_left = outline_left || pixels.at(x - d, y) == outline;
+                }
+                if (x + d < pixels.width()) {
+                    fill_right = fill_right || pixels.at(x + d, y) == fill;
+                    outline_right = outline_right || pixels.at(x + d, y) == outline;
+                }
+            }
+            if ((fill_left && outline_right) || (outline_left && fill_right)) ++seams;
+        }
+    return seams;
+}
+
+void test_fill_meets_the_outline_at_thin_thickness() {
+    // A one or two pixel stroke follows the pixel grid, so on a diagonal edge it
+    // used to sit a pixel away from the fill and leave a line of background.
+    for (const ShapeId kind : kShapeIds) {
+        if (!shape::is_closed(kind)) continue;
+        for (const int thickness : {1, 2}) {
+            PixelBuffer pixels(88, 88);
+            const ShapeOptions options{kind, ShapeMode::Fill, thickness, 8};
+            rasterize_shape(Target{pixels}, kind, {4, 4}, {83, 83}, clicked_polygon(), options, kInk,
+                            kFill);
+            const int seams = fill_outline_seams(pixels, kFill, kInk);
+            if (seams != 0)
+                std::printf("kind %d thickness %d leaves %d seam pixels\n", static_cast<int>(kind),
+                            thickness, seams);
+            CHECK(seams == 0);
+        }
+    }
+}
+
 void test_fill_covers_more_than_the_outline(const ShapeId kind) {
     PixelBuffer outline(88, 88);
     PixelBuffer filled(88, 88);
@@ -205,6 +252,7 @@ void test_rectangle_and_oval_use_their_own_primitives() {
 int main() {
     test_every_kind_is_reachable();
     test_outlines_do_not_cross_themselves();
+    test_fill_meets_the_outline_at_thin_thickness();
     test_heart_is_wide_and_centred();
     test_lightning_fill_is_solid();
     test_rectangle_and_oval_use_their_own_primitives();

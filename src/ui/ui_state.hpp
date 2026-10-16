@@ -43,6 +43,7 @@ private:
     void do_file_save();
     void do_file_save_as();
     void do_file_exit();
+    void do_paste();
     void do_paste_from_file();
 
     // Work left half-done by a question the user has to answer.

@@ -30,6 +30,13 @@ struct ColorPair {
         color.a = 255;
         return color;
     }
+
+    // The other button's ink: a shape draws its border in the pressed button's
+    // color and its interior in this one, mspaint's Color 1 / Color 2 split.
+    [[nodiscard]] Rgba8 other_ink(PointerButton button) const noexcept {
+        return ink(button == PointerButton::Primary ? PointerButton::Secondary
+                                                    : PointerButton::Primary);
+    }
 };
 
 // What the active tool tells the UI about a gesture that is still running.

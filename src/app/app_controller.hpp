@@ -85,7 +85,9 @@ public:
 
 private:
     void commit_selection_contents();
-    void push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before);
+    void install_floating(FloatingContents contents);
+    void push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before,
+                            std::optional<FloatingContents> floating_after = std::nullopt);
     void push_selection_edit(SelectionEdit edit);
     IoResult paste_pixels(PixelBuffer image);
     // The region Copy and Cut take: the selection when there is one, otherwise

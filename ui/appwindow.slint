@@ -354,8 +354,8 @@ export component AppWindow inherits Window {
                         viewbox-width: max(1.0, root.doc-w / 1px);
                         viewbox-height: max(1.0, root.doc-h / 1px);
                         commands: ShapeOverlay.commands;
-                        fill: ShapeOverlay.draw-fill ? ShapeOverlay.color : transparent;
-                        stroke: ShapeOverlay.draw-outline ? ShapeOverlay.color : transparent;
+                        fill: ShapeOverlay.draw-fill ? ShapeOverlay.fill-color : transparent;
+                        stroke: ShapeOverlay.draw-outline ? ShapeOverlay.outline-color : transparent;
                         stroke-width: ShapeStyle.thickness * 1px;
                     }
 

@@ -10,7 +10,7 @@ struct ToolContext;
 
 enum class ToolId {
     None, Selection, Resize, Rotate,
-    Pencil, Fill, Shape, Text, Eraser, Dropper, Magnify
+    Pencil, Brush, Fill, Shape, Text, Eraser, Dropper, Magnify
 };
 
 enum class PointerButton { Primary, Secondary };

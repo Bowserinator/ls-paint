@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -20,6 +21,9 @@ struct LoadResult {
 
 // Decodes an image file to straight RGBA8.
 [[nodiscard]] LoadResult load(const std::filesystem::path& path);
+
+// Decodes encoded image bytes (PNG, BMP or JPEG) to straight RGBA8.
+[[nodiscard]] LoadResult load_from_memory(const void* data, std::size_t size);
 
 // Writes the flattened document. Alpha is flattened onto white for Bmp and Jpeg.
 [[nodiscard]] bool save(const CanvasDocument& document, const std::filesystem::path& path,

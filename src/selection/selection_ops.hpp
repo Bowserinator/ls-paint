@@ -87,6 +87,15 @@ enum class ContentTransform { RotateCw90, RotateCcw90, Rotate180, FlipHorizontal
 [[nodiscard]] SelectionEdit paste_clipboard(PixelBuffer& pixels, SelectionMask& mask,
                                             const ClipboardContent& clip, int x, int y);
 
+// A floating copy of a block that did not come from the layer — a pasted image
+// or a pasted selection. The contents hover above the canvas until the
+// selection is committed, so nothing is painted over before then. `mask` holds
+// width * height entries (1 = selected) laid out for the block; an empty one
+// takes all of it. The origin stays empty, because a paste has nothing to
+// restore behind it.
+[[nodiscard]] FloatingContents float_block(PixelBuffer content, std::vector<std::uint8_t> mask, int x,
+                                          int y);
+
 // Lifts the masked pixels out of the layer into a floating copy. No-op when
 // the selection is already floating, and the layer itself is never written to.
 void lift_contents(const PixelBuffer& pixels, const SelectionMask& mask,

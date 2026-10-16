@@ -41,6 +41,22 @@ std::vector<std::uint8_t> to_rgb_bytes(const PixelBuffer& source) {
     return bytes;
 }
 
+// Takes the pixels stb decoded and turns them into a LoadResult.
+LoadResult from_decoded(std::uint8_t* data, int width, int height, const std::string& description) {
+    if (width <= 0 || height <= 0 || width > kMaxImageDimension || height > kMaxImageDimension) {
+        stbi_image_free(data);
+        return {false, {}, "Image too large: " + description};
+    }
+
+    PixelBuffer pixels(width, height);
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * 4;
+    for (int y = 0; y < height; ++y) {
+        std::memcpy(pixels.row(y).data(), data + static_cast<std::size_t>(y) * row_bytes, row_bytes);
+    }
+    stbi_image_free(data);
+    return {true, std::move(pixels), {}};
+}
+
 }  // namespace
 
 LoadResult load(const std::filesystem::path& path) {
@@ -52,18 +68,17 @@ LoadResult load(const std::filesystem::path& path) {
     int channels = 0;
     std::uint8_t* data = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
     if (data == nullptr) return {false, {}, std::string("Cannot decode image: ") + stbi_failure_reason()};
-    if (width <= 0 || height <= 0 || width > kMaxImageDimension || height > kMaxImageDimension) {
-        stbi_image_free(data);
-        return {false, {}, "Image too large: " + path.string()};
-    }
+    return from_decoded(data, width, height, path.string());
+}
 
-    PixelBuffer pixels(width, height);
-    const std::size_t row_bytes = static_cast<std::size_t>(width) * 4;
-    for (int y = 0; y < height; ++y) {
-        std::memcpy(pixels.row(y).data(), data + static_cast<std::size_t>(y) * row_bytes, row_bytes);
-    }
-    stbi_image_free(data);
-    return {true, std::move(pixels), {}};
+LoadResult load_from_memory(const void* data, std::size_t size) {
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    std::uint8_t* pixels = stbi_load_from_memory(static_cast<const std::uint8_t*>(data),
+                                                static_cast<int>(size), &width, &height, &channels, 4);
+    if (pixels == nullptr) return {false, {}, std::string("Cannot decode image: ") + stbi_failure_reason()};
+    return from_decoded(pixels, width, height, "the pasted image");
 }
 
 bool save(const CanvasDocument& document, const std::filesystem::path& path, ImageFormat format,

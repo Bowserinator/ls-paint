@@ -13,6 +13,35 @@
 
 namespace lsp {
 
+namespace {
+
+// What the clipboard holds when it holds no image, so a paste that fails can be
+// diagnosed from the console.
+std::string clipboard_contents_note() {
+    const std::vector<std::string> types = Clipboard::available_types();
+    std::string note = "; the clipboard offers ";
+    if (types.empty()) {
+        note += "nothing";
+    } else {
+        for (std::size_t index = 0; index < types.size(); ++index) {
+            if (index != 0) note += ", ";
+            note += types[index];
+        }
+        if (Clipboard::has_image()) note += ", but its image could not be read";
+    }
+    std::string text;
+    if (!Clipboard::get_text(text) || text.empty()) return note + "; the clipboard holds no text";
+    constexpr std::size_t kMaxShown = 200;
+    const bool clipped = text.size() > kMaxShown;
+    text.resize(std::min(text.size(), kMaxShown));
+    for (char& letter : text) {
+        if (letter == '\n' || letter == '\r' || letter == '\t') letter = ' ';
+    }
+    return note + "; clipboard text: \"" + text + "\"" + (clipped ? "..." : "");
+}
+
+}  // namespace
+
 AppController::AppController()
     : m_document(kDefaultCanvasWidth, kDefaultCanvasHeight),
       m_history(m_document),
@@ -76,13 +105,25 @@ void AppController::flip_vertical() {
 
 // Whole-image geometry always ends deselected: the mask belongs to the old
 // geometry, so only undo has anything to put back.
-void AppController::push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before) {
+void AppController::push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before,
+                                       std::optional<FloatingContents> floating_after) {
     m_history.push(std::make_unique<CanvasResizeCommand>(
         std::move(before), std::move(selection_before), m_document.snapshot(),
-        SelectionMask(m_document.width(), m_document.height())));
+        SelectionMask(m_document.width(), m_document.height()), std::move(floating_after)));
 }
 
 void AppController::commit_selection_contents() { m_context.commit_selection(); }
+
+// Makes a floating block the live selection: the contents hover over the
+// canvas while the mask — and so the marching ants — describes where they sit.
+void AppController::install_floating(FloatingContents contents) {
+    const RectI position = contents.position;
+    const std::vector<std::uint8_t> mask = contents.mask;
+    m_document.floating() = std::move(contents);
+    m_document.selection().clear();
+    m_document.selection().replace_region(position, mask);
+    m_document.mark_dirty(position);
+}
 
 void AppController::select_all() {
     commit_selection_contents();
@@ -150,8 +191,15 @@ void AppController::delete_selection_contents() {
 void AppController::paste_clipboard() {
     if (m_clipboard.empty()) return;
     commit_selection_contents();
-    push_selection_edit(
-        lsp::paste_clipboard(m_document.active_layer().pixels, m_document.selection(), m_clipboard, 0, 0));
+
+    // The block hovers over the canvas until the paste is applied, so the
+    // pixels it covers are left alone for now.
+    SelectionEdit edit;
+    edit.mask_before = m_document.selection();
+    install_floating(float_block(m_clipboard.pixels, m_clipboard.mask, 0, 0));
+    edit.mask_after = m_document.selection();
+    edit.float_after = m_document.floating();
+    push_selection_edit(std::move(edit));
 }
 
 void AppController::transform_selection_contents(ContentTransform transform) {
@@ -259,7 +307,9 @@ IoResult AppController::copy_to_clipboard() {
 
 IoResult AppController::paste_from_clipboard() {
     std::optional<PixelBuffer> image = Clipboard::get_image();
-    if (!image) return IoResult::failure("The clipboard does not contain an image");
+    if (!image) {
+        return IoResult::failure("The clipboard does not contain an image" + clipboard_contents_note());
+    }
     return paste_pixels(std::move(*image));
 }
 
@@ -280,15 +330,16 @@ IoResult AppController::paste_pixels(PixelBuffer image) {
     std::vector<PixelBuffer> before = m_document.snapshot();
     SelectionMask selection_before = m_document.selection();
 
-    // Paint grows the canvas only where the pasted image needs it.
+    // Paint grows the canvas only where the pasted image needs it. The block
+    // itself only hovers on it: nothing is painted over until the paste is
+    // applied, which is what lets it be moved and resized first.
     if (width != m_document.width() || height != m_document.height())
         m_document.resize(width, height, Rgba8{255, 255, 255, 255});
-    m_document.active_layer().pixels.blit(0, 0, image);
-    m_document.mark_dirty(m_document.bounds());
+    install_floating(float_block(std::move(image), {}, 0, 0));
 
     // A whole-layer snapshot is what a canvas change needs: undo has to restore
-    // the pixels and the previous size together.
-    push_geometry_edit(std::move(before), std::move(selection_before));
+    // the pixels, the previous size and the floating block together.
+    push_geometry_edit(std::move(before), std::move(selection_before), m_document.floating());
     return IoResult::success();
 }
 

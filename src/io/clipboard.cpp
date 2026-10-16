@@ -1,15 +1,93 @@
 #include "io/clipboard.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "config.hpp"
+#include "io/document_io.hpp"
 
 #include <clip.h>
 
 namespace lsp {
 namespace {
+
+// The Wayland clipboard carries large images the X11 bridge truncates, so it is
+// read first when the session is Wayland.
+constexpr std::size_t kMaxClipboardBytes = 64u * 1024u * 1024u;
+
+// Runs `command` and returns its standard output. No value when it fails.
+std::optional<std::string> run_capture(const std::string& command) {
+    std::FILE* pipe = popen(command.c_str(), "r");
+    if (pipe == nullptr) return std::nullopt;
+    std::string output;
+    char buffer[8192];
+    std::size_t read = 0;
+    while ((read = std::fread(buffer, 1, sizeof buffer, pipe)) > 0) {
+        output.append(buffer, read);
+        if (output.size() > kMaxClipboardBytes) break;
+    }
+    const bool complete = pclose(pipe) == 0;
+    if (!complete || output.size() > kMaxClipboardBytes) return std::nullopt;
+    return output;
+}
+
+// A type name reaches the shell, so only the characters of a media type pass.
+bool is_safe_type(const std::string& type) {
+    return !type.empty() &&
+           type.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/+.-") ==
+               std::string::npos;
+}
+
+// What the Wayland clipboard advertises. Empty without a Wayland session.
+std::vector<std::string> wayland_types() {
+    if (std::getenv("WAYLAND_DISPLAY") == nullptr) return {};
+    const std::optional<std::string> listed = run_capture("wl-paste --list-types");
+    if (!listed) return {};
+
+    std::vector<std::string> types;
+    std::string type;
+    const auto take = [&types, &type] {
+        if (!type.empty() && is_safe_type(type) && std::find(types.begin(), types.end(), type) == types.end())
+            types.push_back(type);
+        type.clear();
+    };
+    for (char letter : *listed) {
+        if (letter == '\n')
+            take();
+        else if (letter != '\r')
+            type.push_back(letter);
+    }
+    take();
+    return types;
+}
+
+std::optional<std::string> wayland_bytes(const std::string& type) {
+    return run_capture("wl-paste --type " + type);
+}
+
+std::optional<PixelBuffer> wayland_image() {
+    for (const std::string& type : wayland_types()) {
+        if (type.rfind("image/", 0) != 0) continue;
+        const std::optional<std::string> bytes = wayland_bytes(type);
+        if (!bytes) continue;
+        LoadResult decoded = load_from_memory(bytes->data(), bytes->size());
+        if (decoded.ok) return std::move(decoded.pixels);
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> wayland_text() {
+    const std::vector<std::string> types = wayland_types();
+    for (const char* wanted : {"text/plain", "text/uri-list", "text/html"}) {
+        if (std::find(types.begin(), types.end(), wanted) == types.end()) continue;
+        if (std::optional<std::string> text = wayland_bytes(wanted)) return text;
+    }
+    return std::nullopt;
+}
 
 // One little-endian Rgba8 word: red in the low byte, alpha in the high byte.
 clip::image_spec rgba8_spec(int width, int height) {
@@ -53,6 +131,8 @@ bool Clipboard::set_image(const PixelBuffer& image) {
 }
 
 std::optional<PixelBuffer> Clipboard::get_image() {
+    if (std::optional<PixelBuffer> image = wayland_image()) return image;
+
     clip::image image;
     if (!clip::get_image(image) || !image.is_valid()) return std::nullopt;
 
@@ -78,6 +158,29 @@ std::optional<PixelBuffer> Clipboard::get_image() {
         }
     }
     return pixels;
+}
+
+bool Clipboard::get_text(std::string& text) {
+    if (std::optional<std::string> wayland = wayland_text()) {
+        text = std::move(*wayland);
+        return true;
+    }
+    return clip::get_text(text);
+}
+
+bool Clipboard::has_image() {
+    for (const std::string& type : wayland_types()) {
+        if (type.rfind("image/", 0) == 0) return true;
+    }
+    return clip::has(clip::image_format());
+}
+
+std::vector<std::string> Clipboard::available_types() {
+    std::vector<std::string> types = wayland_types();
+    if (!types.empty()) return types;
+    if (clip::has(clip::image_format())) types.emplace_back("an image (X11)");
+    if (clip::has(clip::text_format())) types.emplace_back("text (X11)");
+    return types;
 }
 
 }  // namespace lsp

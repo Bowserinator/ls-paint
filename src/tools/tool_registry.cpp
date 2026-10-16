@@ -1,5 +1,6 @@
 #include "tools/tool_registry.hpp"
 
+#include "tools/brush_tool.hpp"
 #include "tools/dropper_tool.hpp"
 #include "tools/eraser_tool.hpp"
 #include "tools/fill_tool.hpp"
@@ -12,6 +13,7 @@ namespace lsp {
 
 ToolRegistry::ToolRegistry() {
     m_tools.emplace(ToolId::Pencil, std::make_unique<PencilTool>());
+    m_tools.emplace(ToolId::Brush, std::make_unique<BrushTool>());
     m_tools.emplace(ToolId::Eraser, std::make_unique<EraserTool>());
     m_tools.emplace(ToolId::Fill, std::make_unique<FillTool>());
     m_tools.emplace(ToolId::Shape, std::make_unique<ShapeTool>());

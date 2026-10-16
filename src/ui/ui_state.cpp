@@ -4,6 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -146,6 +147,7 @@ ToolId tool_from_slint(ETool tool) {
         case ETool::RESIZE: return ToolId::Resize;
         case ETool::ROTATE: return ToolId::Rotate;
         case ETool::PENCIL: return ToolId::Pencil;
+        case ETool::BRUSH: return ToolId::Brush;
         case ETool::FILL: return ToolId::Fill;
         case ETool::SHAPE: return ToolId::Shape;
         case ETool::TEXT: return ToolId::Text;
@@ -186,6 +188,21 @@ ShapeId shape_from_slint(EShapeKind kind) {
     return ShapeId::Rectangle;
 }
 
+BrushKind brush_from_slint(EBrushKind kind) {
+    switch (kind) {
+        case EBrushKind::BRUSH: return BrushKind::Brush;
+        case EBrushKind::CALLIGRAPHY1: return BrushKind::Calligraphy1;
+        case EBrushKind::CALLIGRAPHY2: return BrushKind::Calligraphy2;
+        case EBrushKind::AIRBRUSH: return BrushKind::Airbrush;
+        case EBrushKind::OIL: return BrushKind::Oil;
+        case EBrushKind::CRAYON: return BrushKind::Crayon;
+        case EBrushKind::MARKER: return BrushKind::Marker;
+        case EBrushKind::NATURALPENCIL: return BrushKind::NaturalPencil;
+        case EBrushKind::WATERCOLOR: return BrushKind::Watercolor;
+    }
+    return BrushKind::Brush;
+}
+
 ShapeMode mode_from_slint(EShapeMode mode) {
     switch (mode) {
         case EShapeMode::FILL: return ShapeMode::Fill;
@@ -216,9 +233,9 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
     auto gallery = std::make_shared<slint::VectorModel<ShapeGlyph>>();
     for (const EShapeKind kind : kShapeGalleryOrder) {
-        const std::string commands =
-            shape::gallery_commands(shape_from_slint(kind), {0, 0, kGlyphBox, kGlyphBox});
-        gallery->push_back(ShapeGlyph{slint::SharedString(commands), kind});
+        const ShapeId id = shape_from_slint(kind);
+        const std::string commands = shape::gallery_commands(id, {0, 0, kGlyphBox, kGlyphBox});
+        gallery->push_back(ShapeGlyph{slint::SharedString(commands), kind, shape::is_closed(id)});
     }
     m_window.global<ShapeGallery>().set_items(gallery);
 
@@ -239,6 +256,11 @@ UiState::UiState(AppWindow& window, AppController& controller)
         m_controller.brush().shape =
             tool_options.get_brush_square() ? BrushShape::Square : BrushShape::Round;
         m_controller.brush().spacing = tool_options.get_brush_spacing();
+        // Only the brush tool paints with the picked brush type. Every other
+        // stroke tool, the eraser included, uses the plain tip.
+        m_controller.brush().kind = state.get_selected_tool() == ETool::BRUSH
+                                        ? brush_from_slint(tool_options.get_brush_kind())
+                                        : BrushKind::Brush;
 
         const ToolId tool = tool_from_slint(state.get_selected_tool());
         // Slint reports no click count, so a press on the same spot right after
@@ -301,7 +323,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
             case ShortcutAction::Redo: m_controller.history().redo(); break;
             case ShortcutAction::Cut: m_controller.cut_selection(); break;
             case ShortcutAction::Copy: m_controller.copy_selection(); break;
-            case ShortcutAction::Paste: m_controller.paste_clipboard(); break;
+            case ShortcutAction::Paste: do_paste(); break;
             case ShortcutAction::SelectAll: m_controller.select_all(); break;
             case ShortcutAction::New: do_file_new(); break;
             case ShortcutAction::Open: do_file_open(); break;
@@ -331,7 +353,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
         refresh();
     });
     m_window.global<UserState>().on_copy_selection([this] { m_controller.copy_selection(); refresh(); });
-    m_window.global<UserState>().on_paste_selection([this] { m_controller.paste_clipboard(); refresh(); });
+    m_window.global<UserState>().on_paste_selection([this] { do_paste(); });
     m_window.global<UserState>().on_transform_selection_content(
         [this](EContentTransform transform) {
             sync_colors();
@@ -477,8 +499,11 @@ void UiState::refresh() {
     overlay.set_commands(slint::SharedString(preview.commands));
     overlay.set_draw_fill(preview.draw_fill);
     overlay.set_draw_outline(preview.draw_outline);
-    overlay.set_color(slint::Color::from_argb_uint8(preview.color.a, preview.color.r,
-                                                    preview.color.g, preview.color.b));
+    overlay.set_outline_color(slint::Color::from_argb_uint8(
+        preview.outline_color.a, preview.outline_color.r, preview.outline_color.g,
+        preview.outline_color.b));
+    overlay.set_fill_color(slint::Color::from_argb_uint8(
+        preview.fill_color.a, preview.fill_color.r, preview.fill_color.g, preview.fill_color.b));
 
 
     const TextOverlayState& text = m_controller.tool_ui().text;
@@ -606,6 +631,24 @@ void UiState::do_file_exit() {
         return;
     }
     m_window.hide();
+}
+
+void UiState::do_paste() {
+    // A selection copied in the app pastes as it always did; an empty in-app
+    // clipboard falls back to the image the system clipboard holds.
+    if (!m_controller.clipboard().empty()) {
+        m_controller.paste_clipboard();
+    } else {
+        const IoResult result = m_controller.paste_from_clipboard();
+        if (!result.ok) {
+            std::fprintf(stderr, "Paste failed: %s\n", result.error.c_str());
+            return;
+        }
+    }
+    // A pasted block stays a floating selection until it is applied, so hand it
+    // to the selection tool: that is what gives it its grips.
+    m_window.global<UserState>().set_selected_tool(ETool::SELECTION);
+    refresh();
 }
 
 void UiState::do_paste_from_file() { show_file_dialog(EFileDialogMode::PASTE); }
@@ -745,6 +788,7 @@ void UiState::do_file_ok() {
         }
         dialog.set_file_visible(false);
         m_window.invoke_focus_app();
+        m_window.global<UserState>().set_selected_tool(ETool::SELECTION);
         refresh();
         return;
     }

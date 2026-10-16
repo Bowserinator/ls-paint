@@ -69,7 +69,8 @@ struct ShapePreview {
     bool visible = false;
     bool draw_fill = false;
     bool draw_outline = true;
-    Rgba8 color{0, 0, 0, 255};
+    Rgba8 outline_color{0, 0, 0, 255};
+    Rgba8 fill_color{255, 255, 255, 255};
     std::string commands;  // SVG path data in canvas pixels
 };
 

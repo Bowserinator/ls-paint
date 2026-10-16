@@ -486,7 +486,7 @@ int run_ui_tests() {
     h.shapes().set_thickness(1);
     h.drag(origin.x + 630, origin.y + 60, origin.x + 680, origin.y + 110);
     CHECK(h.color_near(655, 85, 255, 255, 0));  // the fill takes Color 2, and
-    CHECK(h.count_color(628, 58, 682, 112, 0, 0, 255) == 0);  // no outline at all
+    CHECK(h.count_color(628, 58, 682, 112, 0, 0, 255) > 0);  // the border is drawn too
 
     h.shapes().set_mode(EShapeMode::BOTH);
     h.drag(origin.x + 700, origin.y + 60, origin.x + 750, origin.y + 110);
@@ -775,6 +775,19 @@ int run_ui_tests() {
     CHECK(square_ink > round_ink);
     CHECK(dotted_ink > 0);
     CHECK(dotted_ink < round_ink);
+
+    // 30. The brush tool paints with the picked brush type while the pencil is
+    //     not selected, and the pencil keeps the plain tip for the same picked
+    //     type. The calligraphy nib is the narrower of the two over one drag.
+    h.tool_options().set_brush_kind(EBrushKind::CALLIGRAPHY1);
+    h.user().set_selected_tool(ETool::BRUSH);
+    h.drag(origin.x + 620, origin.y + 200, origin.x + 680, origin.y + 200);
+    const int calligraphy_ink = h.count_color(612, 180, 688, 220, 255, 0, 0);
+    h.user().set_selected_tool(ETool::PENCIL);
+    h.drag(origin.x + 620, origin.y + 240, origin.x + 680, origin.y + 240);
+    const int plain_ink = h.count_color(612, 220, 688, 260, 255, 0, 0);
+    CHECK(calligraphy_ink > 0);
+    CHECK(plain_ink > calligraphy_ink);
 
 
     // 28. The Resize dialog takes a new canvas size as one edit, and one undo

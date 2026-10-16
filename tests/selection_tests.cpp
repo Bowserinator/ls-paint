@@ -123,11 +123,24 @@ void test_cut_copy_paste_round_trip() {
 
     app.clear_selection();
     app.paste_clipboard();
-    CHECK((document.active_layer().pixels.at(1, 1) == Rgba8{10, 20, 30, 255}));
+
+    // The pasted block hovers over the canvas, so the layer keeps its pixels
+    // until the paste is applied.
+    CHECK(document.floating().has_value());
+    CHECK((document.active_layer().pixels.at(1, 1) == Rgba8{255, 255, 255, 255}));
     CHECK((document.selection().bounds() == RectI{0, 0, 4, 4}));
 
-    app.history().undo();  // undo paste
+    app.clear_selection();  // deselecting applies the paste, like a click outside
+    CHECK(!document.floating().has_value());
+    CHECK(!document.selection().active());
+    CHECK((document.active_layer().pixels.at(1, 1) == Rgba8{10, 20, 30, 255}));
+
+    app.history().undo();  // undo applying it: the block hovers again
+    CHECK(document.floating().has_value());
     CHECK((document.active_layer().pixels.at(1, 1) == Rgba8{255, 255, 255, 255}));
+
+    app.history().undo();  // undo paste
+    CHECK(!document.floating().has_value());
     CHECK(!document.selection().active());
 
     app.history().undo();  // undo delete
@@ -135,6 +148,52 @@ void test_cut_copy_paste_round_trip() {
 
     app.history().undo();  // nothing left
     CHECK((document.active_layer().pixels.at(5, 5) == Rgba8{10, 20, 30, 255}));
+}
+
+// A pasted block is a floating selection: it can still be moved before it is
+// applied, and the layer keeps its pixels until then.
+void test_paste_hovers_and_can_move_before_it_lands() {
+    AppController app;
+    CanvasDocument& document = app.document();
+    document.active_layer().pixels.at(5, 5) = {10, 20, 30, 255};
+    document.selection().fill_rect({4, 4, 4, 4});
+    app.copy_selection();
+    app.clear_selection();
+
+    app.paste_clipboard();
+    CHECK(document.floating().has_value());
+
+    lsp::translate_contents(document.selection(), *document.floating(), 10, 0);
+    CHECK((document.selection().bounds() == RectI{10, 0, 4, 4}));
+    CHECK((document.active_layer().pixels.at(11, 1) == Rgba8{255, 255, 255, 255}));
+
+    app.clear_selection();  // deselecting is what applies it
+    CHECK((document.active_layer().pixels.at(11, 1) == Rgba8{10, 20, 30, 255}));
+}
+
+void test_paste_can_be_resized_before_it_lands() {
+    AppController app;
+    CanvasDocument& document = app.document();
+    for (int y = 0; y < 4; ++y)
+        for (int x = 0; x < 4; ++x) document.active_layer().pixels.at(4 + x, 4 + y) = {10, 20, 30, 255};
+    document.selection().fill_rect({4, 4, 4, 4});
+    app.copy_selection();
+    app.clear_selection();
+
+    app.paste_clipboard();
+    CHECK(document.floating().has_value());
+
+    (void)lsp::resize_selection(document.selection(), document.floating(), RectI{0, 0, 8, 8});
+    CHECK((document.floating()->content.width() == 8));
+    CHECK((document.selection().bounds() == RectI{0, 0, 8, 8}));
+    CHECK((document.active_layer().pixels.at(1, 1) == Rgba8{255, 255, 255, 255}));
+
+    app.clear_selection();  // deselecting is what applies it
+    int painted = 0;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            if (document.active_layer().pixels.at(x, y) == Rgba8{10, 20, 30, 255}) ++painted;
+    CHECK(painted == 64);  // the block grew to the resized bounds
 }
 
 void test_paste_without_a_clipboard_is_a_no_op() {
@@ -607,6 +666,8 @@ int main() {
     test_transparent_ink_is_treated_as_opaque();
     test_eraser_paints_the_secondary_color_inside_the_selection();
     test_cut_copy_paste_round_trip();
+    test_paste_hovers_and_can_move_before_it_lands();
+    test_paste_can_be_resized_before_it_lands();
     test_paste_without_a_clipboard_is_a_no_op();
     test_paste_landing_entirely_off_canvas_is_a_no_op();
     test_rotate_selection_contents_keeps_the_mask_aligned();

@@ -1,21 +1,49 @@
 import { Bar, BarDivider, BarItemGroup } from "bar.slint";
-import { ImageButtonVertical, ImageButtonHorizontal, ImageButtonIcon, ImageButtonVerticalDropdown, ColorButtonVertical, ColorButton } from "../components/image-buttons.slint";
+import { ImageButtonVertical, ImageButtonHorizontal, ImageButtonHorizontalDropdown, ImageButtonIcon, ImageButtonVerticalDropdown, ColorButtonVertical, ColorButton } from "../components/image-buttons.slint";
 import { BarDropdown, BarDropdownItem, BarDropdownTitle, BarDropdownDivider, BarSizeDropdownItem } from "../components/bar-dropdown.slint";
 import { StandardButton, AboutSlint } from "std-widgets.slint";
 import { Styles } from "../styles.slint";
-import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions, EShapeMode, ShapeStyle, ShapeGallery } from "../globals.slint";
+import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions, EShapeMode, ShapeStyle, ShapeGallery, BrushGallery } from "../globals.slint";
 
 // One glyph of the Shapes picker.
+// One cell of the Brushes picker: the picture of one brush type, outlined while
+// it is the type in use.
+component BrushGlyphButton inherits Rectangle {
+    in property <image> source;
+    in property <bool> focused: false;
+    callback clicked;
+
+    width: Styles.bar-brush-cell-size;
+    height: Styles.bar-brush-cell-size;
+    border-width: 1px;
+    border-color: focused ? #8dbcec : touch.has-hover ? #c3ddf8 : Styles.bar-border-light;
+    background: focused ? #c9e0f7 : touch.pressed ? #d5e6f7 : transparent;
+
+    Image {
+        x: 3px;
+        y: 3px;
+        width: root.width - 6px;
+        height: root.height - 6px;
+        source: root.source;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 component ShapeGlyphButton inherits Rectangle {
     in property <string> commands;
     in property <bool> focused: false;
+    in property <bool> filled: true;
     callback clicked;
 
     width: Styles.bar-small-icon-size + 6px;
     height: Styles.bar-small-icon-size + 6px;
     border-width: 1px;
-    border-color: focused ? #8dbcec : touch.has-hover ? #c3ddf8 : transparent;
-    background: focused ? #c9e0f7 : touch.pressed ? #d5e6f7 : transparent;
+    border-color: focused ? Styles.shape-glyph-outline : touch.has-hover ? #c3ddf8 : transparent;
+    background: focused ? #eaf3fd : touch.pressed ? #d5e6f7 : transparent;
 
     Path {
         x: 3px;
@@ -25,8 +53,10 @@ component ShapeGlyphButton inherits Rectangle {
         viewbox-width: 26.0;
         viewbox-height: 26.0;
         commands: root.commands;
-        fill: transparent;
-        stroke: Styles.bar-text-color;
+        fill: root.filled
+            ? (root.focused ? Styles.shape-glyph-selected-fill : Styles.shape-glyph-fill)
+            : transparent;
+        stroke: Styles.shape-glyph-outline;
         stroke-width: 1px;
     }
 
@@ -42,11 +72,18 @@ export component HomeBar inherits Bar {
     // collapse before it, so the ribbon never runs out of room and no group keeps
     // less than the width its contents need.
     //
-    // The width arrives through a changed handler instead of a binding: the layout
-    // below decides how wide the strip is, so reading that width back into the
-    // condition would close a binding loop.
-    private property <length> strip-width: 0px;
-    changed width => { root.strip-width = self.width; }
+    // A new HomeBar has to know the strip width on its first layout pass, so the
+    // conditions below read the width directly. A tab switch builds the bar again
+    // and no resize follows, so a value that arrives later leaves the bar collapsed.
+    private property <length> strip-width: root.width;
+
+    // The Tools group owns these tools; the Brushes group owns the brush.
+    private property <bool> tools-active: UserState.selected-tool == ETool.PENCIL
+        || UserState.selected-tool == ETool.FILL
+        || UserState.selected-tool == ETool.TEXT
+        || UserState.selected-tool == ETool.ERASER
+        || UserState.selected-tool == ETool.DROPPER
+        || UserState.selected-tool == ETool.MAGNIFY;
 
     // The groups give way from the left: the Clipboard merges first and the
     // Colors group last, so the palette stays up for as long as the ribbon can
@@ -80,7 +117,7 @@ export component HomeBar inherits Bar {
             + Styles.ribbon-overflow-margin;
     // The Clipboard caption is the longest of the merged group names.
     private property <length> width-clipboard:
-        collapsed-clipboard ? Styles.ribbon-merged-width + 8px : Styles.ribbon-width-clipboard;
+        collapsed-clipboard ? Styles.ribbon-merged-width + 16px : Styles.ribbon-width-clipboard;
 
     // The About group is an addition of this build, so it is the first thing to
     // go: it shows only while the whole ribbon fits expanded. Reading constants
@@ -125,22 +162,13 @@ export component HomeBar inherits Bar {
     private property <length> width-colors:
         collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
 
-    // A brush preset is a tip, a size and how closely the stamps are laid down.
-    // All three take effect on the next stroke.
-    function use-brush-preset(size: length, square: bool, spacing: float) {
-        ToolOptions.brush-size = size;
-        ToolOptions.brush-square = square;
-        ToolOptions.brush-spacing = spacing;
-    }
-
     HorizontalLayout {
         grp-clipboard := BarItemGroup {
             title: "Clipboard";
             show-title: !collapsed-clipboard;
-            width: width-clipboard;
 
             clipboard-dropdown := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
+                y: Styles.bar-dropdown-y;
                 x: clipboard-dropdown-btn.x + Styles.bar-padding;
 
                 BarDropdown {
@@ -169,10 +197,12 @@ export component HomeBar inherits Bar {
 
             HorizontalLayout {
                 clipboard-dropdown-btn := ImageButtonVerticalDropdown {
+                    focused1: clipboard-dropdown.is-open;
+                    focused2: clipboard-dropdown.is-open;
                     // Merged, this button speaks for the whole group.
                     text: collapsed-clipboard ? "Clipboard" : "Paste";
                     icon: @image-url("../../icons/copy.png");
-                    font-size: collapsed-clipboard ? Styles.bar-merged-font-size : Styles.bar-font-size;
+                    width: collapsed-clipboard ? Styles.ribbon-merged-width + 8px : Styles.bar-vertical-btn-width;
 
                     clicked => { UserState.paste-selection(); }
                     clicked_dropdown => { clipboard-dropdown.show(); }
@@ -204,10 +234,9 @@ export component HomeBar inherits Bar {
         grp-image := BarItemGroup {
             title: "Image";
             show-title: !collapsed-image;
-            width: width-image;
 
             rotate-dropdown := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
+                y: Styles.bar-dropdown-y;
                 x: rotate-btn.x;
 
                 BarDropdown {
@@ -236,7 +265,7 @@ export component HomeBar inherits Bar {
             }
 
             select-dropdown := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
+                y: Styles.bar-dropdown-y;
                 x: select-dropdown-btn.x + Styles.bar-padding;
 
                 BarDropdown {
@@ -283,7 +312,7 @@ export component HomeBar inherits Bar {
             }
 
             image-menu := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
+                y: Styles.bar-dropdown-y;
                 x: image-merged.x;
 
                 BarDropdown {
@@ -327,18 +356,22 @@ export component HomeBar inherits Bar {
 
             image-merged := ImageButtonVerticalDropdown {
                 visible: collapsed-image;
+                focused1: image-menu.is-open || UserState.selected-tool == ETool.SELECTION;
+                focused2: image-menu.is-open || UserState.selected-tool == ETool.SELECTION;
                 // No width while the group is expanded: an invisible element
                 // still holds its slot, which would squeeze the group's content.
                 width: collapsed-image ? Styles.ribbon-merged-button : 0px;
                 text: "Image";
                 icon: @image-url("../../icons/resize.png");
-                font-size: Styles.bar-merged-font-size;
                 clicked => { image-menu.show(); }
                 clicked_dropdown => { image-menu.show(); }
             }
 
+            // Hidden content still holds its slot, which leaves a gap in a
+            // merged group, so drop the width while collapsed.
             HorizontalLayout {
                 visible: !collapsed-image;
+                width: collapsed-image ? 0px : Styles.ribbon-width-image - 2 * Styles.bar-padding;
                 select-dropdown-btn := ImageButtonVerticalDropdown {
                     text: "Select";
                     icon: 
@@ -384,10 +417,9 @@ export component HomeBar inherits Bar {
         grp-tools := BarItemGroup {
             title: "Tools";
             show-title: !collapsed-tools;
-            width: width-tools;
 
             tools-menu := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
+                y: Styles.bar-dropdown-y;
                 x: tools-merged.x;
 
                 BarDropdown {
@@ -426,18 +458,20 @@ export component HomeBar inherits Bar {
 
             tools-merged := ImageButtonVerticalDropdown {
                 visible: collapsed-tools;
+                focused1: tools-menu.is-open || root.tools-active;
+                focused2: tools-menu.is-open || root.tools-active;
                 // No width while the group is expanded: an invisible element
                 // still holds its slot, which would squeeze the group's content.
                 width: collapsed-tools ? Styles.ribbon-merged-button : 0px;
                 text: "Tools";
                 icon: @image-url("../../icons/tools.png");
-                font-size: Styles.bar-merged-font-size;
                 clicked => { tools-menu.show(); }
                 clicked_dropdown => { tools-menu.show(); }
             }
 
             GridLayout {
                 visible: !collapsed-tools;
+                width: collapsed-tools ? 0px : Styles.ribbon-width-tools - 2 * Styles.bar-padding;
                 spacing: Styles.bar-padding;
                 padding-top: Styles.bar-padding;
 
@@ -489,6 +523,8 @@ export component HomeBar inherits Bar {
                 width: Styles.ribbon-merged-button + 8px;
                 text: "Brushes";
                 icon: @image-url("../../icons/brushes.png");
+                focused1: brushes-dropdown.is-open || UserState.selected-tool == ETool.BRUSH;
+                focused2: brushes-dropdown.is-open || UserState.selected-tool == ETool.BRUSH;
                 clicked => { brushes-dropdown.show(); }
                 clicked_dropdown => { brushes-dropdown.show(); }
             }
@@ -497,37 +533,32 @@ export component HomeBar inherits Bar {
         brushes-dropdown := PopupWindow {
             // Declared at the ribbon level, so the button's position inside its
             // group needs the group's own offset added.
-            y: Styles.bar-height - Styles.bar-padding;
+            y: Styles.bar-dropdown-y;
             x: grp-brushes.x + brushes-btn.x;
 
             BarDropdown {
-                BarSizeDropdownItem {
-                    text: "Pencil 1 px"; size: 1px;
-                    clicked => { root.use-brush-preset(1px, false, 0.25); }
-                }
-                BarSizeDropdownItem {
-                    text: "Round 4 px"; size: 4px;
-                    clicked => { root.use-brush-preset(4px, false, 0.25); }
-                }
-                BarSizeDropdownItem {
-                    text: "Round 8 px"; size: 8px;
-                    clicked => { root.use-brush-preset(8px, false, 0.25); }
-                }
-                BarSizeDropdownItem {
-                    text: "Round 16 px"; size: 16px;
-                    clicked => { root.use-brush-preset(16px, false, 0.25); }
-                }
-                BarSizeDropdownItem {
-                    text: "Square 4 px"; size: 4px;
-                    clicked => { root.use-brush-preset(4px, true, 0.25); }
-                }
-                BarSizeDropdownItem {
-                    text: "Square 12 px"; size: 12px;
-                    clicked => { root.use-brush-preset(12px, true, 0.25); }
-                }
-                BarSizeDropdownItem {
-                    text: "Dotted 8 px"; size: 8px;
-                    clicked => { root.use-brush-preset(8px, false, 1.0); }
+                // Narrower than the default panel: the tips sit in four columns.
+                panel-width: 2px + 6px + 4 * Styles.bar-brush-cell-size + 6px;
+
+                HorizontalLayout {
+                    padding: 6px;
+
+                    Rectangle {
+                        width: 4 * Styles.bar-brush-cell-size;
+                        height: 3 * Styles.bar-brush-cell-size;
+
+                        for glyph[i] in BrushGallery.items: BrushGlyphButton {
+                            x: mod(i, 4) * Styles.bar-brush-cell-size;
+                            y: floor(i / 4) * Styles.bar-brush-cell-size;
+                            source: glyph.image;
+                            focused: ToolOptions.brush-kind == glyph.kind;
+                            clicked => {
+                                ToolOptions.brush-kind = glyph.kind;
+                                UserState.selected-tool = ETool.BRUSH;
+                                brushes-dropdown.close();
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -538,15 +569,18 @@ export component HomeBar inherits Bar {
             title: "Shapes";
             // The merged button carries the group name already.
             show-title: !collapsed-shapes;
-            width: width-shapes;
 
             shape-gallery-dropdown := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
+                y: Styles.bar-dropdown-y;
                 x: collapsed-shapes ? shape-merged.x : shape-box.x;
 
                 BarDropdown {
+                    panel-width: Styles.bar-shapes-menu-width;
+
+                    // The mode buttons sit beside the grid, as Paint draws them.
                     HorizontalLayout {
                         padding: 6px;
+                        spacing: 6px;
 
                         Rectangle {
                             width: 7 * (Styles.bar-small-icon-size + 6px);
@@ -557,6 +591,7 @@ export component HomeBar inherits Bar {
                                 y: floor(i / 7) * (Styles.bar-small-icon-size + 6px);
                                 commands: glyph.commands;
                                 focused: ShapeStyle.kind == glyph.kind;
+                                filled: glyph.filled;
                                 clicked => {
                                     ShapeStyle.kind = glyph.kind;
                                     UserState.selected-tool = ETool.SHAPE;
@@ -564,52 +599,49 @@ export component HomeBar inherits Bar {
                                 }
                             }
                         }
+
+                        VerticalLayout {
+                            alignment: start;
+
+                            // Merged away, the outline and fill buttons have no home
+                            // of their own, so the picker carries them.
+                            ImageButtonVertical {
+                                width: Styles.bar-shape-mode-btn-width;
+                                text: "Outline";
+                                icon: @image-url("../../icons/shape-outline.png");
+                                focused: ShapeStyle.mode == EShapeMode.OUTLINE;
+                                clicked => {
+                                    ShapeStyle.mode = EShapeMode.OUTLINE;
+                                }
+                            }
+                            ImageButtonVertical {
+                                width: Styles.bar-shape-mode-btn-width;
+                                text: "Fill";
+                                icon: @image-url("../../icons/shape-fill.png");
+                                focused: ShapeStyle.mode == EShapeMode.FILL;
+                                clicked => {
+                                    ShapeStyle.mode = EShapeMode.FILL;
+                                }
+                            }
+                        }
                     }
 
-                    // Merged away, the outline and thickness buttons have no home
-                    // of their own, so the picker carries them.
-                    BarDropdownDivider {}
-                    BarDropdownItem {
-                        icon: @image-url("../../icons/shape-outline.png");
-                        text: "Outline";
-                        focused: ShapeStyle.mode != EShapeMode.FILL;
-                        clicked => {
-                            if (ShapeStyle.mode == EShapeMode.FILL) { ShapeStyle.mode = EShapeMode.BOTH; }
-                            shape-gallery-dropdown.close();
-                        }
-                    }
-                    BarDropdownItem {
-                        icon: @image-url("../../icons/shape-fill.png");
-                        text: "Fill";
-                        focused: ShapeStyle.mode != EShapeMode.OUTLINE;
-                        clicked => {
-                            if (ShapeStyle.mode == EShapeMode.OUTLINE) { ShapeStyle.mode = EShapeMode.BOTH; }
-                            shape-gallery-dropdown.close();
-                        }
-                    }
-                    BarDropdownTitle { text: "Thickness"; }
-                    BarDropdownDivider {}
-                    BarDropdownItem {
-                        text: "Thin (1px)";
-                        focused: ShapeStyle.thickness == 1;
-                        clicked => { ShapeStyle.thickness = 1; shape-gallery-dropdown.close(); }
-                    }
-                    BarDropdownItem {
-                        text: "Medium (4px)";
-                        focused: ShapeStyle.thickness == 4;
-                        clicked => { ShapeStyle.thickness = 4; shape-gallery-dropdown.close(); }
-                    }
-                    BarDropdownItem {
-                        text: "Thick (8px)";
-                        focused: ShapeStyle.thickness == 8;
-                        clicked => { ShapeStyle.thickness = 8; shape-gallery-dropdown.close(); }
+                    Text {
+                        width: Styles.bar-shapes-menu-width - 2px;
+                        height: Styles.bar-dropdown-height;
+                        text: "Shapes";
+                        font-size: Styles.bar-font-size;
+                        color: #646464;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
             }
 
             outline-dropdown := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
-                x: outline-btn.x;
+                // The panel hangs under the arrow that opened it.
+                y: modes.y + outline-btn.y + outline-btn.arrow-y + outline-btn.arrow-height + Styles.bar-dropdown-gap + 15px;
+                x: modes.x + outline-btn.x;
 
                 BarDropdown {
                     BarDropdownItem {
@@ -617,18 +649,8 @@ export component HomeBar inherits Bar {
                         text: "Solid color";
                         focused: ShapeStyle.mode != EShapeMode.FILL;
                         clicked => {
-                            // Solid colour turns the outline on and leaves the
-                            // fill choice alone.
-                            if (ShapeStyle.mode == EShapeMode.FILL) { ShapeStyle.mode = EShapeMode.BOTH; }
-                            outline-dropdown.close();
-                        }
-                    }
-                    BarDropdownItem {
-                        text: "No outline";
-                        focused: ShapeStyle.mode == EShapeMode.FILL;
-                        clicked => {
-                            // A shape with neither outline nor fill would be invisible.
-                            ShapeStyle.mode = EShapeMode.FILL;
+                            // A shape always carries a solid outline, so the item
+                            // only reports that and leaves the fill alone.
                             outline-dropdown.close();
                         }
                     }
@@ -636,8 +658,8 @@ export component HomeBar inherits Bar {
             }
 
             fill-dropdown := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
-                x: fill-btn.x;
+                y: modes.y + fill-btn.y + fill-btn.arrow-y + fill-btn.arrow-height + Styles.bar-dropdown-gap + 15px;
+                x: modes.x + fill-btn.x;
 
                 BarDropdown {
                     BarDropdownItem {
@@ -645,9 +667,7 @@ export component HomeBar inherits Bar {
                         text: "Solid color";
                         focused: ShapeStyle.mode != EShapeMode.OUTLINE;
                         clicked => {
-                            // Solid colour turns the fill on and leaves the
-                            // outline choice alone.
-                            if (ShapeStyle.mode == EShapeMode.OUTLINE) { ShapeStyle.mode = EShapeMode.BOTH; }
+                            ShapeStyle.mode = EShapeMode.FILL;
                             fill-dropdown.close();
                         }
                     }
@@ -655,7 +675,7 @@ export component HomeBar inherits Bar {
                         text: "No fill";
                         focused: ShapeStyle.mode == EShapeMode.OUTLINE;
                         clicked => {
-                            if (ShapeStyle.mode != EShapeMode.OUTLINE) { ShapeStyle.mode = EShapeMode.OUTLINE; }
+                            ShapeStyle.mode = EShapeMode.OUTLINE;
                             fill-dropdown.close();
                         }
                     }
@@ -669,9 +689,8 @@ export component HomeBar inherits Bar {
                 width: collapsed-shapes ? Styles.ribbon-merged-button : 0px;
                 text: "Shapes";
                 icon: @image-url("../../icons/shapes.png");
-                font-size: Styles.bar-merged-font-size;
-                focused1: UserState.selected-tool == ETool.SHAPE;
-                focused2: UserState.selected-tool == ETool.SHAPE;
+                focused1: UserState.selected-tool == ETool.SHAPE || shape-gallery-dropdown.is-open;
+                focused2: UserState.selected-tool == ETool.SHAPE || shape-gallery-dropdown.is-open;
                 clicked => {
                     UserState.selected-tool = ETool.SHAPE;
                     shape-gallery-dropdown.show();
@@ -710,22 +729,25 @@ export component HomeBar inherits Bar {
 
             // The outline and fill choices are part of the expanded group only;
             // the merged button carries them inside the gallery popup.
-            VerticalLayout {
+            modes := VerticalLayout {
                 visible: !collapsed-shapes;
                 width: collapsed-shapes ? 0px : 96px;
-                alignment: center;
+                // The pair sits at the top of the row, like the glyph grid
+                // beside it, instead of floating in the middle of the bar.
+                height: 100%;
+                alignment: start;
                 spacing: Styles.bar-list-spacing;
 
-                outline-btn := ImageButtonHorizontal {
+                outline-btn := ImageButtonHorizontalDropdown {
                     width: 96px;
-                    text: "Outline ▾";
+                    text: "Outline";
                     icon: @image-url("../../icons/shape-outline.png");
                     clicked => { outline-dropdown.show(); }
                 }
 
-                fill-btn := ImageButtonHorizontal {
+                fill-btn := ImageButtonHorizontalDropdown {
                     width: 96px;
-                    text: "Fill ▾";
+                    text: "Fill";
                     icon: @image-url("../../icons/shape-fill.png");
                     clicked => { fill-dropdown.show(); }
                 }
@@ -738,7 +760,7 @@ export component HomeBar inherits Bar {
             title: "";
 
             size-dropdown := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
+                y: Styles.bar-dropdown-y;
                 x: size-dropdown-btn.x;
 
                 BarDropdown {
@@ -776,16 +798,14 @@ export component HomeBar inherits Bar {
             size-dropdown-btn := ImageButtonVerticalDropdown {
                 text: "Size";
                 icon: @image-url("../../icons/size.png");
+                focused1: size-dropdown.is-open;
+                focused2: size-dropdown.is-open;
 
                 clicked => {
                     size-dropdown.show();
-                    size-dropdown-btn.focused1 = true;
-                    size-dropdown-btn.focused2 = true;
                 }
                 clicked_dropdown => {
                     size-dropdown.show();
-                    size-dropdown-btn.focused1 = true;
-                    size-dropdown-btn.focused2 = true;
                 }
             }
         }
@@ -798,27 +818,42 @@ export component HomeBar inherits Bar {
             width: collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
 
             colors-menu := PopupWindow {
-                y: Styles.bar-height - Styles.bar-padding;
-                x: colors-merged.x - 100px;
+                y: Styles.bar-dropdown-y;
+                // The widest panel in the ribbon: it stays under its button while
+                // the bar has room and slides left to keep its right edge inside
+                // the bar when the button sits near the end of a narrow window.
+                x: grp-colors.x + colors-merged.x + Styles.bar-colors-menu-width
+                        > root.width - Styles.bar-padding
+                    ? root.width - Styles.bar-padding - Styles.bar-colors-menu-width - grp-colors.x
+                    : colors-merged.x;
 
                 BarDropdown {
-                    BarDropdownItem {
-                        text: "Color 1";
-                        focused: UserState.color_idx == 0;
-                        clicked => { UserState.color_idx = 0; }
-                    }
-                    BarDropdownItem {
-                        text: "Color 2";
-                        focused: UserState.color_idx == 1;
-                        clicked => { UserState.color_idx = 1; }
-                    }
-                    BarDropdownDivider {}
+                    panel-width: Styles.bar-colors-menu-width;
+
+                    // The swatches sit beside the palette, as Paint draws them.
                     HorizontalLayout {
                         padding: 6px;
+                        spacing: 6px;
+
+                        ColorButtonVertical {
+                            width: 50px;
+                            colr: UserState.primary-color;
+                            // Wrapped like Paint's, so the caption never elides.
+                            text: "Color\n1";
+                            focused: UserState.color_idx == 0;
+                            clicked => { UserState.color_idx = 0; }
+                        }
+                        ColorButtonVertical {
+                            width: 50px;
+                            colr: UserState.secondary-color;
+                            text: "Color\n2";
+                            focused: UserState.color_idx == 1;
+                            clicked => { UserState.color_idx = 1; }
+                        }
 
                         Rectangle {
                             width: (Styles.bar-small-icon-size + Styles.color-btn-spacing) * 10;
-                            height: (Styles.bar-small-icon-size + Styles.color-btn-spacing) * 2;
+                            height: (Styles.bar-small-icon-size + Styles.color-btn-spacing) * 3;
 
                             for color[i] in UserState.color_palette: ColorButton {
                                 x: mod(i, 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
@@ -833,6 +868,23 @@ export component HomeBar inherits Bar {
                                 }
                             }
                         }
+
+                        // Paint keeps the picker tile at the end of the palette row.
+                        ImageButtonVertical {
+                            width: Styles.bar-vertical-btn-width;
+                            icon: @image-url("../../icons/edit-colors.png");
+                            text: "Edit\ncolors";
+                        }
+                    }
+
+                    Text {
+                        width: Styles.bar-colors-menu-width - 2px;
+                        height: Styles.bar-dropdown-height;
+                        text: "Colors";
+                        font-size: Styles.bar-font-size;
+                        color: #646464;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
                     }
                 }
             }
@@ -891,10 +943,11 @@ export component HomeBar inherits Bar {
 
                 colors-merged := ImageButtonVerticalDropdown {
                     visible: collapsed-colors;
+                    focused1: colors-menu.is-open;
+                    focused2: colors-menu.is-open;
                     width: collapsed-colors ? Styles.ribbon-merged-button : 0px;
                     text: "Colors";
                     icon: @image-url("../../icons/edit-colors.png");
-                    font-size: Styles.bar-merged-font-size;
                     clicked => { colors-menu.show(); }
                     clicked_dropdown => { colors-menu.show(); }
                 }
