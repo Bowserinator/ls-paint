@@ -15,7 +15,16 @@ export enum EShapeKind {
     CALLOUT_ROUNDED, CALLOUT_OVAL, CALLOUT_CLOUD,
     HEART, LIGHTNING
 }
-export enum EShapeMode { FILL, OUTLINE, BOTH }
+// How the outline or the fill of a shape is painted.
+export enum EShapeTexture {
+    NONE,
+    SOLID,
+    CRAYON,
+    MARKER,
+    OIL,
+    NATURAL_PENCIL,
+    WATERCOLOR
+}
 
 // The brush types the Brushes picker offers.
 export enum EBrushKind {
@@ -80,6 +89,8 @@ export global UserState  {
     callback file-exit();
     callback paste-from-file();
     callback resize-dialog();
+    callback edit-colors();
+    callback about();
 
     in property <[color]> color_palette;
     in-out property <int> color_idx: 0;
@@ -192,7 +203,8 @@ export global ToolOptions {
 // Shape tool settings, set by the Shapes, Outline and Fill ribbon dropdowns.
 export global ShapeStyle {
     in-out property <EShapeKind> kind: RECTANGLE;
-    in-out property <EShapeMode> mode: OUTLINE;
+    in-out property <EShapeTexture> outline: SOLID;
+    in-out property <EShapeTexture> fill: NONE;
     in-out property <int> thickness: 2;
 }
 
@@ -258,6 +270,9 @@ export global TextOverlay {
     in-out property <string> content: "";
 }
 
+// Paint's Edit Colors surface. The picker works in HSV: the ring picks the hue
+// and the square inside it the saturation and the value. C++ keeps the color,
+// the color the square shades and the readouts in step with those three.
 // Which question a file dialog is asking.
 export enum EFileDialogMode { OPEN, SAVE, PASTE }
 

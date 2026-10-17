@@ -19,31 +19,65 @@ export global Styles {
     out property<length> bar-shape-mode-btn-width: 66px;
 
     // Ribbon overflow. A group merges into a single dropdown button once the
-    // ribbon is too narrow for the groups up to and including it. The widths
+    // ribbon is too narrow to hold it expanded; the order they go in (Shapes,
+    // Clipboard and Image, Tools, Colors) is set in HomeBar. The widths
     // below are the natural widths of the fully expanded groups at the default
     // fonts and icon sizes, measured from a 1600px wide window.
     out property<length> ribbon-overflow-margin: 8px;
-    out property<length> ribbon-divider: 2px;
+    // The line between two groups: one pixel, a shade darker than the ribbon, so
+    // it is there to find without being a rule.
+    out property<length> ribbon-divider: 1px;
+    out property<color> ribbon-divider-color: #dcdfe3;
+    // The space between a group's edge and its buttons, on each side. Every
+    // width below includes it twice.
+    out property<length> ribbon-group-padding: 2px;
     // A merged group measured from outside, and the button inside it. The
     // difference is the group's own padding.
-    out property<length> ribbon-merged-width: 64px;
+    out property<length> ribbon-merged-width: 60px;
     out property<length> ribbon-merged-button: 56px;
-    // One shape glyph cell in the Shapes box.
+    // One shape glyph cell in the Shapes box, the rows of them the ribbon band
+    // can show at once, and the column of scroll buttons that appears beside the
+    // grid once it needs more rows than that.
     out property<length> ribbon-shape-cell: 26px;
-    out property<length> ribbon-width-clipboard: 132px;
-    out property<length> ribbon-width-image: 142px;
-    out property<length> ribbon-width-tools: 100px;
-    out property<length> ribbon-width-brushes: 72px;
-    out property<length> ribbon-width-shapes: 312px;
-    out property<length> ribbon-width-size: 62px;
-    out property<length> ribbon-width-colors: 424px;
-    out property<length> ribbon-width-about: 84px;
+    out property<int> ribbon-shape-visible-rows: 3;
+    out property<length> ribbon-shape-scrollbar: 14px;
+    // The Outline and Fill buttons beside the grid.
+    out property<length> ribbon-shape-mode-width: 90px;
+    out property<length> ribbon-width-clipboard: 122px;
+    out property<length> ribbon-width-image: 138px;
+    out property<length> ribbon-width-tools: 96px;
+    out property<length> ribbon-width-brushes: 68px;
+    // The Shapes group holds eight columns of glyphs, the buttons beside them
+    // and the group's own padding on both sides; one column less is one cell
+    // narrower.
+    out property<length> ribbon-shapes-options: ribbon-shape-mode-width + 2 * ribbon-group-padding;
+    out property<length> ribbon-width-shapes: 8 * ribbon-shape-cell + ribbon-shapes-options;
+    out property<length> ribbon-width-size: 58px;
+    out property<length> ribbon-width-colors: 376px;
+    out property<length> ribbon-width-about: 80px;
 
     out property<length> bar-small-icon-size: 20px;
     out property<length> bar-large-icon-size: 38px;
     // One cell of the Brushes dropdown: twice a shape glyph cell, so the brush
     // pictures read at a glance.
     out property<length> bar-brush-cell-size: (bar-small-icon-size + 6px) * 2;
+    // One cell of a palette grid. Four rows of ten have to fit the ribbon, so a
+    // cell is shorter than a swatch button.
+    out property<length> bar-color-cell: bar-small-icon-size;
+
+    // The Edit Colors shell's own sizes. The look it shares with every Windows 10
+    // style dialog (colors, fonts, swatches, buttons) is in `Win10`, win10.slint.
+    // The height is the reference's 407px, one row of boxes for the hex box, less
+    // the title bar the window manager draws.
+    out property<length> dialog-width: 598px;
+    out property<length> dialog-height: 398px;
+    // The ring the hue is picked on, the circle that opens its middle (the ring is
+    // as wide as the gap between the two) and the square inside it. The square's
+    // corners lie 93px from the center, a few pixels short of the circle's 97px
+    // radius: raise the side to bring them closer, and past 137px they cross it.
+    out property<length> dialog-ring-size: 230px;
+    out property<length> dialog-ring-inner: 194px;
+    out property<length> dialog-square-size: 132px;
 
     out property<color> bar-border-light: #dadada;
     out property<color> bar-text-color: #333;
@@ -62,7 +96,7 @@ export global Styles {
     // The Colors dropdown is the one panel wider than the default: it puts the
     // two swatches beside the ten wide palette and the picker tile.
     out property<length> bar-colors-menu-width:
-        2px + 6px + 50px + 6px + 50px + 6px + (bar-small-icon-size + color-btn-spacing) * 10
+        2px + 6px + 50px + 6px + 50px + 6px + bar-color-cell * 10
             + 6px + bar-vertical-btn-width + 6px;
     // The Shapes dropdown holds the glyph grid and, beside it, the outline and
     // fill buttons.

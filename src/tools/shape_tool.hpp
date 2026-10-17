@@ -55,11 +55,14 @@ inline constexpr std::array<ShapeId, 23> kShapeIds{
     ShapeId::CalloutCloud, ShapeId::Heart,       ShapeId::Lightning,
 };
 
-enum class ShapeMode { Outline, Fill, Both };
+// How the outline or the fill of a shape is painted. `None` leaves that part
+// out, `Solid` paints it in one color, the rest lay down a brush texture.
+enum class ShapeTexture { None, Solid, Crayon, Marker, Oil, NaturalPencil, Watercolor };
 
 struct ShapeOptions {
     ShapeId kind = ShapeId::Rectangle;
-    ShapeMode mode = ShapeMode::Outline;
+    ShapeTexture outline = ShapeTexture::Solid;
+    ShapeTexture fill = ShapeTexture::None;
     int thickness = 1;  // px, 1..32 from ToolOptions.shape-thickness
     int corner_radius = 8;
 };

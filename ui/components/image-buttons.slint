@@ -233,15 +233,17 @@ export component ImageButtonIcon inherits ImageButtonBase {
 // Color icon
 export component ColorButton inherits ImageButtonBase {
     in-out property <color> colr;
-    
-    width: Styles.bar-small-icon-size + Styles.bar-padding;
-    height: Styles.bar-small-icon-size + Styles.bar-padding;
+    // One cell of the palette grid the button sits in.
+    in property <length> cell: Styles.bar-small-icon-size + Styles.bar-padding;
+
+    width: root.cell;
+    height: root.cell;
     border-width: 1px;
     border-color: root.is-pressed ? #a0c6ed : root.is-hovered ? #bedbf8 : Styles.bar-border-light;
 
     Rectangle {
-        width: Styles.bar-small-icon-size;
-        height: Styles.bar-small-icon-size;
+        width: root.cell - Styles.bar-padding;
+        height: root.cell - Styles.bar-padding;
         background: colr;
     }
 }

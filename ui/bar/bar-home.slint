@@ -1,11 +1,9 @@
 import { Bar, BarDivider, BarItemGroup } from "bar.slint";
 import { ImageButtonVertical, ImageButtonHorizontal, ImageButtonHorizontalDropdown, ImageButtonIcon, ImageButtonVerticalDropdown, ColorButtonVertical, ColorButton } from "../components/image-buttons.slint";
 import { BarDropdown, BarDropdownItem, BarDropdownTitle, BarDropdownDivider, BarSizeDropdownItem } from "../components/bar-dropdown.slint";
-import { StandardButton, AboutSlint } from "std-widgets.slint";
 import { Styles } from "../styles.slint";
-import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions, EShapeMode, ShapeStyle, ShapeGallery, BrushGallery } from "../globals.slint";
+import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions, EShapeTexture, ShapeStyle, ShapeGallery, BrushGallery } from "../globals.slint";
 
-// One glyph of the Shapes picker.
 // One cell of the Brushes picker: the picture of one brush type, outlined while
 // it is the type in use.
 component BrushGlyphButton inherits Rectangle {
@@ -30,6 +28,66 @@ component BrushGlyphButton inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+    }
+}
+
+// The Outline and Fill menus carry the same textures, so they share one
+// component. The parent closes its popup when `picked` fires.
+component TextureMenu inherits BarDropdown {
+    in property <EShapeTexture> current;
+    in property <bool> for-fill: false;
+    in property <length> item-width: Styles.bar-dropdown-width;
+    callback picked(EShapeTexture);
+
+    BarDropdownItem {
+        width: root.item-width;
+        icon: root.for-fill ? @image-url("../../icons/textures/no-fill.png") : @image-url("../../icons/textures/no-outline.png");
+        text: root.for-fill ? "No fill" : "No outline";
+        focused: root.current == EShapeTexture.NONE;
+        clicked => { root.picked(EShapeTexture.NONE); }
+    }
+    BarDropdownItem {
+        width: root.item-width;
+        icon: root.for-fill ? @image-url("../../icons/shape-fill.png") : @image-url("../../icons/shape-outline.png");
+        text: "Solid color";
+        focused: root.current == EShapeTexture.SOLID;
+        clicked => { root.picked(EShapeTexture.SOLID); }
+    }
+    BarDropdownDivider { }
+    BarDropdownItem {
+        width: root.item-width;
+        icon: @image-url("../../icons/textures/crayon.png");
+        text: "Crayon";
+        focused: root.current == EShapeTexture.CRAYON;
+        clicked => { root.picked(EShapeTexture.CRAYON); }
+    }
+    BarDropdownItem {
+        width: root.item-width;
+        icon: @image-url("../../icons/textures/marker.png");
+        text: "Marker";
+        focused: root.current == EShapeTexture.MARKER;
+        clicked => { root.picked(EShapeTexture.MARKER); }
+    }
+    BarDropdownItem {
+        width: root.item-width;
+        icon: @image-url("../../icons/textures/oil.png");
+        text: "Oil";
+        focused: root.current == EShapeTexture.OIL;
+        clicked => { root.picked(EShapeTexture.OIL); }
+    }
+    BarDropdownItem {
+        width: root.item-width;
+        icon: @image-url("../../icons/textures/natural-pencil.png");
+        text: "Natural pencil";
+        focused: root.current == EShapeTexture.NATURAL_PENCIL;
+        clicked => { root.picked(EShapeTexture.NATURAL_PENCIL); }
+    }
+    BarDropdownItem {
+        width: root.item-width;
+        icon: @image-url("../../icons/textures/watercolor.png");
+        text: "Watercolor";
+        focused: root.current == EShapeTexture.WATERCOLOR;
+        clicked => { root.picked(EShapeTexture.WATERCOLOR); }
     }
 }
 
@@ -76,6 +134,9 @@ export component HomeBar inherits Bar {
     // conditions below read the width directly. A tab switch builds the bar again
     // and no resize follows, so a value that arrives later leaves the bar collapsed.
     private property <length> strip-width: root.width;
+    // Which page the merged Shapes picker shows: 0 the shape gallery,
+    // 1 the outline list, 2 the fill list.
+    private property <int> picker-page: 0;
 
     // The Tools group owns these tools; the Brushes group owns the brush.
     private property <bool> tools-active: UserState.selected-tool == ETool.PENCIL
@@ -85,80 +146,102 @@ export component HomeBar inherits Bar {
         || UserState.selected-tool == ETool.DROPPER
         || UserState.selected-tool == ETool.MAGNIFY;
 
-    // The groups give way from the left: the Clipboard merges first and the
-    // Colors group last, so the palette stays up for as long as the ribbon can
-    // hold it. A group merges once the ribbon is narrower than the groups up to
-    // and including it, every one of them showing its full content, so no group
-    // is ever squeezed and the ribbon never runs out of room.
+    // The groups give way in a fixed order, which is not the order they sit in:
+    // the Shapes group merges first, then the Clipboard and Image groups together,
+    // then the Tools group and last the Colors group, so the palette stays up for
+    // as long as the ribbon can hold it. The Brushes and Size groups never merge.
+    // A group merges once the ribbon is narrower than the whole ribbon would be
+    // with every group that merges before it already merged and every group from
+    // it on showing its full content, so no group is ever squeezed and the ribbon
+    // never runs out of room. To change the order, change which width-* each
+    // condition reads as decided and which as full; nothing else depends on it.
     //
-    // The span-* sums are constant. Only a group's own width-* property is
-    // decided by its own condition, and each condition reads the width-*
-    // properties of the groups to its left, which are already decided.
-    private property <length> span-image:
-        Styles.ribbon-width-image + Styles.ribbon-divider + Styles.ribbon-width-tools
-            + Styles.ribbon-divider + Styles.ribbon-width-brushes + Styles.ribbon-divider
-            + Styles.ribbon-width-shapes + Styles.ribbon-divider + Styles.ribbon-width-size
-            + Styles.ribbon-divider + Styles.ribbon-width-colors + Styles.ribbon-divider
-            + effective-about;
-    private property <length> span-tools:
-        Styles.ribbon-width-tools + Styles.ribbon-divider + Styles.ribbon-width-brushes
-            + Styles.ribbon-divider + Styles.ribbon-width-shapes + Styles.ribbon-divider
-            + Styles.ribbon-width-size + Styles.ribbon-divider + Styles.ribbon-width-colors
-            + Styles.ribbon-divider + effective-about;
-    private property <length> span-shapes:
-        Styles.ribbon-width-shapes + Styles.ribbon-divider + Styles.ribbon-width-size
-            + Styles.ribbon-divider + Styles.ribbon-width-colors + Styles.ribbon-divider
-            + effective-about;
-    private property <length> span-colors:
-        Styles.ribbon-width-colors + Styles.ribbon-divider + effective-about;
-
-    private property <bool> collapsed-clipboard:
-        root.strip-width < Styles.ribbon-width-clipboard + Styles.ribbon-divider + span-image
-            + Styles.ribbon-overflow-margin;
-    // The Clipboard caption is the longest of the merged group names.
-    private property <length> width-clipboard:
-        collapsed-clipboard ? Styles.ribbon-merged-width + 16px : Styles.ribbon-width-clipboard;
-
-    // The About group is an addition of this build, so it is the first thing to
-    // go: it shows only while the whole ribbon fits expanded. Reading constants
-    // only keeps this out of the collapse conditions' dependency chain.
+    // Each condition reads only the width-* properties of the groups that merge
+    // before its own, which are already decided, and constants for the rest.
+    // About goes before all of them: it shows only while the whole ribbon fits
+    // expanded. Reading constants only keeps that out of the dependency chain.
     private property <bool> about-fits:
-        root.strip-width >= Styles.ribbon-width-clipboard + Styles.ribbon-divider
-            + Styles.ribbon-width-image + Styles.ribbon-divider + Styles.ribbon-width-tools
-            + Styles.ribbon-divider + Styles.ribbon-width-brushes + Styles.ribbon-divider
-            + Styles.ribbon-width-shapes + Styles.ribbon-divider + Styles.ribbon-width-size
-            + Styles.ribbon-divider + Styles.ribbon-width-colors + Styles.ribbon-divider
-            + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
+        root.strip-width >= full-width + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
     // What the About group costs the ribbon while it is showing.
     private property <length> effective-about:
         root.about-fits ? Styles.ribbon-width-about + Styles.ribbon-divider : 0px;
+    // The seven groups before About, each with the divider after it, all expanded.
+    private property <length> full-width:
+        Styles.ribbon-width-clipboard + Styles.ribbon-width-image
+            + Styles.ribbon-width-tools + Styles.ribbon-width-brushes
+            + Styles.ribbon-width-shapes + Styles.ribbon-width-size
+            + Styles.ribbon-width-colors + 7 * Styles.ribbon-divider;
 
-    private property <bool> collapsed-image:
-        root.strip-width < width-clipboard + Styles.ribbon-divider + span-image
-            + Styles.ribbon-overflow-margin;
+    // The shapes grid narrows before its group merges: it drops a column at a
+    // time down to four, and once it needs more rows than the ribbon band shows,
+    // a column of scroll buttons beside it keeps every shape reachable.
+    function grid-rows(columns: int) -> int {
+        return (ShapeGallery.items.length + columns - 1) / columns;
+    }
+    function shapes-grid-width(columns: int) -> length {
+        return columns * Styles.ribbon-shape-cell
+            + (root.grid-rows(columns) > Styles.ribbon-shape-visible-rows
+                ? Styles.ribbon-shape-scrollbar
+                : 0px);
+    }
+    // The grid plus the Outline and Fill buttons the group draws beside it.
+    function shapes-width(columns: int) -> length {
+        return root.shapes-grid-width(columns) + Styles.ribbon-shapes-options;
+    }
+    // The rows the whole grid needs at the current column count, and how far it
+    // can be scrolled a row at a time.
+    private property <int> shape-rows: root.grid-rows(root.shape-columns);
+    private property <bool> shapes-scrolls: root.shape-rows > Styles.ribbon-shape-visible-rows;
+    private property <int> shape-scroll-max:
+        max(0, root.shape-rows - Styles.ribbon-shape-visible-rows);
+    private property <int> shape-scroll-row: 0;
+    changed shape-columns => {
+        root.shape-scroll-row = min(root.shape-scroll-row, root.shape-scroll-max);
+    }
+    // The ribbon the Shapes group can have before the groups after it are
+    // squeezed, with every other group still showing its full content.
+    private property <length> shapes-room:
+        root.strip-width - (full-width - Styles.ribbon-width-shapes) - effective-about
+            - Styles.ribbon-overflow-margin;
+    private property <int> shape-columns:
+        root.shapes-room >= root.shapes-width(8) ? 8
+            : root.shapes-room >= root.shapes-width(7) ? 7
+            : root.shapes-room >= root.shapes-width(6) ? 6
+            : root.shapes-room >= root.shapes-width(5) ? 5
+            : 4;
+
+    // 1. Shapes: it can no longer show four columns, so the group merges.
+    private property <bool> collapsed-shapes:
+        root.strip-width < full-width - Styles.ribbon-width-shapes + root.shapes-width(4)
+            + effective-about + Styles.ribbon-overflow-margin;
+    private property <length> width-shapes:
+        collapsed-shapes ? Styles.ribbon-merged-width : root.shapes-width(root.shape-columns);
+
+    // 2. Clipboard and Image, together: the grid is at its narrowest, so they
+    // give back their room before the Shapes group has to merge.
+    private property <bool> collapsed-clipboard: root.shape-columns <= 4;
+    // The Clipboard caption is the longest of the merged group names.
+    private property <length> width-clipboard:
+        collapsed-clipboard ? Styles.ribbon-merged-width + 12px : Styles.ribbon-width-clipboard;
+    private property <bool> collapsed-image: collapsed-clipboard;
     private property <length> width-image:
         collapsed-image ? Styles.ribbon-merged-width : Styles.ribbon-width-image;
 
+    // 3. Tools: the ribbon with those three merged no longer fits.
     private property <bool> collapsed-tools:
-        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
-            + Styles.ribbon-divider + span-tools + Styles.ribbon-overflow-margin;
+        root.strip-width < width-clipboard + width-image + Styles.ribbon-width-tools
+            + Styles.ribbon-width-brushes + width-shapes + Styles.ribbon-width-size
+            + Styles.ribbon-width-colors + 7 * Styles.ribbon-divider + effective-about
+            + Styles.ribbon-overflow-margin;
     private property <length> width-tools:
         collapsed-tools ? Styles.ribbon-merged-width : Styles.ribbon-width-tools;
 
-    private property <bool> collapsed-shapes:
-        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
-            + Styles.ribbon-divider + width-tools + Styles.ribbon-divider
-            + Styles.ribbon-width-brushes + Styles.ribbon-divider + span-shapes
-            + Styles.ribbon-overflow-margin;
-    private property <length> width-shapes:
-        collapsed-shapes ? Styles.ribbon-merged-width : Styles.ribbon-width-shapes;
-
+    // 4. Colors: the ribbon with those four merged no longer fits.
     private property <bool> collapsed-colors:
-        root.strip-width < width-clipboard + Styles.ribbon-divider + width-image
-            + Styles.ribbon-divider + width-tools + Styles.ribbon-divider
-            + Styles.ribbon-width-brushes + Styles.ribbon-divider + width-shapes
-            + Styles.ribbon-divider + Styles.ribbon-width-size + Styles.ribbon-divider
-            + span-colors + Styles.ribbon-overflow-margin;
+        root.strip-width < width-clipboard + width-image + width-tools
+            + Styles.ribbon-width-brushes + width-shapes + Styles.ribbon-width-size
+            + Styles.ribbon-width-colors + 7 * Styles.ribbon-divider + effective-about
+            + Styles.ribbon-overflow-margin;
     private property <length> width-colors:
         collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
 
@@ -169,7 +252,7 @@ export component HomeBar inherits Bar {
 
             clipboard-dropdown := PopupWindow {
                 y: Styles.bar-dropdown-y;
-                x: clipboard-dropdown-btn.x + Styles.bar-padding;
+                x: clipboard-dropdown-btn.x + Styles.ribbon-group-padding;
 
                 BarDropdown {
                     BarDropdownItem {
@@ -211,7 +294,7 @@ export component HomeBar inherits Bar {
                 // Taken out of the layout rather than hidden, so a merged group
                 // is no wider than its button.
                 if (!collapsed-clipboard) : VerticalLayout {
-                    max-width: 70px;
+                    max-width: 64px;
                     spacing: Styles.bar-list-spacing;
 
                     ImageButtonHorizontal {
@@ -266,7 +349,7 @@ export component HomeBar inherits Bar {
 
             select-dropdown := PopupWindow {
                 y: Styles.bar-dropdown-y;
-                x: select-dropdown-btn.x + Styles.bar-padding;
+                x: select-dropdown-btn.x + Styles.ribbon-group-padding;
 
                 BarDropdown {
                     BarDropdownTitle { text: "Selection Shapes"; }
@@ -371,7 +454,7 @@ export component HomeBar inherits Bar {
             // merged group, so drop the width while collapsed.
             HorizontalLayout {
                 visible: !collapsed-image;
-                width: collapsed-image ? 0px : Styles.ribbon-width-image - 2 * Styles.bar-padding;
+                width: collapsed-image ? 0px : Styles.ribbon-width-image - 2 * Styles.ribbon-group-padding;
                 select-dropdown-btn := ImageButtonVerticalDropdown {
                     text: "Select";
                     icon: 
@@ -471,7 +554,7 @@ export component HomeBar inherits Bar {
 
             GridLayout {
                 visible: !collapsed-tools;
-                width: collapsed-tools ? 0px : Styles.ribbon-width-tools - 2 * Styles.bar-padding;
+                width: collapsed-tools ? 0px : Styles.ribbon-width-tools - 2 * Styles.ribbon-group-padding;
                 spacing: Styles.bar-padding;
                 padding-top: Styles.bar-padding;
 
@@ -577,8 +660,7 @@ export component HomeBar inherits Bar {
                 BarDropdown {
                     panel-width: Styles.bar-shapes-menu-width;
 
-                    // The mode buttons sit beside the grid, as Paint draws them.
-                    HorizontalLayout {
+                    if (root.picker-page == 0) : HorizontalLayout {
                         padding: 6px;
                         spacing: 6px;
 
@@ -604,25 +686,61 @@ export component HomeBar inherits Bar {
                             alignment: start;
 
                             // Merged away, the outline and fill buttons have no home
-                            // of their own, so the picker carries them.
-                            ImageButtonVertical {
+                            // of their own, so the picker carries them. Clicking one
+                            // turns the picker over to that part's list.
+                            shape-outline-btn := ImageButtonVerticalDropdown {
                                 width: Styles.bar-shape-mode-btn-width;
                                 text: "Outline";
                                 icon: @image-url("../../icons/shape-outline.png");
-                                focused: ShapeStyle.mode == EShapeMode.OUTLINE;
+                                focused1: ShapeStyle.outline != EShapeTexture.NONE;
+                                focused2: ShapeStyle.outline != EShapeTexture.NONE;
                                 clicked => {
-                                    ShapeStyle.mode = EShapeMode.OUTLINE;
+                                    root.picker-page = 1;
+                                    shape-gallery-dropdown.show();
+                                }
+                                clicked_dropdown => {
+                                    root.picker-page = 1;
+                                    shape-gallery-dropdown.show();
                                 }
                             }
-                            ImageButtonVertical {
+                            shape-fill-btn := ImageButtonVerticalDropdown {
                                 width: Styles.bar-shape-mode-btn-width;
                                 text: "Fill";
                                 icon: @image-url("../../icons/shape-fill.png");
-                                focused: ShapeStyle.mode == EShapeMode.FILL;
+                                focused1: ShapeStyle.fill != EShapeTexture.NONE;
+                                focused2: ShapeStyle.fill != EShapeTexture.NONE;
                                 clicked => {
-                                    ShapeStyle.mode = EShapeMode.FILL;
+                                    root.picker-page = 2;
+                                    shape-gallery-dropdown.show();
+                                }
+                                clicked_dropdown => {
+                                    root.picker-page = 2;
+                                    shape-gallery-dropdown.show();
                                 }
                             }
+                        }
+                    }
+
+                    if (root.picker-page == 1) : TextureMenu {
+                        panel-width: Styles.bar-shapes-menu-width;
+                        item-width: Styles.bar-shapes-menu-width - 2px;
+                        current: ShapeStyle.outline;
+                        picked(texture) => {
+                            ShapeStyle.outline = texture;
+                            root.picker-page = 0;
+                            shape-gallery-dropdown.show();
+                        }
+                    }
+
+                    if (root.picker-page == 2) : TextureMenu {
+                        panel-width: Styles.bar-shapes-menu-width;
+                        item-width: Styles.bar-shapes-menu-width - 2px;
+                        for-fill: true;
+                        current: ShapeStyle.fill;
+                        picked(texture) => {
+                            ShapeStyle.fill = texture;
+                            root.picker-page = 0;
+                            shape-gallery-dropdown.show();
                         }
                     }
 
@@ -639,20 +757,14 @@ export component HomeBar inherits Bar {
             }
 
             outline-dropdown := PopupWindow {
-                // The panel hangs under the arrow that opened it.
                 y: modes.y + outline-btn.y + outline-btn.arrow-y + outline-btn.arrow-height + Styles.bar-dropdown-gap + 15px;
                 x: modes.x + outline-btn.x;
 
-                BarDropdown {
-                    BarDropdownItem {
-                        icon: @image-url("../../icons/shape-outline.png");
-                        text: "Solid color";
-                        focused: ShapeStyle.mode != EShapeMode.FILL;
-                        clicked => {
-                            // A shape always carries a solid outline, so the item
-                            // only reports that and leaves the fill alone.
-                            outline-dropdown.close();
-                        }
+                TextureMenu {
+                    current: ShapeStyle.outline;
+                    picked(texture) => {
+                        ShapeStyle.outline = texture;
+                        outline-dropdown.close();
                     }
                 }
             }
@@ -661,23 +773,12 @@ export component HomeBar inherits Bar {
                 y: modes.y + fill-btn.y + fill-btn.arrow-y + fill-btn.arrow-height + Styles.bar-dropdown-gap + 15px;
                 x: modes.x + fill-btn.x;
 
-                BarDropdown {
-                    BarDropdownItem {
-                        icon: @image-url("../../icons/shape-fill.png");
-                        text: "Solid color";
-                        focused: ShapeStyle.mode != EShapeMode.OUTLINE;
-                        clicked => {
-                            ShapeStyle.mode = EShapeMode.FILL;
-                            fill-dropdown.close();
-                        }
-                    }
-                    BarDropdownItem {
-                        text: "No fill";
-                        focused: ShapeStyle.mode == EShapeMode.OUTLINE;
-                        clicked => {
-                            ShapeStyle.mode = EShapeMode.OUTLINE;
-                            fill-dropdown.close();
-                        }
+                TextureMenu {
+                    for-fill: true;
+                    current: ShapeStyle.fill;
+                    picked(texture) => {
+                        ShapeStyle.fill = texture;
+                        fill-dropdown.close();
                     }
                 }
             }
@@ -693,35 +794,141 @@ export component HomeBar inherits Bar {
                 focused2: UserState.selected-tool == ETool.SHAPE || shape-gallery-dropdown.is-open;
                 clicked => {
                     UserState.selected-tool = ETool.SHAPE;
+                    root.picker-page = 0;
                     shape-gallery-dropdown.show();
                 }
                 clicked_dropdown => {
                     UserState.selected-tool = ETool.SHAPE;
+                    root.picker-page = 0;
                     shape-gallery-dropdown.show();
                 }
             }
 
             Rectangle {
                 visible: !collapsed-shapes;
-                width: collapsed-shapes ? 0px : 8 * Styles.ribbon-shape-cell;
-                height: 3 * Styles.ribbon-shape-cell;
+                width: collapsed-shapes ? 0px : root.shapes-grid-width(root.shape-columns);
+                height: Styles.ribbon-shape-visible-rows * Styles.ribbon-shape-cell;
 
-                // The shape box: every kind the tool offers, three rows of eight.
+                // The shape box: every kind the tool offers, laid out in as many
+                // rows as the columns need, three of them on show at a time.
                 shape-box := Rectangle {
                     x: 0px;
                     y: 0px;
-                    width: 8 * Styles.ribbon-shape-cell;
-                    height: 3 * Styles.ribbon-shape-cell;
+                    width: root.shape-columns * Styles.ribbon-shape-cell;
+                    height: Styles.ribbon-shape-visible-rows * Styles.ribbon-shape-cell;
                     clip: true;
 
                     for glyph[i] in ShapeGallery.items: ShapeGlyphButton {
-                        x: mod(i, 8) * Styles.ribbon-shape-cell;
-                        y: floor(i / 8) * Styles.ribbon-shape-cell;
+                        x: mod(i, root.shape-columns) * Styles.ribbon-shape-cell;
+                        y: (floor(i / root.shape-columns) - root.shape-scroll-row) * Styles.ribbon-shape-cell;
+                        // Only the rows on show take clicks; the rest are clipped.
+                        visible: floor(i / root.shape-columns) >= root.shape-scroll-row
+                            && floor(i / root.shape-columns) < root.shape-scroll-row + Styles.ribbon-shape-visible-rows;
                         commands: glyph.commands;
                         focused: ShapeStyle.kind == glyph.kind;
                         clicked => {
                             ShapeStyle.kind = glyph.kind;
                             UserState.selected-tool = ETool.SHAPE;
+                        }
+                    }
+                }
+
+                // The scroll column: an arrow per row, and a bar that shows which
+                // three rows of the grid are on show.
+                VerticalLayout {
+                    x: shape-box.width;
+                    y: 0px;
+                    // Only the rows the band cannot show need reaching.
+                    visible: root.shapes-scrolls;
+                    width: root.shapes-scrolls ? Styles.ribbon-shape-scrollbar : 0px;
+                    height: 100%;
+                    spacing: 0px;
+
+                    Rectangle {
+                        width: 100%;
+                        height: Styles.ribbon-shape-scrollbar;
+                        background: #f5f6f7;
+                        border-width: 1px;
+                        border-color: Styles.bar-border-light;
+
+                        Path {
+                            x: 3px;
+                            y: 3px;
+                            width: parent.width - 6px;
+                            height: parent.height - 6px;
+                            viewbox-width: 1.0;
+                            viewbox-height: 1.0;
+                            commands: "M 0.5 0.05 L 0.95 0.75 L 0.05 0.75 Z";
+                            fill: root.shape-scroll-row > 0 ? Styles.bar-text-color : #b8b8b8;
+                        }
+
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.shape-scroll-row = max(0, root.shape-scroll-row - 1);
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 100%;
+                        height: parent.height - 2 * Styles.ribbon-shape-scrollbar;
+                        background: #ffffff;
+                        border-width: 1px;
+                        border-color: Styles.bar-border-light;
+
+                        shape-thumb := Rectangle {
+                            visible: root.shapes-scrolls;
+                            x: 1px;
+                            width: parent.width - 2px;
+                            height: max(Styles.ribbon-shape-cell - 10px,
+                                parent.height * Styles.ribbon-shape-visible-rows / max(1, root.shape-rows));
+                            y: root.shape-scroll-max > 0
+                                ? (parent.height - self.height) * root.shape-scroll-row / root.shape-scroll-max
+                                : 0px;
+                            background: #c3c3c3;
+                        }
+
+                        // A click or a drag anywhere on the bar puts the window of
+                        // rows where the pointer is, which is the thumb's own drag.
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            pointer-event(e) => {
+                                if (root.shape-scroll-max > 0
+                                        && (e.kind == PointerEventKind.down
+                                            || (e.kind == PointerEventKind.move && self.pressed))) {
+                                    root.shape-scroll-row = max(0, min(root.shape-scroll-max,
+                                        round((self.mouse-y - shape-thumb.height / 2)
+                                            / (parent.height - shape-thumb.height)
+                                            * root.shape-scroll-max)));
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 100%;
+                        height: Styles.ribbon-shape-scrollbar;
+                        background: #f5f6f7;
+                        border-width: 1px;
+                        border-color: Styles.bar-border-light;
+
+                        Path {
+                            x: 3px;
+                            y: 3px;
+                            width: parent.width - 6px;
+                            height: parent.height - 6px;
+                            viewbox-width: 1.0;
+                            viewbox-height: 1.0;
+                            commands: "M 0.05 0.25 L 0.95 0.25 L 0.5 0.95 Z";
+                            fill: root.shape-scroll-row < root.shape-scroll-max ? Styles.bar-text-color : #b8b8b8;
+                        }
+
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.shape-scroll-row = min(root.shape-scroll-max, root.shape-scroll-row + 1);
+                            }
                         }
                     }
                 }
@@ -731,7 +938,7 @@ export component HomeBar inherits Bar {
             // the merged button carries them inside the gallery popup.
             modes := VerticalLayout {
                 visible: !collapsed-shapes;
-                width: collapsed-shapes ? 0px : 96px;
+                width: collapsed-shapes ? 0px : Styles.ribbon-shape-mode-width;
                 // The pair sits at the top of the row, like the glyph grid
                 // beside it, instead of floating in the middle of the bar.
                 height: 100%;
@@ -739,14 +946,14 @@ export component HomeBar inherits Bar {
                 spacing: Styles.bar-list-spacing;
 
                 outline-btn := ImageButtonHorizontalDropdown {
-                    width: 96px;
+                    width: Styles.ribbon-shape-mode-width;
                     text: "Outline";
                     icon: @image-url("../../icons/shape-outline.png");
                     clicked => { outline-dropdown.show(); }
                 }
 
                 fill-btn := ImageButtonHorizontalDropdown {
-                    width: 96px;
+                    width: Styles.ribbon-shape-mode-width;
                     text: "Fill";
                     icon: @image-url("../../icons/shape-fill.png");
                     clicked => { fill-dropdown.show(); }
@@ -852,12 +1059,13 @@ export component HomeBar inherits Bar {
                         }
 
                         Rectangle {
-                            width: (Styles.bar-small-icon-size + Styles.color-btn-spacing) * 10;
-                            height: (Styles.bar-small-icon-size + Styles.color-btn-spacing) * 3;
+                            width: Styles.bar-color-cell * 10;
+                            height: Styles.bar-color-cell * 4;
 
                             for color[i] in UserState.color_palette: ColorButton {
-                                x: mod(i, 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
-                                y: floor(i / 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
+                                x: mod(i, 10) * Styles.bar-color-cell;
+                                y: floor(i / 10) * Styles.bar-color-cell;
+                                cell: Styles.bar-color-cell;
                                 colr: color;
                                 clicked => {
                                     if (UserState.color_idx == 0) {
@@ -911,16 +1119,18 @@ export component HomeBar inherits Bar {
                     }
 
                     HorizontalLayout {
-                        padding-left: 10px;
-                        padding-right: 10px;
+                        padding-left: 6px;
+                        padding-right: 6px;
 
                         Rectangle {
-                            width: (Styles.bar-small-icon-size + Styles.color-btn-spacing) * 10;
+                            width: Styles.bar-color-cell * 10;
+                            height: Styles.bar-color-cell * 4;
 
                             for color[i] in UserState.color_palette:
                                 ColorButton {
-                                    x: mod(i, 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
-                                    y: floor(i / 10) * (Styles.bar-small-icon-size + Styles.color-btn-spacing);
+                                    x: mod(i, 10) * Styles.bar-color-cell;
+                                    y: floor(i / 10) * Styles.bar-color-cell;
+                                    cell: Styles.bar-color-cell;
                                     colr: color;
                                     clicked => {
                                         if (UserState.color_idx == 0) {
@@ -938,6 +1148,13 @@ export component HomeBar inherits Bar {
                         // Two lines, as Paint draws it, so the caption never elides.
                         text: "Edit\ncolors";
                         icon: @image-url("../../icons/edit-colors.png");
+                        clicked => { UserState.edit-colors(); }
+                    }
+
+                    // A little air between the last button and the group's edge.
+                    Rectangle {
+                        width: 4px;
+                        background: transparent;
                     }
                 }
 
@@ -965,65 +1182,9 @@ export component HomeBar inherits Bar {
                 icon: @image-url("../../icons/about.png");
                 text: "About";
 
-                clicked => { about-window.show(); }
+                clicked => { UserState.about(); }
             }
 
-            about-window := PopupWindow {
-                width: 500px;
-                height: 200px;
-                x: -300px;
-                close-policy: no-auto-close;
-
-                Rectangle {
-                    height: 100%;
-                    width: 100%;
-                    background: white;
-                    border-color: #ccc;
-                    border-width: 1px;
-
-                    drop-shadow-color: black;
-                    drop-shadow-offset-x: 0px;
-                    drop-shadow-offset-y: 2px;
-                    drop-shadow-blur: 4px;
-                }
-
-                VerticalLayout {
-                    padding: 16px;
-
-                    Text {
-                        font-size: 20px;
-                        text: "About Program";
-                        font-weight: 700;
-                        color: #333;
-                    }
-
-                    Text {
-                        color: #333;
-                        text: "LS paint: A FOSS MS paint clone.\n\n" +
-                            "-- LICENSE: --\n" +
-                            "Copyright (C) 2024 Bowserinator\n" +
-                            "\n" +
-                            "This program is free software: you can redistribute it and/or modify\n" +
-                            "it under the terms of the GNU General Public License as published by\n" +
-                            "the Free Software Foundation, either version 3 of the License, or\n" +
-                            "(at your option) any later version.\n" +
-                            "\n" +
-                            "This program is distributed in the hope that it will be useful,\n" +
-                            "but WITHOUT ANY WARRANTY; without even the implied warranty of\n" +
-                            "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n" +
-                            "GNU General Public License for more details.\n" +
-                            "\n" +
-                            "You should have received a copy of the GNU General Public License\n" +
-                            "along with this program. If not, see <https://www.gnu.org/licenses/>.\n";
-                    }
-                    AboutSlint {}
-
-                    StandardButton {
-                        kind: ok;
-                        clicked => { about-window.close(); }
-                    }
-                }
-            }
         }
 
     }

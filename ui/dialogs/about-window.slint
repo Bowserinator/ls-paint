@@ -1,0 +1,84 @@
+import { ScrollView } from "std-widgets.slint";
+import { Win10, WinButton } from "../win10.slint";
+
+// The About window. A real window, so the window manager moves, resizes and
+// closes it; the notice scrolls, so a longer text never pushes the buttons out.
+export component AboutWindow inherits Window {
+    title: "About Program";
+    width: Win10.about-width;
+    height: Win10.about-height;
+
+    callback closed();
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Win10.face-color;
+        border-width: Win10.frame-width;
+        border-color: Win10.frame-color;
+
+        // The notice scrolls, so a longer text never pushes the buttons out of
+        // the window.
+        Rectangle {
+            x: 12px;
+            y: 12px;
+            width: parent.width - 24px;
+            height: parent.height - 12px - 46px;
+            background: Win10.field-color;
+            border-width: 1px;
+            border-color: Win10.field-border;
+
+            ScrollView {
+                x: 4px;
+                y: 4px;
+                width: parent.width - 8px;
+                height: parent.height - 8px;
+                viewport-width: self.width;
+                viewport-height: licence.preferred-height;
+
+                licence := Text {
+                    width: parent.width;
+                    text: "LS paint: A FOSS MS paint clone.\n\n" +
+                        "-- LICENSE: --\n" +
+                        "Copyright (C) 2024 Bowserinator\n" +
+                        "\n" +
+                        "This program is free software: you can redistribute it and/or modify\n" +
+                        "it under the terms of the GNU General Public License as published by\n" +
+                        "the Free Software Foundation, either version 3 of the License, or\n" +
+                        "(at your option) any later version.\n" +
+                        "\n" +
+                        "This program is distributed in the hope that it will be useful,\n" +
+                        "but WITHOUT ANY WARRANTY; without even the implied warranty of\n" +
+                        "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the\n" +
+                        "GNU General Public License for more details.\n" +
+                        "\n" +
+                        "You should have received a copy of the GNU General Public License\n" +
+                        "along with this program. If not, see <https://www.gnu.org/licenses/>.\n";
+                    font-size: Win10.font-size;
+                    color: Win10.text-color;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        // The stock AboutSlint widget draws a 256px logo whatever box it is
+        // given, so the toolkit gets a line of text here.
+        Text {
+            x: 12px;
+            width: parent.width - 24px;
+            y: parent.height - 12px - self.height;
+            text: "Made with Slint  |  https://slint.dev/";
+            font-size: Win10.font-size;
+            color: Win10.text-color;
+            vertical-alignment: center;
+        }
+
+        WinButton {
+            x: parent.width - 12px - self.width;
+            y: parent.height - 12px - self.height;
+            text: "OK";
+            is-default: true;
+            clicked => { root.closed(); }
+        }
+    }
+}

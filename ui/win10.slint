@@ -1,0 +1,211 @@
+// The look of the Windows 10 common dialogs: the flat gray face, the sunken
+// swatch edge, the blue-edged push button. The values were measured from a
+// Windows 10 color dialog (ref10.PNG) and are that screenshot's own pixels. Any
+// new dialog that should look like it takes its colors and sizes from `Win10`
+// and its controls from the components below, so one change here moves every
+// such dialog together.
+export global Win10 {
+    // The frame and dots Windows draws around the control that has the focus.
+    out property<color> focus-color: #000000;
+
+    // Text
+    out property<length> font-size: 14px;
+    out property<color> text-color: #000000;
+
+    // The window: a one pixel frame around a gray face. The window managers of
+    // the desktop draw the title bar and its close button.
+    out property<color> face-color: #f0f0f0;
+    out property<color> frame-color: #5c5a58;
+    out property<length> frame-width: 1px;
+    // The dimming behind a modal dialog.
+    out property<color> scrim-color: #00000040;
+
+    // The about window wears the same frame, in its own size.
+    out property<length> about-width: 560px;
+    out property<length> about-height: 383px;
+
+    // A swatch and the step from one to the next in a grid.
+    out property<length> swatch-width: 28px;
+    out property<length> swatch-height: 22px;
+    out property<length> swatch-step-x: 35px;
+    out property<length> swatch-step-y: 27px;
+
+    // A box holding a value.
+    out property<length> field-width: 36px;
+    out property<length> field-height: 24px;
+    out property<color> field-color: #ffffff;
+    out property<color> field-border: #7a7a7a;
+
+    // The sunken edge of a swatch: two dark lines above and left, two light
+    // lines below and right.
+    out property<color> bevel-dark: #a0a0a0;
+    out property<color> bevel-dark-inner: #696969;
+    out property<color> bevel-light-inner: #e3e3e3;
+    out property<color> bevel-light: #ffffff;
+
+    // Push buttons. The system blue marks the default button and the one under
+    // the pointer.
+    out property<length> button-width: 86px;
+    out property<length> button-height: 26px;
+    out property<color> button-face: #e1e1e1;
+    out property<color> button-border: #adadad;
+    out property<color> button-hover: #e5f1fb;
+    out property<color> button-pressed: #cce4f7;
+    out property<color> accent: #0078d7;
+    out property<color> accent-pressed: #005499;
+    out property<color> button-off-face: #cccccc;
+    out property<color> button-off-border: #bfbfbf;
+    out property<color> button-off-text: #838383;
+}
+
+// A box with the sunken edge Windows draws around a swatch: dark lines above and
+// to the left, light lines below and to the right. The edge is built from
+// stacked rectangles, each one pixel smaller than the one under it, so every
+// line shows as a single pixel and the face is left as a plain rectangle.
+// `deep` is the swatch edge (two lines a side); without it the box has the thin
+// edge the color preview wears.
+export component WinSunken inherits Rectangle {
+    in property <color> face: white;
+    in property <bool> deep: true;
+
+    background: Win10.bevel-light;
+
+    // A child with no x and y is centered, so every layer is pinned to the corner.
+    if root.deep : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width - 1px;
+        height: parent.height - 1px;
+        background: Win10.bevel-light-inner;
+    }
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width - (root.deep ? 2px : 1px);
+        height: parent.height - (root.deep ? 2px : 1px);
+        background: Win10.bevel-dark;
+    }
+    if root.deep : Rectangle {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 3px;
+        height: parent.height - 3px;
+        background: Win10.bevel-dark-inner;
+    }
+    Rectangle {
+        x: root.deep ? 2px : 1px;
+        y: root.deep ? 2px : 1px;
+        width: parent.width - (root.deep ? 4px : 2px);
+        height: parent.height - (root.deep ? 4px : 2px);
+        background: root.face;
+    }
+}
+
+// The dotted rectangle Windows draws around the control that has the focus:
+// single pixels, every other one, along the four sides.
+export component WinFocusDots inherits Rectangle {
+    for i in floor(root.width / 2px) : Rectangle {
+        x: i * 2px;
+        y: 0px;
+        width: 1px;
+        height: 1px;
+        background: Win10.focus-color;
+    }
+    for i in floor(root.width / 2px) : Rectangle {
+        x: i * 2px;
+        y: root.height - 1px;
+        width: 1px;
+        height: 1px;
+        background: Win10.focus-color;
+    }
+    for i in floor(root.height / 2px) : Rectangle {
+        x: 0px;
+        y: i * 2px;
+        width: 1px;
+        height: 1px;
+        background: Win10.focus-color;
+    }
+    for i in floor(root.height / 2px) : Rectangle {
+        x: root.width - 1px;
+        y: i * 2px;
+        width: 1px;
+        height: 1px;
+        background: Win10.focus-color;
+    }
+}
+
+// A push button as Windows 10 draws it: a flat gray face and a thin gray edge
+// that turn blue under the pointer. The default button keeps a thick blue edge.
+export component WinButton inherits Rectangle {
+    in property <string> text: "";
+    in property <bool> is-default: false;
+    in property <bool> disabled: false;
+    callback clicked();
+
+    width: Win10.button-width;
+    height: Win10.button-height;
+    background: root.disabled ? Win10.button-off-face
+        : touch.pressed ? Win10.button-pressed
+        : touch.has-hover ? Win10.button-hover
+        : Win10.button-face;
+    border-width: (root.is-default && !root.disabled) ? 2px : 1px;
+    border-color: root.disabled ? Win10.button-off-border
+        : touch.pressed ? Win10.accent-pressed
+        : (touch.has-hover || root.is-default) ? Win10.accent
+        : Win10.button-border;
+
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.text;
+        font-size: Win10.font-size;
+        color: root.disabled ? Win10.button-off-text : Win10.text-color;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        enabled: !root.disabled;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A caption that sits to the left of a box, against its right edge.
+export component WinFieldLabel inherits Text {
+    height: Win10.field-height;
+    font-size: Win10.font-size;
+    color: Win10.text-color;
+    horizontal-alignment: right;
+    vertical-alignment: center;
+}
+
+// A white box holding a number. The hue, saturation and value boxes only report
+// what the picker holds; the red, green and blue boxes are typed into.
+export component WinNumberBox inherits Rectangle {
+    in-out property <string> text: "";
+    in property <bool> read-only: false;
+    callback accepted();
+    // The text was changed by the user, key by key.
+    callback edited();
+
+    width: Win10.field-width;
+    height: Win10.field-height;
+    background: Win10.field-color;
+    border-width: 1px;
+    border-color: Win10.field-border;
+
+    // The input reaches to the box's right edge, so a click anywhere but the
+    // three pixels at its left lands on the text and can select it.
+    TextInput {
+        x: 3px;
+        width: parent.width - 4px;
+        height: parent.height;
+        text <=> root.text;
+        read-only: root.read-only;
+        font-size: Win10.font-size;
+        color: Win10.text-color;
+        vertical-alignment: center;
+        accepted => { root.accepted(); }
+        edited => { root.edited(); }
+    }
+}

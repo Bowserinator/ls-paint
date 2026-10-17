@@ -1,0 +1,403 @@
+import { Styles } from "../styles.slint";
+import { Win10, WinSunken, WinFocusDots, WinButton, WinFieldLabel, WinNumberBox } from "../win10.slint";
+
+// One swatch of the basic or the custom grid. The chosen one carries the solid
+// frame and, outside it, the dotted one Windows draws.
+component Swatch inherits Rectangle {
+    in property <color> colr: black;
+    in property <bool> chosen: false;
+    callback clicked();
+
+    width: Win10.swatch-width;
+    height: Win10.swatch-height;
+
+    WinSunken {
+        width: parent.width;
+        height: parent.height;
+        face: root.colr;
+    }
+
+    if root.chosen : Rectangle {
+        x: -1px;
+        y: -1px;
+        width: parent.width + 2px;
+        height: parent.height + 2px;
+        border-width: 1px;
+        border-color: Win10.focus-color;
+    }
+    if root.chosen : WinFocusDots {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Paint's Edit Colors surface, drawn as the Windows 10 common color dialog is:
+// the basic and custom grids on the left, the preview, the six number boxes and
+// the buttons on the right. The one thing that differs is the picker itself. The
+// hue ring picks the hue and the square inside it the saturation and the value,
+// so a color is chosen in one place instead of on a hue and saturation chart
+// with a brightness bar beside it. The window manager draws the title bar, so
+// none is drawn here.
+//
+// Everything is placed by hand on the pixel grid of the reference (ref10.PNG)
+// and the sizes live in Styles, so the picture does not drift as a layout
+// would. The heights are those of the dialog without its title bar.
+export component EditColorsWindow inherits Window {
+    // A real window, so the window manager moves, resizes and closes it.
+    title: "Edit Colors";
+    width: Styles.dialog-width;
+    height: Styles.dialog-height;
+
+    // The colors the two grids show: the app's basic colors followed by its
+    // custom slots.
+    in property <[color]> palette: [];
+    // The custom slot the Add to Custom Colors button fills.
+    in-out property <int> custom-index: 0;
+    in-out property <float> hue: 0;         // degrees
+    in-out property <float> saturation: 0;  // 0..1
+    in-out property <float> value: 0;       // 0..1
+    in-out property <color> current: black;
+    // The hue at full saturation and value, which the square shades.
+    in-out property <color> hue-color: red;
+    // The Red, Green, Blue and Hex boxes are typed into; the hue, saturation and
+    // value boxes only report what the ring and the square hold.
+    in-out property <string> red-text: "0";
+    in-out property <string> green-text: "0";
+    in-out property <string> blue-text: "0";
+    in-out property <string> hex-text: "000000";
+    in-out property <string> hue-text: "0";
+    in-out property <string> sat-text: "0";
+    in-out property <string> lum-text: "0";
+
+    callback accepted();
+    callback cancelled();
+    callback add-custom();
+    callback basic-picked(color);
+    callback custom-picked(color, int);
+    callback ring-picked(float, float);
+    callback square-picked(float, float);
+    callback color-entered(string);
+    callback hex-edited(string);
+
+    // The 48 basic colors of the Windows color dialog, row by row.
+    property <[color]> basic-colors: [
+        #ff8080, #ffff80, #80ff80, #00ff80, #80ffff, #0080ff, #ff80c0, #ff80ff,
+        #ff0000, #ffff00, #80ff00, #00ff40, #00ffff, #0080c0, #8080c0, #ff00ff,
+        #804040, #ff8040, #00ff00, #008080, #004080, #8080ff, #800040, #ff0080,
+        #800000, #ff8000, #008000, #008040, #0000ff, #0000a0, #800080, #8000ff,
+        #400000, #804000, #004000, #004040, #000080, #000040, #400040, #400080,
+        #000000, #808000, #808040, #808080, #408080, #c0c0c0, #400040, #ffffff,
+    ];
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: Win10.face-color;
+        border-width: Win10.frame-width;
+        border-color: Win10.frame-color;
+
+        Text {
+            x: 10px;
+            y: 7px;
+            width: 200px;
+            height: 20px;
+            text: "Basic colors:";
+            font-size: Win10.font-size;
+            color: Win10.text-color;
+            vertical-alignment: center;
+        }
+
+        for basic[i] in root.basic-colors : Swatch {
+            x: 13px + mod(i, 8) * Win10.swatch-step-x;
+            y: 32px + floor(i / 8) * Win10.swatch-step-y;
+            colr: basic;
+            // The last row repeats a color of the one above it; only the first
+            // of the two carries the frame.
+            chosen: current == basic && i != 46;
+            clicked => { basic-picked(basic); }
+        }
+
+        Text {
+            x: 10px;
+            y: 211px;
+            width: 200px;
+            height: 20px;
+            text: "Custom colors:";
+            font-size: Win10.font-size;
+            color: Win10.text-color;
+            vertical-alignment: center;
+        }
+
+        // The custom half of the palette follows its first twenty entries, the
+        // ribbon's, and is numbered from zero when the dialog talks about it.
+        for custom[i] in palette : Swatch {
+            visible: i >= 20;
+            x: 13px + mod(i - 20, 8) * Win10.swatch-step-x;
+            y: 236px + floor((i - 20) / 8) * Win10.swatch-step-y;
+            colr: custom;
+            chosen: (i - 20) == custom-index && current == custom;
+            clicked => { custom-picked(custom, i - 20); }
+        }
+
+        // The grids are already out, so there is nothing for this to open; it is
+        // drawn disabled, as Windows draws it once the dialog is expanded.
+        WinButton {
+            x: 10px;
+            y: 330px;
+            width: 274px;
+            text: "Define Custom Colors >>";
+            disabled: true;
+        }
+
+        WinButton {
+            x: 10px;
+            y: 362px;
+            text: "OK";
+            is-default: true;
+            clicked => { accepted(); }
+        }
+
+        WinButton {
+            x: 106px;
+            y: 362px;
+            text: "Cancel";
+            clicked => { cancelled(); }
+        }
+
+        // The ring, the square it shades and the two markers. A rounded box does
+        // not clip a gradient, so the corners the gradient paints outside the
+        // ring are covered with the panel color: the even-odd rule leaves the
+        // circle itself alone.
+        ring-box := Rectangle {
+            x: 331px;
+            y: 10px;
+            width: Styles.dialog-ring-size;
+            height: Styles.dialog-ring-size;
+
+            // Whether the button went down on the ring and is still held.
+            property <bool> ring-drag: false;
+
+            Rectangle {
+                background: @conic-gradient(from 0deg,
+                    #ff0000 0deg, #ffff00 60deg, #00ff00 120deg,
+                    #00ffff 180deg, #0000ff 240deg, #ff00ff 300deg,
+                    #ff0000 360deg);
+            }
+
+            // It reaches one pixel past the box on every side, so the edge of
+            // the gradient never shows through where the path is anti-aliased.
+            Path {
+                x: -1px;
+                y: -1px;
+                width: parent.width + 2px;
+                height: parent.height + 2px;
+                viewbox-width: 232;
+                viewbox-height: 232;
+                fill: Win10.face-color;
+                fill-rule: evenodd;
+                commands: "M 0 0 L 232 0 L 232 232 L 0 232 Z "
+                        + "M 116 1 A 115 115 0 1 0 116 231 A 115 115 0 1 0 116 1 Z";
+            }
+
+            Rectangle {
+                x: (parent.width - Styles.dialog-ring-inner) / 2;
+                y: (parent.height - Styles.dialog-ring-inner) / 2;
+                width: Styles.dialog-ring-inner;
+                height: Styles.dialog-ring-inner;
+                border-radius: Styles.dialog-ring-inner / 2;
+                background: Win10.face-color;
+            }
+
+            // The square sits in the same sunken edge as a swatch, one pixel
+            // wide.
+            WinSunken {
+                x: (parent.width - Styles.dialog-square-size) / 2 - 1px;
+                y: (parent.height - Styles.dialog-square-size) / 2 - 1px;
+                width: Styles.dialog-square-size + 2px;
+                height: Styles.dialog-square-size + 2px;
+                deep: false;
+                face: hue-color;
+            }
+
+            // White on the left edge, black on the bottom edge, so the square
+            // reads as a saturation and value chart.
+            Rectangle {
+                x: (parent.width - Styles.dialog-square-size) / 2;
+                y: (parent.height - Styles.dialog-square-size) / 2;
+                width: Styles.dialog-square-size;
+                height: Styles.dialog-square-size;
+
+                Rectangle {
+                    background: @linear-gradient(90deg, #ffffffff 0%, #ffffff00 100%);
+                }
+                Rectangle {
+                    background: @linear-gradient(180deg, #00000000 0%, #000000ff 100%);
+                }
+            }
+
+            // Where the hue is on the ring: halfway between its two edges.
+            Rectangle {
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                border-width: 2px;
+                border-color: white;
+                background: hue-color;
+                x: parent.width / 2 + sin(hue * 1deg) * (Styles.dialog-ring-size + Styles.dialog-ring-inner) / 4 - 7px;
+                y: parent.height / 2 - cos(hue * 1deg) * (Styles.dialog-ring-size + Styles.dialog-ring-inner) / 4 - 7px;
+            }
+
+            // Where the saturation and the value are on the square.
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                border-radius: 5px;
+                border-width: 1px;
+                border-color: white;
+                background: current;
+                x: (parent.width - Styles.dialog-square-size) / 2
+                    + saturation * Styles.dialog-square-size - 5px;
+                y: (parent.height - Styles.dialog-square-size) / 2
+                    + (1 - value) * Styles.dialog-square-size - 5px;
+            }
+
+            // Both pickers follow the pointer only while the left button is held,
+            // from the press until the release, wherever the pointer wanders in
+            // between: the square clamps to its edges and the ring turns to the
+            // direction of the pointer. Moving over them with the button up
+            // changes nothing.
+            ring-touch := TouchArea {
+                mouse-cursor: crosshair;
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                        // A press starts a drag only on the ring itself, not on the
+                        // corners outside it or the circle inside it.
+                        let dx = (self.mouse-x - self.width / 2) / 1px;
+                        let dy = (self.mouse-y - self.height / 2) / 1px;
+                        let reach = sqrt(dx * dx + dy * dy) * 1px;
+                        ring-box.ring-drag = reach <= Styles.dialog-ring-size / 2
+                            && reach >= Styles.dialog-ring-inner / 2;
+                        if (ring-box.ring-drag) {
+                            ring-picked(self.mouse-x / self.width,
+                                                    self.mouse-y / self.height);
+                        }
+                    } else if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) {
+                        ring-box.ring-drag = false;
+                    }
+                }
+                moved => {
+                    if (self.pressed && ring-box.ring-drag) {
+                        ring-picked(self.mouse-x / self.width,
+                                                self.mouse-y / self.height);
+                    }
+                }
+            }
+
+            square-touch := TouchArea {
+                x: (parent.width - Styles.dialog-square-size) / 2;
+                y: (parent.height - Styles.dialog-square-size) / 2;
+                width: Styles.dialog-square-size;
+                height: Styles.dialog-square-size;
+                mouse-cursor: crosshair;
+                pointer-event(e) => {
+                    if (e.button == PointerEventButton.left && e.kind == PointerEventKind.down) {
+                        square-picked(self.mouse-x / self.width,
+                                                  self.mouse-y / self.height);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        square-picked(self.mouse-x / self.width,
+                                                  self.mouse-y / self.height);
+                    }
+                }
+            }
+        }
+
+        // The color the dialog holds, with the caption Windows prints under it.
+        WinSunken {
+            x: 305px;
+            y: 249px;
+            width: 80px;
+            height: 52px;
+            deep: false;
+            face: current;
+        }
+
+        Text {
+            x: 305px;
+            y: 301px;
+            width: 80px;
+            height: 20px;
+            text: "Color|Solid";
+            font-size: Win10.font-size;
+            color: Win10.text-color;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        WinFieldLabel { x: 384px; y: 249px; width: 44px; text: "Hue:"; }
+        WinNumberBox { x: 433px; y: 249px; read-only: true; text: hue-text; }
+        WinFieldLabel { x: 384px; y: 277px; width: 44px; text: "Sat:"; }
+        WinNumberBox { x: 433px; y: 277px; read-only: true; text: sat-text; }
+        WinFieldLabel { x: 384px; y: 305px; width: 44px; text: "Lum:"; }
+        WinNumberBox { x: 433px; y: 305px; read-only: true; text: lum-text; }
+
+        WinFieldLabel { x: 482px; y: 249px; width: 52px; text: "Red:"; }
+        WinNumberBox {
+            x: 539px;
+            y: 249px;
+            text <=> red-text;
+            accepted => {
+                color-entered("\{red-text}, \{green-text}, \{blue-text}");
+            }
+        }
+        WinFieldLabel { x: 482px; y: 277px; width: 52px; text: "Green:"; }
+        WinNumberBox {
+            x: 539px;
+            y: 277px;
+            text <=> green-text;
+            accepted => {
+                color-entered("\{red-text}, \{green-text}, \{blue-text}");
+            }
+        }
+        WinFieldLabel { x: 482px; y: 305px; width: 52px; text: "Blue:"; }
+        WinNumberBox {
+            x: 539px;
+            y: 305px;
+            text <=> blue-text;
+            accepted => {
+                color-entered("\{red-text}, \{green-text}, \{blue-text}");
+            }
+        }
+
+        // The color as RRGGBB. Enter sets it, and so does a sixth digit or a
+        // pasted "#rgb" or "#rrggbb", which C++ strips of its hash and widens; the
+        // box is rewritten whenever any other value moves the color, and a
+        // value that is not a color is put back to the one the dialog holds.
+        WinFieldLabel { x: 384px; y: 333px; width: 44px; text: "Hex:"; }
+        WinNumberBox {
+            x: 433px;
+            y: 333px;
+            width: 72px;
+            text <=> hex-text;
+            accepted => { color-entered(self.text); }
+            edited => { hex-edited(self.text); }
+        }
+
+        WinButton {
+            x: 306px;
+            y: 362px;
+            width: 282px;
+            text: "Add to Custom Colors";
+            clicked => { add-custom(); }
+        }
+    }
+}

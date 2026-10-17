@@ -3,8 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <vector>
 
+#include "brushes/brush_engine.hpp"
+#include "selection/selection_mask.hpp"
 #include "tools/stroke_recorder.hpp"
 #include "tools/tool_context.hpp"
 
@@ -286,11 +290,9 @@ void publish(ToolContext& context, const std::vector<Point2f>& points, bool clos
     ShapePreview& preview = context.ui.shape;
     const ShapeOptions& options = context.shape_options;
     const bool open = !shape::is_closed(options.kind);
-    const ShapeMode mode = open && options.mode == ShapeMode::Fill ? ShapeMode::Outline : options.mode;
     preview.visible = true;
-    preview.draw_fill = mode != ShapeMode::Outline;
-    // A shape always carries a border; the fill is the only thing the mode drops.
-    preview.draw_outline = true;
+    preview.draw_fill = !open && options.fill != ShapeTexture::None;
+    preview.draw_outline = options.outline != ShapeTexture::None;
     preview.outline_color = context.colors.ink(button);
     preview.fill_color = context.colors.other_ink(button);
     preview.commands = shape::svg_commands(points, closed);
@@ -341,6 +343,85 @@ void bridge_fill_to_outline(raster::Target target, RectI area, Rgba8 fill_color,
     }
     for (const std::pair<int, int>& pixel : bridges) {
         target.pixels.at(pixel.first, pixel.second) = fill_color;
+    }
+}
+
+// The brush a texture draws with. The profile comes from the brush engine, so a
+// shape's crayon outline and a crayon stroke lay down the same grain.
+Brush texture_brush(ShapeTexture texture, int thickness) {
+    BrushKind kind = BrushKind::Crayon;
+    switch (texture) {
+        case ShapeTexture::Marker: kind = BrushKind::Marker; break;
+        case ShapeTexture::Oil: kind = BrushKind::Oil; break;
+        case ShapeTexture::NaturalPencil: kind = BrushKind::NaturalPencil; break;
+        case ShapeTexture::Watercolor: kind = BrushKind::Watercolor; break;
+        default: break;
+    }
+    return Brush{thickness, 0.25f, BrushShape::Round, kind};
+}
+
+// The clip the raster target applies, in the form a brush stamp understands, so
+// a textured part is held back by the same selection the hard edges honour.
+SelectionMask target_clip(raster::Target target) {
+    const RectI bounds = target.pixels.bounds();
+    SelectionMask clip(bounds.width, bounds.height);
+    if (target.clip_mask == nullptr) return clip;  // no selection is writable everywhere
+    const std::size_t count = static_cast<std::size_t>(bounds.width) * bounds.height;
+    clip.replace_region(bounds,
+                        std::vector<std::uint8_t>(target.clip_mask, target.clip_mask + count));
+    return clip;
+}
+
+// Stamps a textured outline along the shape's path.
+void stroke_texture(raster::Target target, std::span<const Point2f> points, int thickness,
+                    ShapeTexture texture, Rgba8 color, bool closed) {
+    if (points.size() < 2) return;
+    SelectionMask clip = target_clip(target);
+    BrushEngine engine(texture_brush(texture, thickness), color, clip);
+    for (const Point2f& point : points) (void)engine.stroke_to(target.pixels, point);
+    if (closed) (void)engine.stroke_to(target.pixels, points.front());
+}
+
+// The shape's interior, held back by the clip the raster target carries.
+SelectionMask interior_clip(raster::Target target, std::span<const Point2f> points) {
+    const RectI bounds = target.pixels.bounds();
+    SelectionMask interior(bounds.width, bounds.height);
+    interior.fill_polygon(std::vector<Point2f>(points.begin(), points.end()));
+    if (target.clip_mask == nullptr) return interior;
+    std::vector<std::uint8_t> bytes = interior.extract_region(bounds);
+    const std::size_t count = bytes.size();
+    for (std::size_t i = 0; i < count; ++i) {
+        if (target.clip_mask[i] == 0) bytes[i] = 0;
+    }
+    interior.replace_region(bounds, bytes);
+    return interior;
+}
+
+// Textured fills cover the interior with parallel strokes. Crayon keeps the gaps
+// between its strokes, the other textures let them touch so the interior reads as
+// one grainy surface instead of as lines.
+void hatch_texture(raster::Target target, std::span<const Point2f> points, int thickness,
+                   ShapeTexture texture, Rgba8 color) {
+    if (points.size() < 3) return;
+    SelectionMask interior = interior_clip(target, points);
+    if (interior.empty()) return;
+    const RectI box = interior.bounds();
+    const Brush brush = texture_brush(texture, thickness);
+    // The strokes run down the diagonal, so a perpendicular distance of `gap`
+    // needs a step of gap * sqrt(2) along the x axis. A gap just under the brush
+    // size leaves no background between the strokes.
+    const float gap = texture == ShapeTexture::Crayon
+                          ? std::max(3.0f, static_cast<float>(thickness))
+                          : std::max(1.0f, static_cast<float>(thickness) * 0.9f);
+    const float step = gap * 1.41421356f;
+    const float top = static_cast<float>(box.y);
+    const float bottom = static_cast<float>(box.bottom());
+    const float height = bottom - top;
+    for (float x = static_cast<float>(box.x) - height; x < static_cast<float>(box.right());
+         x += step) {
+        BrushEngine engine(brush, color, interior);
+        (void)engine.stroke_to(target.pixels, Point2f{x, top});
+        (void)engine.stroke_to(target.pixels, Point2f{x + height, bottom});
     }
 }
 
@@ -428,39 +509,60 @@ std::string shape::gallery_commands(ShapeId kind, RectI box) {
 void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
                      std::span<const Point2f> polygon, const ShapeOptions& options,
                      Rgba8 outline_color, Rgba8 fill_color) {
-    // An open shape has no interior, so asking for fill alone still strokes it.
+    // An open shape has no interior, so a fill texture cannot be laid down.
     const bool open = !shape::is_closed(kind);
-    const ShapeMode mode =
-        open && options.mode == ShapeMode::Fill ? ShapeMode::Outline : options.mode;
-    const bool wants_fill = mode != ShapeMode::Outline;
+    const bool wants_outline = options.outline != ShapeTexture::None;
+    const bool wants_fill = !open && options.fill != ShapeTexture::None;
+    const bool solid_outline = options.outline == ShapeTexture::Solid;
+    const bool solid_fill = options.fill == ShapeTexture::Solid;
     const int thickness = std::clamp(options.thickness, 1, 32);
     const RectI box = shape::normalized_rect(a, b);
+    const bool plain = (solid_outline || !wants_outline) && (solid_fill || !wants_fill);
 
     // Rectangle, ellipse and rounded rectangle keep their own primitives: they
     // are exact at every size, where a sampled outline would cut thin corners.
-    switch (kind) {
+    // A texture is stamped along the sampled path instead.
+    if (plain) {
+        switch (kind) {
         case ShapeId::Rectangle:
             if (wants_fill) raster::draw_rect_fill(target, box, fill_color);
-            raster::draw_rect_outline(target, box, thickness, outline_color);
+            if (wants_outline) raster::draw_rect_outline(target, box, thickness, outline_color);
             return;
         case ShapeId::Oval:
             if (wants_fill) raster::draw_ellipse_fill(target, box, fill_color);
-            raster::draw_ellipse_outline(target, box, thickness, outline_color);
+            if (wants_outline)
+                raster::draw_ellipse_outline(target, box, thickness, outline_color);
             return;
         case ShapeId::RoundedRect:
             if (wants_fill)
                 raster::draw_rounded_rect_fill(target, box, options.corner_radius, fill_color);
-            raster::draw_rounded_rect_outline(target, box, options.corner_radius, thickness,
-                                              outline_color);
+            if (wants_outline)
+                raster::draw_rounded_rect_outline(target, box, options.corner_radius, thickness,
+                                                  outline_color);
             return;
         default: break;
+        }
     }
 
     const std::vector<Point2f> points = shape::outline(kind, a, b, polygon);
     if (points.size() < 2) return;
-    if (wants_fill && !open) raster::draw_polygon_fill(target, points, fill_color);
-    raster::draw_polyline(target, points, thickness, outline_color, !open);
-    if (wants_fill && !open) {
+    if (wants_fill) {
+        if (solid_fill) {
+            raster::draw_polygon_fill(target, points, fill_color);
+        } else {
+            hatch_texture(target, points, thickness, options.fill, fill_color);
+        }
+    }
+    if (wants_outline) {
+        if (solid_outline) {
+            raster::draw_polyline(target, points, thickness, outline_color, !open);
+        } else {
+            stroke_texture(target, points, thickness, options.outline, outline_color, !open);
+        }
+    }
+    // The repair only has the two flat colors to go by, so it runs for the solid
+    // pair; a texture covers its own boundary with its own grain.
+    if (wants_fill && wants_outline && solid_fill && solid_outline) {
         RectI area{};
         for (const Point2f& point : points) {
             const int x = static_cast<int>(std::floor(point.x));

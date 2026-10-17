@@ -14,9 +14,9 @@ export component Bar inherits Rectangle {
 
 export component BarDivider inherits Rectangle {
     height: 90px;
-    width: 2px;
+    width: Styles.ribbon-divider;
     y: (Styles.bar-height - root.height) / 2;
-    background: #eee;
+    background: Styles.ribbon-divider-color;
 }
 
 export component BarItemGroup {  
@@ -29,7 +29,9 @@ export component BarItemGroup {
     min-width: 45px;
 
     HorizontalLayout {
-        padding: Styles.bar-padding;
+        padding-left: Styles.ribbon-group-padding;
+        padding-right: Styles.ribbon-group-padding;
+        padding-bottom: Styles.bar-padding;
         padding-top: 0;
         height: Styles.bar-button-height;
 

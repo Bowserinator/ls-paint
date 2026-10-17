@@ -2,16 +2,19 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <numbers>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "config.hpp"
+#include "core/color.hpp"
 #include "io/document_io.hpp"
 #include "ui/shortcuts.hpp"
 
@@ -203,13 +206,17 @@ BrushKind brush_from_slint(EBrushKind kind) {
     return BrushKind::Brush;
 }
 
-ShapeMode mode_from_slint(EShapeMode mode) {
-    switch (mode) {
-        case EShapeMode::FILL: return ShapeMode::Fill;
-        case EShapeMode::OUTLINE: return ShapeMode::Outline;
-        case EShapeMode::BOTH: return ShapeMode::Both;
+ShapeTexture texture_from_slint(EShapeTexture texture) {
+    switch (texture) {
+        case EShapeTexture::NONE: return ShapeTexture::None;
+        case EShapeTexture::SOLID: return ShapeTexture::Solid;
+        case EShapeTexture::CRAYON: return ShapeTexture::Crayon;
+        case EShapeTexture::MARKER: return ShapeTexture::Marker;
+        case EShapeTexture::OIL: return ShapeTexture::Oil;
+        case EShapeTexture::NATURALPENCIL: return ShapeTexture::NaturalPencil;
+        case EShapeTexture::WATERCOLOR: return ShapeTexture::Watercolor;
     }
-    return ShapeMode::Outline;
+    return ShapeTexture::None;
 }
 
 Rgba8 to_rgba(slint::Color color) {
@@ -224,12 +231,12 @@ UiState::UiState(AppWindow& window, AppController& controller)
     : m_window(window),
       m_controller(controller),
       m_bridge(controller.document().width(), controller.document().height()) {
-    auto palette = std::make_shared<slint::VectorModel<slint::Color>>();
+    m_palette = std::make_shared<slint::VectorModel<slint::Color>>();
     for (const Rgba8& color : kDefaultPalette)
-        palette->push_back(slint::Color::from_rgb_uint8(color.r, color.g, color.b));
+        m_palette->push_back(slint::Color::from_rgb_uint8(color.r, color.g, color.b));
     for (int i = 0; i < kCustomColorSlots; ++i)
-        palette->push_back(slint::Color::from_rgb_uint8(255, 255, 255));
-    m_window.global<UserState>().set_color_palette(palette);
+        m_palette->push_back(slint::Color::from_rgb_uint8(255, 255, 255));
+    m_window.global<UserState>().set_color_palette(m_palette);
 
     auto gallery = std::make_shared<slint::VectorModel<ShapeGlyph>>();
     for (const EShapeKind kind : kShapeGalleryOrder) {
@@ -377,6 +384,9 @@ UiState::UiState(AppWindow& window, AppController& controller)
     dialog.on_resize_ok([this] { do_resize_ok(); });
     dialog.on_resize_cancel([this] { do_resize_cancel(); });
     m_window.global<UserState>().on_resize_dialog([this] { do_open_resize_dialog(); });
+    m_window.global<UserState>().on_edit_colors([this] { do_open_color_dialog(); });
+    m_window.global<UserState>().on_about([this] { do_open_about(); });
+
     dialog.on_confirm_save([this, &dialog] {
         dialog.set_confirm_visible(false);
         m_window.invoke_focus_app();
@@ -423,6 +433,202 @@ UiState::UiState(AppWindow& window, AppController& controller)
     });
 }
 
+void UiState::set_palette_color(int index, const slint::Color& color) {
+    if (!m_palette || index < 0 || index >= static_cast<int>(m_palette->row_count())) return;
+    m_palette->set_row_data(static_cast<std::size_t>(index), color);
+}
+
+// The color window is made on first use: a window of its own, so the window
+// manager moves, resizes and closes it.
+void UiState::ensure_color_window() {
+    if (m_color_window) return;
+    m_color_window = lsp_colors::EditColorsWindow::create();
+    lsp_colors::EditColorsWindow& window = **m_color_window;
+    // The custom half of the palette follows what the dialog writes, so the
+    // window is given the same model the ribbon swatches read.
+    window.set_palette(m_palette);
+    window.on_accepted([this] { do_color_accepted(); });
+    window.on_cancelled([this] { do_color_cancelled(); });
+    window.on_add_custom([this] { do_color_add_custom(); });
+    window.on_basic_picked([this](const slint::Color& color) { do_color_basic_picked(color); });
+    window.on_custom_picked(
+        [this](const slint::Color& color, int index) { do_color_custom_picked(color, index); });
+    window.on_ring_picked([this](float x, float y) { do_color_ring_picked(x, y); });
+    window.on_square_picked([this](float x, float y) { do_color_square_picked(x, y); });
+    window.on_color_entered(
+        [this](const slint::SharedString& text) { do_color_entered(text); });
+    window.on_hex_edited(
+        [this](const slint::SharedString& text) { do_color_hex_edited(text); });
+    // Closing the window from its own title bar leaves the colors alone, which
+    // is what Cancel does, so the default of hiding the window is enough.
+}
+
+lsp_colors::EditColorsWindow* UiState::color_picker() {
+    return m_color_window ? &**m_color_window : nullptr;
+}
+
+lsp_colors::EditColorsWindow& UiState::color_window() {
+    ensure_color_window();
+    return **m_color_window;
+}
+
+bool UiState::color_window_open() const noexcept {
+    return m_color_window && (*m_color_window)->window().is_visible();
+}
+
+void UiState::do_open_color_dialog() {
+    ensure_color_window();
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    const auto& state = m_window.global<UserState>();
+    // The dialog edits whichever of the two colors is active.
+    const slint::Color active =
+        state.get_color_idx() == 0 ? state.get_primary_color() : state.get_secondary_color();
+    const Hsv hsv = hsv_from_rgb(to_rgba(active));
+    picker->set_hue(hsv.hue);
+    picker->set_saturation(hsv.saturation);
+    picker->set_value(hsv.value);
+    // Every open centers the window again.
+    push_color_dialog();
+    (*m_color_window)->show();
+}
+
+// Writes the color, the color the square shades and the readouts from the
+// hue, saturation and value the dialog was left on.
+void UiState::push_color_dialog() {
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    const Hsv hsv{wrap_hue(picker->get_hue()), std::clamp(picker->get_saturation(), 0.0f, 1.0f),
+                  std::clamp(picker->get_value(), 0.0f, 1.0f)};
+    const Rgba8 color = rgb_from_hsv(hsv);
+    const Rgba8 hue_color = rgb_from_hsv(Hsv{hsv.hue, 1.0f, 1.0f});
+    picker->set_hue(hsv.hue);
+    picker->set_saturation(hsv.saturation);
+    picker->set_value(hsv.value);
+    picker->set_current(slint::Color::from_argb_uint8(color.a, color.r, color.g, color.b));
+    picker->set_hue_color(
+        slint::Color::from_argb_uint8(hue_color.a, hue_color.r, hue_color.g, hue_color.b));
+    picker->set_red_text(slint::SharedString(std::to_string(color.r)));
+    picker->set_green_text(slint::SharedString(std::to_string(color.g)));
+    picker->set_blue_text(slint::SharedString(std::to_string(color.b)));
+    // RRGGBB in capitals, with no leading hash: the box is labelled Hex.
+    std::string hex = to_hex(color).substr(1);
+    std::ranges::transform(hex, hex.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    picker->set_hex_text(slint::SharedString(hex));
+    picker->set_hue_text(
+        slint::SharedString(std::to_string(static_cast<int>(std::lround(hsv.hue)))));
+    picker->set_sat_text(slint::SharedString(
+        std::to_string(static_cast<int>(std::lround(hsv.saturation * 100.0f)))));
+    picker->set_lum_text(slint::SharedString(
+        std::to_string(static_cast<int>(std::lround(hsv.value * 100.0f)))));
+}
+
+void UiState::do_color_accepted() {
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    auto& state = m_window.global<UserState>();
+    if (state.get_color_idx() == 0) {
+        state.set_primary_color(picker->get_current());
+    } else {
+        state.set_secondary_color(picker->get_current());
+    }
+    (*m_color_window)->hide();
+    m_window.invoke_focus_app();
+    sync_colors();
+    refresh();
+}
+
+void UiState::do_color_cancelled() {
+    if (m_color_window) (*m_color_window)->hide();
+    m_window.invoke_focus_app();
+}
+
+void UiState::do_color_add_custom() {
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    const int slot = std::clamp(picker->get_custom_index(), 0, kCustomColorSlots - 1);
+    set_palette_color(static_cast<int>(kDefaultPalette.size()) + slot, picker->get_current());
+    // The next add fills the next slot, as Paint walks the grid.
+    picker->set_custom_index((slot + 1) % kCustomColorSlots);
+}
+
+void UiState::do_color_basic_picked(const slint::Color& color) {
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    const Hsv hsv = hsv_from_rgb(to_rgba(color));
+    picker->set_hue(hsv.hue);
+    picker->set_saturation(hsv.saturation);
+    picker->set_value(hsv.value);
+    push_color_dialog();
+}
+
+void UiState::do_color_custom_picked(const slint::Color& color, int index) {
+    color_picker()->set_custom_index(std::clamp(index, 0, kCustomColorSlots - 1));
+    do_color_basic_picked(color);
+}
+
+void UiState::do_color_ring_picked(float x, float y) {
+    const float dx = x - 0.5f;
+    const float dy = y - 0.5f;
+    if (dx == 0.0f && dy == 0.0f) return;
+    // Zero degrees is the top of the ring and the hue grows clockwise, which is
+    // how the conic gradient the ring is painted with reads.
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    picker->set_hue(wrap_hue(std::atan2(dx, -dy) * (180.0f / std::numbers::pi_v<float>)));
+    push_color_dialog();
+}
+
+void UiState::do_color_square_picked(float x, float y) {
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    picker->set_saturation(std::clamp(x, 0.0f, 1.0f));
+    picker->set_value(std::clamp(1.0f - y, 0.0f, 1.0f));
+    push_color_dialog();
+}
+
+void UiState::do_color_entered(const slint::SharedString& text) {
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    const std::optional<Rgba8> parsed = parse_color(std::string_view(text));
+    if (!parsed) {
+        // An entry that is not a color leaves the picker on the color it had.
+        push_color_dialog();
+        return;
+    }
+    const Hsv hsv = hsv_from_rgb(*parsed);
+    picker->set_hue(hsv.hue);
+    picker->set_saturation(hsv.saturation);
+    picker->set_value(hsv.value);
+    push_color_dialog();
+}
+
+// The hex box was typed or pasted into. A pasted "#333" loses its hash and
+// becomes 333333 at once; a full six digits set the color as the last one lands.
+void UiState::do_color_hex_edited(const slint::SharedString& text) {
+    const std::string cleaned = clean_hex_entry(std::string_view(text));
+    if (cleaned != std::string_view(text)) {
+        color_picker()->set_hex_text(slint::SharedString(cleaned));
+    }
+    if (cleaned.size() == 6 && parse_color(cleaned)) {
+        do_color_entered(slint::SharedString(cleaned));
+    }
+}
+
+void UiState::ensure_about_window() {
+    if (m_about_window) return;
+    m_about_window = lsp_about::AboutWindow::create();
+    (**m_about_window).on_closed([this] {
+        if (m_about_window) (*m_about_window)->hide();
+    });
+}
+
+void UiState::do_open_about() {
+    ensure_about_window();
+    (*m_about_window)->show();
+}
+
 void UiState::sync_colors() {
     const auto& state = m_window.global<UserState>();
     m_controller.colors() = {to_rgba(state.get_primary_color()), to_rgba(state.get_secondary_color())};
@@ -432,7 +638,8 @@ void UiState::sync_shape_style() {
     const auto& style = m_window.global<ShapeStyle>();
     ShapeOptions& options = m_controller.shape_options();
     options.kind = shape_from_slint(style.get_kind());
-    options.mode = mode_from_slint(style.get_mode());
+    options.outline = texture_from_slint(style.get_outline());
+    options.fill = texture_from_slint(style.get_fill());
     options.thickness = style.get_thickness();
 }
 
