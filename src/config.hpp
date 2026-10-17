@@ -14,10 +14,12 @@ inline constexpr int kMaxCanvasDimension = 4096;
 // Images larger than this are refused on load and never produced by growth.
 inline constexpr int kMaxImageDimension = 16384;
 inline constexpr std::size_t kMaxHistoryEntries = 200;
-// The custom half of the palette. The picker's custom grid is 8x2. The ribbon
-// shows the whole palette ten to a row, four rows deep, so the default colors
-// and the custom ones together must stay within forty.
-inline constexpr int kCustomColorSlots = 16;
+// The custom half of the palette. The ribbon shows the whole palette ten to a
+// row, so the default colors and these together fill three rows.
+inline constexpr int kCustomColorSlots = 10;
+// The grid of custom colors the Edit Colors dialog edits, two rows of eight.
+// OK moves the slot the dialog points at into the ribbon's strip.
+inline constexpr int kDialogCustomColorSlots = 16;
 
 // Extensions the file dialogs offer and document_io can write.
 inline constexpr std::array<std::string_view, 4> kImageExtensions{".png", ".bmp", ".jpg", ".jpeg"};

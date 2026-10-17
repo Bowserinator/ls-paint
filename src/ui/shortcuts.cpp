@@ -31,6 +31,10 @@ constexpr std::array kShortcuts{
 }  // namespace
 
 std::optional<ShortcutAction> lookup_shortcut(std::string_view text, bool ctrl, bool shift) {
+    // Escape arrives as a control character, which the key mapping below would
+    // read as the letter '{'; it is matched before that.
+    if (text == "\x1b" && !ctrl && !shift) return ShortcutAction::Deselect;
+
     if (text.size() != 1) return std::nullopt;
 
     char key = text.front();

@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <numbers>
@@ -99,6 +100,39 @@ void append_border_runs(const RectI& bounds, int phase, std::vector<SelectionDas
         const int offset = (((s - phase) % kAntPeriod) + kAntPeriod) % kAntPeriod;
         (offset < kAntSegment ? dark : light).push_back(
             {static_cast<float>(x), static_cast<float>(y), 1.0f, 1.0f});
+    }
+}
+
+// Walks the polyline a selection gesture has drawn so far and emits one unit
+// run per cell, so an unfinished lasso or polygon shows the same crawling
+// outline the finished selection gets.
+void append_path_runs(const std::vector<Point2f>& points, int phase, std::vector<SelectionDash>& dark,
+                      std::vector<SelectionDash>& light) {
+    if (points.size() < 2) return;
+
+    int step = 0;
+    int last_x = 0;
+    int last_y = 0;
+    bool have_last = false;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        const int x0 = static_cast<int>(std::lround(points[i - 1].x));
+        const int y0 = static_cast<int>(std::lround(points[i - 1].y));
+        const int x1 = static_cast<int>(std::lround(points[i].x));
+        const int y1 = static_cast<int>(std::lround(points[i].y));
+        const int steps = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
+        // The segment's first cell is the previous segment's last one.
+        for (int k = (i == 1 ? 0 : 1); k <= steps; ++k) {
+            const int x = steps == 0 ? x0 : x0 + (x1 - x0) * k / steps;
+            const int y = steps == 0 ? y0 : y0 + (y1 - y0) * k / steps;
+            if (have_last && x == last_x && y == last_y) continue;
+            last_x = x;
+            last_y = y;
+            have_last = true;
+            const int offset = (((step - phase) % kAntPeriod) + kAntPeriod) % kAntPeriod;
+            (offset < kAntSegment ? dark : light).push_back(
+                {static_cast<float>(x), static_cast<float>(y), 1.0f, 1.0f});
+            ++step;
+        }
     }
 }
 
@@ -332,6 +366,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
             case ShortcutAction::Copy: m_controller.copy_selection(); break;
             case ShortcutAction::Paste: do_paste(); break;
             case ShortcutAction::SelectAll: m_controller.select_all(); break;
+            case ShortcutAction::Deselect: m_controller.clear_selection(); break;
             case ShortcutAction::New: do_file_new(); break;
             case ShortcutAction::Open: do_file_open(); break;
             case ShortcutAction::Save: do_file_save(); break;
@@ -438,15 +473,54 @@ void UiState::set_palette_color(int index, const slint::Color& color) {
     m_palette->set_row_data(static_cast<std::size_t>(index), color);
 }
 
+// The dialog starts with the ribbon's strip in its grid and empty slots after
+// it, and is free to change them from then on.
+void UiState::seed_dialog_customs() {
+    lsp_colors::EditColorsWindow* picker = color_picker();
+    if (!picker) return;
+    m_dialog_customs = std::make_shared<slint::VectorModel<slint::Color>>();
+    for (int i = 0; i < kDialogCustomColorSlots; ++i) {
+        slint::Color color = slint::Color::from_rgb_uint8(255, 255, 255);
+        if (i < kCustomColorSlots && m_palette) {
+            const std::size_t row = kDefaultPalette.size() + static_cast<std::size_t>(i);
+            if (const std::optional<slint::Color> stored = m_palette->row_data(row)) color = *stored;
+        }
+        m_dialog_customs->push_back(color);
+    }
+    picker->set_custom_colors(m_dialog_customs);
+}
+
+void UiState::write_dialog_custom(int index, const slint::Color& color) {
+    if (!m_dialog_customs || index < 0 || index >= kDialogCustomColorSlots) return;
+    m_dialog_customs->set_row_data(static_cast<std::size_t>(index), color);
+}
+
+// The strip keeps the last ten colors, so a new one enters at its head and the
+// oldest leaves.
+void UiState::rotate_strip(const slint::Color& color) {
+    if (!m_palette) return;
+    std::vector<slint::Color> kept;
+    kept.reserve(static_cast<std::size_t>(kCustomColorSlots));
+    for (int i = 1; i < kCustomColorSlots; ++i) {
+        const std::size_t row = kDefaultPalette.size() + static_cast<std::size_t>(i);
+        const std::optional<slint::Color> stored = m_palette->row_data(row);
+        kept.push_back(stored.value_or(slint::Color::from_rgb_uint8(255, 255, 255)));
+    }
+    set_palette_color(static_cast<int>(kDefaultPalette.size()), color);
+    for (std::size_t i = 0; i < kept.size(); ++i) {
+        set_palette_color(static_cast<int>(kDefaultPalette.size() + i + 1), kept[i]);
+    }
+}
+
 // The color window is made on first use: a window of its own, so the window
 // manager moves, resizes and closes it.
 void UiState::ensure_color_window() {
     if (m_color_window) return;
     m_color_window = lsp_colors::EditColorsWindow::create();
     lsp_colors::EditColorsWindow& window = **m_color_window;
-    // The custom half of the palette follows what the dialog writes, so the
-    // window is given the same model the ribbon swatches read.
-    window.set_palette(m_palette);
+    // The dialog keeps its own grid of custom colors, which the ribbon's strip
+    // seeds.
+    seed_dialog_customs();
     window.on_accepted([this] { do_color_accepted(); });
     window.on_cancelled([this] { do_color_cancelled(); });
     window.on_add_custom([this] { do_color_add_custom(); });
@@ -533,6 +607,14 @@ void UiState::do_color_accepted() {
     } else {
         state.set_secondary_color(picker->get_current());
     }
+    // The slot the dialog points at goes into the ribbon's strip, which keeps
+    // the last ten colors.
+    const int slot = std::clamp(picker->get_custom_index(), 0, kDialogCustomColorSlots - 1);
+    if (m_dialog_customs) {
+        const std::optional<slint::Color> chosen =
+            m_dialog_customs->row_data(static_cast<std::size_t>(slot));
+        if (chosen) rotate_strip(*chosen);
+    }
     (*m_color_window)->hide();
     m_window.invoke_focus_app();
     sync_colors();
@@ -547,10 +629,10 @@ void UiState::do_color_cancelled() {
 void UiState::do_color_add_custom() {
     lsp_colors::EditColorsWindow* picker = color_picker();
     if (!picker) return;
-    const int slot = std::clamp(picker->get_custom_index(), 0, kCustomColorSlots - 1);
-    set_palette_color(static_cast<int>(kDefaultPalette.size()) + slot, picker->get_current());
+    const int slot = std::clamp(picker->get_custom_index(), 0, kDialogCustomColorSlots - 1);
+    write_dialog_custom(slot, picker->get_current());
     // The next add fills the next slot, as Paint walks the grid.
-    picker->set_custom_index((slot + 1) % kCustomColorSlots);
+    picker->set_custom_index((slot + 1) % kDialogCustomColorSlots);
 }
 
 void UiState::do_color_basic_picked(const slint::Color& color) {
@@ -734,8 +816,12 @@ void UiState::update_ants() {
     const SelectionMask& selection = document.selection();
     const RectI bounds = selection.bounds();
     const bool visible = selection.active() && !bounds.empty();
+    // A gesture that is still being drawn has no mask yet, so its outline comes
+    // from the path the tool has published so far.
+    const SelectionPreview& preview = m_controller.tool_ui().selection;
+    const bool drawing = preview.points.size() >= 2;
 
-    if (!visible) {
+    if (!visible && !drawing) {
         // Written only when a selection actually disappears: this runs on a
         // timer, and assigning fresh models every tick would repaint forever.
         if (m_ants_visible) {
@@ -753,12 +839,13 @@ void UiState::update_ants() {
 
     std::vector<SelectionDash> dark;
     std::vector<SelectionDash> light;
-    append_border_runs(bounds, m_ant_phase, dark, light);
+    if (visible) append_border_runs(bounds, m_ant_phase, dark, light);
+    if (drawing) append_path_runs(preview.points, m_ant_phase, dark, light);
     state.set_ants_dark(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(dark)));
     state.set_ants_light(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(light)));
 
     std::vector<SelectionGrip> grips;
-    if (bounds.width >= kMinGripSpan && bounds.height >= kMinGripSpan &&
+    if (visible && bounds.width >= kMinGripSpan && bounds.height >= kMinGripSpan &&
         m_window.global<UserState>().get_selected_tool() == ETool::SELECTION) {
         grips = grip_anchors(bounds);
     }

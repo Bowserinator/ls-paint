@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string_view>
 
 #include "history/commands/selection_edit_command.hpp"
 #include "tools/tool_context.hpp"
@@ -115,6 +116,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
         } else {
             m_polygon.push_back(position);
         }
+        context.ui.selection.points = m_polygon;
         return;
     }
 
@@ -149,12 +151,15 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
 
     if (shape == SelectionShape::Polygon) {
         m_polygon.push_back(position);
+        context.ui.selection.points = m_polygon;
         return;
     }
 
     m_anchor = position;
     m_drag = Drag::Marquee;
+    m_polygon.clear();
     if (shape == SelectionShape::Freehand) m_polygon = {position};
+    context.ui.selection.points = m_polygon;
 }
 
 void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
@@ -192,11 +197,20 @@ void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
         return;
     }
 
+    // The rubber band runs from the last click to the pointer, so the outline
+    // shows the edge the next click would place.
+    if (m_drag == Drag::None && context.shape == SelectionShape::Polygon && !m_polygon.empty()) {
+        context.ui.selection.points = m_polygon;
+        context.ui.selection.points.push_back(position);
+        return;
+    }
+
     if (m_drag != Drag::Marquee) return;
     if (context.shape == SelectionShape::Rectangular)
         context.document.selection().fill_rect(rect_from_corners(m_anchor, position));
     else
         m_polygon.push_back(position);
+    context.ui.selection.points = m_polygon;
 }
 
 void SelectionTool::on_pointer_up(ToolContext& context, Point2f position) {
@@ -217,6 +231,17 @@ void SelectionTool::on_pointer_up(ToolContext& context, Point2f position) {
 
     m_polygon.clear();
     m_drag = Drag::None;
+    context.ui.selection.points.clear();
+}
+
+void SelectionTool::on_key_pressed(ToolContext& context, std::string_view text) {
+    // Escape abandons a marquee that is still being drawn, and the view's copy
+    // of the path goes with it.
+    if (text != "\x1b") return;
+    if (m_polygon.empty() && m_drag == Drag::None) return;
+    m_polygon.clear();
+    m_drag = Drag::None;
+    context.ui.selection.points.clear();
 }
 
 void SelectionTool::finish_contents_drag(ToolContext& context) {

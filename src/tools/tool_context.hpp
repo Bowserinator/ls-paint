@@ -39,10 +39,17 @@ struct ColorPair {
     }
 };
 
+// The path a selection gesture has drawn so far, so the view can outline it
+// while it is still being drawn.
+struct SelectionPreview {
+    std::vector<Point2f> points;
+};
+
 // What the active tool tells the UI about a gesture that is still running.
 struct ToolUiState {
     ShapePreview shape;
     TextOverlayState text;
+    SelectionPreview selection;
 };
 
 // Everything a tool is allowed to reach: the document it edits, the history it

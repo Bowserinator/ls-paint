@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include "selection/selection_ops.hpp"
@@ -17,6 +18,7 @@ public:
     void on_pointer_down(ToolContext& context, Point2f position, PointerButton button) override;
     void on_pointer_move(ToolContext& context, Point2f position) override;
     void on_pointer_up(ToolContext& context, Point2f position) override;
+    void on_key_pressed(ToolContext& context, std::string_view text) override;
 
 private:
     enum class Drag { None, Marquee, Contents, Resize };

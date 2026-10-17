@@ -5,7 +5,7 @@
 
 namespace lsp {
 
-enum class ShortcutAction { Undo, Redo, Cut, Copy, Paste, SelectAll, New, Open, Save, SaveAs };
+enum class ShortcutAction { Undo, Redo, Cut, Copy, Paste, SelectAll, Deselect, New, Open, Save, SaveAs };
 
 [[nodiscard]] std::optional<ShortcutAction> lookup_shortcut(std::string_view text, bool ctrl, bool shift);
 

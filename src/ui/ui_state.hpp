@@ -45,9 +45,13 @@ private:
   void do_commit_text(const std::string &text);
   void refresh();
 
-  // Writes one entry of the palette, which the colour picker's custom slots
-  // use.
+  // Writes one entry of the ribbon's palette.
   void set_palette_color(int index, const slint::Color &color);
+  // The grid of custom colors the Edit Colors dialog edits. The ribbon's strip
+  // seeds it, the dialog changes it, and OK moves one slot into the strip.
+  void seed_dialog_customs();
+  void write_dialog_custom(int index, const slint::Color &color);
+  void rotate_strip(const slint::Color &color);
 
   // The Edit Colors picker. The hue, saturation and value it holds are the
   // colour being chosen, and every other field it shows follows from them.
@@ -121,6 +125,9 @@ private:
   std::optional<slint::ComponentHandle<lsp_about::AboutWindow>> m_about_window;
   // Kept so the colour picker can write into the palette's custom slots.
   std::shared_ptr<slint::VectorModel<slint::Color>> m_palette;
+  // The Edit Colors dialog's own custom colors, shared with the dialog while it
+  // is open.
+  std::shared_ptr<slint::VectorModel<slint::Color>> m_dialog_customs;
   slint::Timer m_ants_timer;
   int m_ant_phase = 0;
   bool m_ants_visible = false;
