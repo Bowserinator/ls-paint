@@ -43,13 +43,28 @@ picture stays with its generator.
 
 ## Generated text background samples
 
-`text/generate.sh` draws the two background selector icons the Text tab shows.
-Run the script after changing one; it rewrites the files in place, so each
-picture stays with its generator.
+`text/generate.sh` draws the background selector icon the Text tab shows.
+Run the script after changing it; it rewrites the file in place, so the picture
+stays with its generator.
 
 | File | Used by | What it shows |
 | --- | --- | --- |
 | `text/background-frame.png` | Background group in `ui/bar/bar-text.slint` | a serif A in an open dashed square over a blue square; the Opaque selector paints the text fill color behind the square and the Transparent one shows the blue through it |
+
+## Generated ruler digits
+
+`ruler/generate.sh` draws the two sheets the canvas ruler reads its numbers
+from: `digits.png` for the strip along the top edge and `digits-turned.png`,
+drawn a quarter turn round, for the strip down the left edge. Each sheet holds
+the digits 0 to 9 in order, one cell each, trimmed so no cell cuts a glyph; the
+script prints the cell size, which `ui/components/canvas-ruler.slint` repeats.
+The cells are white: the ruler tints them with the color it draws its labels
+in, so a color change needs no regeneration. Run the script after changing it.
+
+| File | Used by | What it shows |
+| --- | --- | --- |
+| `ruler/digits.png` | numbers on the canvas ruler's top strip, `ui/components/canvas-ruler.slint` | the digits 0 to 9, one 8x9 cell each |
+| `ruler/digits-turned.png` | numbers on the canvas ruler's left strip | the same cells turned a quarter turn, 9x8 each |
 
 ## Placeholder icons, replace with real artwork
 

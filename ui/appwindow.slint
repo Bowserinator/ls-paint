@@ -387,11 +387,13 @@ export component AppWindow inherits Window {
                                     }
                                 } else if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
                                     UserState.pointer-up(touch.mouse-x / UserState.zoom, touch.mouse-y / UserState.zoom);
+                                } else if (event.kind == PointerEventKind.move) {
+                                    // Every hover as well as every drag: the tools
+                                    // follow the pointer and the status bar reads
+                                    // the colour under it.
+                                    UserState.pointer-move(touch.mouse-x / UserState.zoom,
+                                                           touch.mouse-y / UserState.zoom);
                                 }
-                            }
-
-                            moved => {
-                                UserState.pointer-move(touch.mouse-x / UserState.zoom, touch.mouse-y / UserState.zoom);
                             }
 
                             // The wheel is always ours: zoom with a

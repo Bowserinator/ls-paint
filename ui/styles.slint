@@ -159,5 +159,10 @@ export global Styles {
     // readable through it.
     out property<color> canvas-grid-color: #dcdcdc;
     // Thickness of a ruler strip along the canvas view's top and left edges.
-    out property<length> ruler-size: 24px;
+    out property<length> ruler-size: 20px;
+    // The ruler's numbers, lighter than the ribbon's text so they read as a
+    // scale rather than as controls.
+    out property<color> ruler-label-color: #6f6f6f;
+    // The lines that mark where the pointer is, one on each strip.
+    out property<color> ruler-pointer-color: #ff0000;
 }

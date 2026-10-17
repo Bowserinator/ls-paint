@@ -776,9 +776,14 @@ void UiState::publish_hover_color() {
     }
 
     const Rgba8 pixel = paper.at(x, y);
+    // The readout is upper case, the way Paint prints a colour.
+    std::string hex = to_hex(pixel);
+    for (char& digit : hex) {
+        digit = static_cast<char>(std::toupper(static_cast<unsigned char>(digit)));
+    }
     state.set_hover_color_text(
         slint::SharedString("(" + std::to_string(pixel.r) + "," + std::to_string(pixel.g) + "," +
-                            std::to_string(pixel.b) + ") " + to_hex(pixel)));
+                            std::to_string(pixel.b) + ") " + hex));
 }
 
 void UiState::sync_font_style() {

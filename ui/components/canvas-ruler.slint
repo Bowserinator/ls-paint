@@ -1,6 +1,44 @@
 import { DocumentState, UserState } from "../globals.slint";
 import { Styles } from "../styles.slint";
 
+// A ruler number, put together from a sheet of digits: this renderer moves
+// items but does not turn them, so the left strip's number is drawn from a
+// sheet whose cells are already turned. The two sheets share one cell size, so
+// a turned cell is as wide as an upright one is tall.
+component RulerNumber inherits Rectangle {
+    in property <float> value: 0.0;
+    in property <bool> turned: false;
+    // One cell of digits.png. ruler/generate.sh writes these two figures out
+    // when it draws the sheets, and they change with the digit size.
+    private property <int> cell-width: 8;
+    private property <int> cell-height: 9;
+
+    width: root.turned ? root.cell-height * 1px : 4 * root.cell-width * 1px;
+    height: root.turned ? 4 * root.cell-width * 1px : root.cell-height * 1px;
+
+    for k in 4 : Image {
+        source: root.turned ? @image-url("../../icons/ruler/digits-turned.png")
+            : @image-url("../../icons/ruler/digits.png");
+        colorize: Styles.ruler-label-color;
+        // The sheet holds the digits in order, so the cell a digit needs is its
+        // own value times the cell size: the digit is the place it stands for,
+        // less the next place up times ten.
+        source-clip-x: round(floor(root.value / pow(10, 3 - k))
+            - 10 * floor(root.value / pow(10, 4 - k)))
+            * (root.turned ? root.cell-height : root.cell-width);
+        source-clip-y: 0;
+        source-clip-width: root.turned ? root.cell-height : root.cell-width;
+        source-clip-height: root.turned ? root.cell-width : root.cell-height;
+        width: (root.turned ? root.cell-height : root.cell-width) * 1px;
+        height: (root.turned ? root.cell-width : root.cell-height) * 1px;
+        x: root.turned ? (root.width - self.width) / 2 : k * root.cell-width * 1px;
+        y: root.turned ? k * root.cell-width * 1px : 0px;
+        // The digits read from the largest place down, and a leading zero is
+        // left out.
+        visible: k == 3 || root.value >= pow(10, 3 - k);
+    }
+}
+
 // A ruler along one edge of the canvas view: a tick at every document step,
 // longer ticks with their coordinate on the steps that are numbered, and marks
 // for the pointer and the selection. Both strips are this component, told which
@@ -28,21 +66,19 @@ export component CanvasRuler inherits Rectangle {
     background: Styles.ribbon-background;
     clip: true;
 
-    // The numbered step: the smallest power of two whose ticks stand at least
-    // 40px apart, so a four digit number fits beside its tick.
-    private property <float> major: UserState.zoom >= 4.0 ? 16.0
-        : UserState.zoom >= 2.0 ? 32.0
-        : UserState.zoom >= 1.0 ? 64.0
-        : UserState.zoom >= 0.5 ? 128.0
-        : UserState.zoom >= 0.25 ? 256.0
-        : 512.0;
-    // Four smaller ticks divide the numbered step.
-    private property <float> minor: root.major / 4.0;
-    private property <length> major-length: 6px;
-    private property <length> minor-length: 3px;
-    private property <length> number-width: 40px;
-    // The area a number is written in, beside the ticks rather than over them.
-    private property <length> number-size: Styles.ruler-size - root.major-length;
+    // The numbered step: a hundred document pixels, which is the scale a ruler
+    // is read in. Zoomed far enough out the hundred is widened so two numbers
+    // never land on top of each other.
+    private property <float> major: UserState.zoom >= 0.4 ? 100.0
+        : UserState.zoom >= 0.2 ? 200.0
+        : UserState.zoom >= 0.08 ? 500.0
+        : 1000.0;
+    // Nine smaller ticks divide the hundred.
+    private property <float> minor: root.major / 10.0;
+    // Numbered ticks run the strip's full depth; the smaller ones only reach
+    // part of the way in.
+    private property <length> major-length: Styles.ruler-size;
+    private property <length> minor-length: 6px;
     // The first step the view shows: only the visible stretch is drawn, so the
     // ruler follows the scroll instead of building a tick per document step.
     private property <float> first-minor:
@@ -79,26 +115,21 @@ export component CanvasRuler inherits Rectangle {
         background: Styles.bar-text-color;
     }
 
-    for j in ceil(root.view-length / (root.major * UserState.zoom * 1px)) + 2 : Text {
-        text: round((root.first-major + j) * root.major);
-        font-size: Styles.bar-font-size;
-        color: Styles.bar-text-color;
-        wrap: no-wrap;
-        horizontal-alignment: root.vertical ? center : left;
-        vertical-alignment: center;
-        // Turned on the left strip, where a number of this width would not fit
-        // across it.
-        transform-rotation: root.vertical ? -90deg : 0deg;
-        x: root.vertical
-            ? root.number-size / 2 - root.number-width / 2
-            : root.start-in + root.scroll-offset + (root.first-major + j) * root.major * UserState.zoom * 1px + 3px;
-        y: root.vertical
-            ? root.start-in + root.scroll-offset + (root.first-major + j) * root.major * UserState.zoom * 1px
-                - root.number-size / 2
-            : 0px;
-        width: root.number-width;
-        height: root.number-size;
-        visible: (root.first-major + j) * root.major <= root.last-step;
+    // The numbers, one along each strip, each starting just past its own full
+    // depth tick: upright along the top one and turned on the left one.
+    for j in ceil(root.view-length / (root.major * UserState.zoom * 1px)) + 2 : RulerNumber {
+        value: (root.first-major + j) * root.major;
+        x: root.start-in + root.scroll-offset + (root.first-major + j) * root.major * UserState.zoom * 1px + 3px;
+        y: (root.height - self.height) / 2;
+        visible: !root.vertical && (root.first-major + j) * root.major <= root.last-step;
+    }
+
+    for j in ceil(root.view-length / (root.major * UserState.zoom * 1px)) + 2 : RulerNumber {
+        turned: true;
+        value: (root.first-major + j) * root.major;
+        x: (root.width - self.width) / 2;
+        y: root.start-in + root.scroll-offset + (root.first-major + j) * root.major * UserState.zoom * 1px + 3px;
+        visible: root.vertical && (root.first-major + j) * root.major <= root.last-step;
     }
 
     // The pointer, right across the strip, and the extent of the selection
@@ -113,7 +144,7 @@ export component CanvasRuler inherits Rectangle {
             : 0px;
         width: root.vertical ? root.width : 1px;
         height: root.vertical ? 1px : root.height;
-        background: Styles.bar-text-color;
+        background: Styles.ruler-pointer-color;
     }
 
     Rectangle {

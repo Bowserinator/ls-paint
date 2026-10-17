@@ -12,7 +12,6 @@
 #include "app/app_controller.hpp"
 #include "appwindow.h"
 #include "config.hpp"
-#include "core/color.hpp"
 #include "edit-colors-window.h"
 #include "io/document_io.hpp"
 #include "ui/ui_state.hpp"
@@ -419,10 +418,12 @@ int run_ui_tests() {
     CHECK(std::abs(h.user().get_cursor_y() - 100) < 1.0);
 
     const Rgba8 under = h.controller().document().flattened().at(100, 100);
+    char expected_hex[8];
+    std::snprintf(expected_hex, sizeof(expected_hex), "#%02X%02X%02X", under.r, under.g, under.b);
     CHECK(std::string(h.user().get_hover_color_text()) == "(" + std::to_string(under.r) + "," +
                                                               std::to_string(under.g) + "," +
                                                               std::to_string(under.b) + ") " +
-                                                              to_hex(under));
+                                                              expected_hex);
 
     h.move(origin.x - 2, origin.y - 2);
     CHECK(!h.user().get_cursor_on_canvas());
@@ -458,8 +459,10 @@ int run_ui_tests() {
     (void)h.window().take_snapshot();
     h.move(origin.x + 100, origin.y + 100);
     CHECK(h.user().get_cursor_on_canvas());
-    CHECK(std::abs(h.user().get_cursor_x() - 76) < 1.0);
-    CHECK(std::abs(h.user().get_cursor_y() - 76) < 1.0);
+    // The strips are 20px thick (Styles.ruler-size), so a fixed point on the
+    // screen covers a place 20 document pixels further up and left.
+    CHECK(std::abs(h.user().get_cursor_x() - 80) < 1.0);
+    CHECK(std::abs(h.user().get_cursor_y() - 80) < 1.0);
     CHECK(h.controller().document().flattened() == paper_before);
     h.user().set_show_rulers(false);
     (void)h.window().take_snapshot();
