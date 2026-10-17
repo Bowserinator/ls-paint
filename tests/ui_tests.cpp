@@ -11,6 +11,9 @@
 
 #include "app/app_controller.hpp"
 #include "appwindow.h"
+#include "config.hpp"
+#include "core/color.hpp"
+#include "edit-colors-window.h"
 #include "io/document_io.hpp"
 #include "ui/ui_state.hpp"
 
@@ -54,6 +57,9 @@ class Harness {
 public:
     Harness() : m_window(AppWindow::create()), m_ui(std::make_unique<UiState>(*m_window, m_controller)) {
         m_window->show();
+        // The window opens with the rulers on. The checks below measure the view
+        // itself, so they start from the paper's own corner.
+        m_window->global<UserState>().set_show_rulers(false);
         m_window->window().dispatch_resize_event(slint::LogicalSize({kWindowWidth, kWindowHeight}));
         (void)m_window->window().take_snapshot();  // lay the scene out before feeding input
     }
@@ -67,9 +73,24 @@ public:
 
     [[nodiscard]] const ShapeStyle& shapes() const { return m_window->global<ShapeStyle>(); }
 
+    // The outline and the fill are chosen separately now, so a test that wants a
+    // combination has to set both parts.
+    void set_shape_textures(EShapeTexture outline, EShapeTexture fill) {
+        m_window->global<ShapeStyle>().set_outline(outline);
+        m_window->global<ShapeStyle>().set_fill(fill);
+    }
+
     [[nodiscard]] const ShapeOverlay& overlay() const { return m_window->global<ShapeOverlay>(); }
 
+    // The Edit Colors surface is a window of its own, so the suite drives it
+    // through the UI state rather than through a global.
+    [[nodiscard]] lsp_colors::EditColorsWindow& picker() const { return m_ui->color_window(); }
+
+    [[nodiscard]] bool picker_open() const { return m_ui->color_window_open(); }
+
     [[nodiscard]] const TextOverlay& text_box() const { return m_window->global<TextOverlay>(); }
+
+    [[nodiscard]] const FontStyle& font_style() const { return m_window->global<FontStyle>(); }
 
     [[nodiscard]] std::size_t gallery_size() const {
         return m_window->global<ShapeGallery>().get_items()->row_count();
@@ -369,6 +390,14 @@ int run_ui_tests() {
     CHECK(first_grip->x == float(h.doc().get_selection_x()));
     CHECK(first_grip->y == float(h.doc().get_selection_y()));
 
+    // 14b. Escape is Deselect: the outline and the grips stop, and the
+    //      ribbon's selection buttons go back to being disabled.
+    h.key("\x1b");
+    CHECK(!h.doc().get_has_selection());
+    CHECK(h.doc().get_ants_dark()->row_count() == 0);
+    CHECK(h.doc().get_ants_light()->row_count() == 0);
+    CHECK(h.doc().get_grips()->row_count() == 0);
+
     // 15. The grips belong to the selection tool: switching away takes them
     //     while the outline stays for any tool to see.
     h.user().set_selected_tool(ETool::PENCIL);
@@ -389,8 +418,53 @@ int run_ui_tests() {
     CHECK(std::abs(h.user().get_cursor_x() - 100) < 1.0);
     CHECK(std::abs(h.user().get_cursor_y() - 100) < 1.0);
 
+    const Rgba8 under = h.controller().document().flattened().at(100, 100);
+    CHECK(std::string(h.user().get_hover_color_text()) == "(" + std::to_string(under.r) + "," +
+                                                              std::to_string(under.g) + "," +
+                                                              std::to_string(under.b) + ") " +
+                                                              to_hex(under));
+
     h.move(origin.x - 2, origin.y - 2);
     CHECK(!h.user().get_cursor_on_canvas());
+    h.user().invoke_select_all();  // any callback re-syncs the view state
+    CHECK(std::string(h.user().get_hover_color_text()).empty());
+    h.user().invoke_clear_selection();
+
+    // 15b-2. The View tab's Status Bar box is two-way bound to this property,
+    //       which is what the window instantiates the strip from: clearing it
+    //       is what gives its space back, and the document is untouched.
+    const PixelBuffer strip_before = h.controller().document().flattened();
+    CHECK(h.user().get_show_status_bar());
+    h.user().set_show_status_bar(false);
+    CHECK(!h.user().get_show_status_bar());
+    h.move(origin.x + 100, origin.y + 100);
+    CHECK(h.controller().document().flattened() == strip_before);
+    h.user().set_show_status_bar(true);
+    CHECK(h.user().get_show_status_bar());
+
+    // 15b-3. The View tab's Gridlines box only changes what the window draws
+    //       over the paper: the document itself is untouched.
+    const PixelBuffer paper_before = h.controller().document().flattened();
+    h.user().set_show_gridlines(true);
+    h.user().invoke_select_all();  // any callback re-syncs the view state
+    h.user().invoke_clear_selection();
+    CHECK(h.controller().document().flattened() == paper_before);
+    h.user().set_show_gridlines(false);
+
+    // 15b-4. So is the Rulers box: the strips are window furniture, holding the
+    //       view clear while they show, so turning it off gives the space back
+    //       and the paper sits where it did.
+    h.user().set_show_rulers(true);
+    (void)h.window().take_snapshot();
+    h.move(origin.x + 100, origin.y + 100);
+    CHECK(h.user().get_cursor_on_canvas());
+    CHECK(std::abs(h.user().get_cursor_x() - 76) < 1.0);
+    CHECK(std::abs(h.user().get_cursor_y() - 76) < 1.0);
+    CHECK(h.controller().document().flattened() == paper_before);
+    h.user().set_show_rulers(false);
+    (void)h.window().take_snapshot();
+    h.move(origin.x + 100, origin.y + 100);
+    CHECK(std::abs(h.user().get_cursor_x() - 100) < 1.0);
 
     // 15c. The Shapes tool: a press shows a live overlay that never touches the
     //      raster, and the release commits the whole shape as one entry, so a
@@ -398,7 +472,7 @@ int run_ui_tests() {
     h.user().set_primary_color(slint::Color::from_rgb_uint8(0, 0, 255));
     h.user().set_secondary_color(slint::Color::from_rgb_uint8(255, 255, 0));
     h.shapes().set_kind(EShapeKind::OVAL);
-    h.shapes().set_mode(EShapeMode::OUTLINE);
+    h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::NONE);
     h.shapes().set_thickness(1);
     h.user().set_selected_tool(ETool::SHAPE);
 
@@ -452,14 +526,14 @@ int run_ui_tests() {
         const int x0 = 420 + (i % kKindColumns) * 70;
         const int y0 = 60 + (i / kKindColumns) * 70;
         h.shapes().set_kind(kinds[i]);
-        h.shapes().set_mode(EShapeMode::OUTLINE);
+        h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::NONE);
         h.drag(origin.x + float(x0), origin.y + float(y0), origin.x + float(x0 + 50),
                origin.y + float(y0 + 50));
         const int outline_ink = h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 0, 0, 255);
         h.controller().history().undo();
         (void)h.controller().document().flush();
 
-        h.shapes().set_mode(EShapeMode::FILL);
+        h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::SOLID);
         h.drag(origin.x + float(x0), origin.y + float(y0), origin.x + float(x0 + 50),
                origin.y + float(y0 + 50));
         CHECK(h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 255, 255, 0) > outline_ink);
@@ -473,7 +547,7 @@ int run_ui_tests() {
     // 15d. Outline, fill and both: the fill reaches the middle in the second
     //      colour, and a thicker outline covers more pixels than a thin one.
     h.shapes().set_kind(EShapeKind::OVAL);
-    h.shapes().set_mode(EShapeMode::OUTLINE);
+    h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::NONE);
     h.shapes().set_thickness(1);
     h.drag(origin.x + 420, origin.y + 60, origin.x + 470, origin.y + 110);
     const int thin_outline = h.count_color(418, 58, 472, 112, 0, 0, 255);
@@ -482,13 +556,13 @@ int run_ui_tests() {
     h.drag(origin.x + 560, origin.y + 60, origin.x + 610, origin.y + 110);
     CHECK(h.count_color(558, 58, 612, 112, 0, 0, 255) > thin_outline);
 
-    h.shapes().set_mode(EShapeMode::FILL);
+    h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::SOLID);
     h.shapes().set_thickness(1);
     h.drag(origin.x + 630, origin.y + 60, origin.x + 680, origin.y + 110);
     CHECK(h.color_near(655, 85, 255, 255, 0));  // the fill takes Color 2, and
     CHECK(h.count_color(628, 58, 682, 112, 0, 0, 255) > 0);  // the border is drawn too
 
-    h.shapes().set_mode(EShapeMode::BOTH);
+    h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::SOLID);
     h.drag(origin.x + 700, origin.y + 60, origin.x + 750, origin.y + 110);
     CHECK(h.color_near(725, 85, 255, 255, 0));  // the interior takes Color 2
     CHECK(h.count_color(698, 58, 752, 112, 0, 0, 255) > 0);
@@ -496,7 +570,7 @@ int run_ui_tests() {
     // 15e. The polygon builds up click by click, and a click back on its first
     //      vertex closes it into one committed shape.
     h.shapes().set_kind(EShapeKind::POLYGON);
-    h.shapes().set_mode(EShapeMode::OUTLINE);
+    h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::NONE);
     h.shapes().set_thickness(1);
     h.press(origin.x + 420, origin.y + 200);
     h.release(origin.x + 420, origin.y + 200);
@@ -517,7 +591,7 @@ int run_ui_tests() {
     //      nothing outside the selection is written. The tool is left as the
     //      pencil, which is what the view steps below expect.
     h.shapes().set_kind(EShapeKind::RECTANGLE);
-    h.shapes().set_mode(EShapeMode::OUTLINE);
+    h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::NONE);
     h.shapes().set_thickness(1);
     h.user().set_selected_tool(ETool::SELECTION);
     h.drag(origin.x + 400, origin.y + 300, origin.x + 500, origin.y + 350);
@@ -545,14 +619,28 @@ int run_ui_tests() {
     h.type("Hello");
     CHECK(h.text_box().get_content() == "Hello");
     CHECK(h.count_ink(58, 58, 240, 84) == 0);
-    h.key("\x1b");  // Escape closes the box and draws what is in it
+    h.key("\x1b");  // Escape abandons the box and draws nothing
     CHECK(!h.text_box().get_visible());
-    CHECK(h.count_ink(58, 58, 240, 84) > 0);
+    CHECK(h.count_ink(58, 58, 240, 84) == 0);
 
-    //      One undo takes the whole box back.
+    //      A box closed by a click elsewhere does draw, and one undo takes the
+    //      whole box back.
+    h.press(origin.x + 60, origin.y + 60);
+    h.release(origin.x + 60, origin.y + 60);
+    h.type("Hello");
+    h.press(origin.x + 420, origin.y + 60);
+    h.release(origin.x + 420, origin.y + 60);
+    CHECK(h.count_ink(58, 58, 240, 84) > 0);
     h.controller().history().undo();
     (void)h.controller().document().flush();
     CHECK(h.count_ink(58, 58, 240, 84) == 0);
+    // A box opened by the click that dismissed the last one does not take the
+    // keyboard, so the tool switch is what closes it here.
+    h.user().set_selected_tool(ETool::PENCIL);
+    h.press(origin.x + 700, origin.y + 350);
+    h.release(origin.x + 700, origin.y + 350);
+    CHECK(!h.text_box().get_visible());
+    h.user().set_selected_tool(ETool::TEXT);
 
     // 15i. Enter starts a second line, so one box can hold several lines.
     h.press(origin.x + 60, origin.y + 120);
@@ -561,9 +649,15 @@ int run_ui_tests() {
     h.key("\n");
     h.type("B");
     CHECK(h.text_box().get_content() == "A\nB");
-    h.key("\x1b");
+    h.press(origin.x + 420, origin.y + 120);
+    h.release(origin.x + 420, origin.y + 120);
     CHECK(h.count_ink(58, 118, 140, 140) > 0);
     CHECK(h.count_ink(58, 140, 140, 166) > 0);
+    h.user().set_selected_tool(ETool::PENCIL);
+    h.press(origin.x + 700, origin.y + 350);
+    h.release(origin.x + 700, origin.y + 350);
+    CHECK(!h.text_box().get_visible());
+    h.user().set_selected_tool(ETool::TEXT);
 
     // 15j. A click elsewhere commits the box, and the press that dismissed it
     //      opens the next one. Leaving the tool with an empty box writes nothing.
@@ -581,6 +675,41 @@ int run_ui_tests() {
     h.release(origin.x + 700, origin.y + 350);
     CHECK(!h.text_box().get_visible());
     CHECK(h.count_ink(448, 248, 560, 280) == 0);  // the empty box painted nothing
+
+    // 15k. A texture is previewed in its base colour, and a shape with neither
+    //      an outline nor a fill paints nothing and takes no undo step.
+    h.user().set_primary_color(slint::Color::from_rgb_uint8(0, 0, 255));
+    h.user().set_secondary_color(slint::Color::from_rgb_uint8(255, 255, 0));
+    h.shapes().set_kind(EShapeKind::RECTANGLE);
+    h.shapes().set_thickness(1);
+    h.user().set_selected_tool(ETool::SHAPE);
+    h.set_shape_textures(EShapeTexture::CRAYON, EShapeTexture::WATERCOLOR);
+    h.press(origin.x + 420, origin.y + 380);
+    h.move(origin.x + 500, origin.y + 440);
+    CHECK(h.overlay().get_visible());
+    CHECK(h.overlay().get_draw_outline());
+    CHECK(h.overlay().get_draw_fill());
+    const slint::Color preview_outline = h.overlay().get_outline_color();
+    const slint::Color preview_fill = h.overlay().get_fill_color();
+    CHECK(preview_outline.red() == 0 && preview_outline.green() == 0 &&
+          preview_outline.blue() == 255);
+    CHECK(preview_fill.red() == 255 && preview_fill.green() == 255 && preview_fill.blue() == 0);
+    CHECK(h.count_ink(418, 378, 502, 442) == 0);  // the preview never touches the paper
+    h.release(origin.x + 500, origin.y + 440);
+    CHECK(!h.overlay().get_visible());
+    CHECK(h.count_ink(418, 378, 502, 442) > 0);  // the crayon edge landed
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
+    CHECK(h.count_ink(418, 378, 502, 442) == 0);
+
+    h.set_shape_textures(EShapeTexture::NONE, EShapeTexture::NONE);
+    h.press(origin.x + 560, origin.y + 380);
+    h.move(origin.x + 640, origin.y + 440);
+    CHECK(!h.overlay().get_draw_outline());
+    CHECK(!h.overlay().get_draw_fill());
+    h.release(origin.x + 640, origin.y + 440);
+    CHECK(h.count_ink(558, 378, 642, 442) == 0);
+    h.user().set_selected_tool(ETool::PENCIL);
 
     // 16. Ctrl+wheel over the gray outside the paper zooms with the transform
     //     origin at the canvas' top-left: the viewport does not slide, so the
@@ -857,6 +986,90 @@ int run_ui_tests() {
     CHECK(h.dialogs().get_confirm_visible());
     h.dialogs().invoke_confirm_cancel();
     CHECK(!h.dialogs().get_confirm_visible());
+
+    // 32. The Edit Colors dialog opens from the ribbon's button, starts on the
+    //     active color, and Cancel changes nothing.
+    const slint::Color primary_before = h.user().get_primary_color();
+    h.user().set_color_idx(0);
+    h.user().set_primary_color(slint::Color::from_rgb_uint8(10, 20, 30));
+    h.user().invoke_edit_colors();
+    CHECK(h.picker_open());
+    CHECK(h.picker().get_current() == slint::Color::from_rgb_uint8(10, 20, 30));
+    CHECK(h.picker().get_hex_text() == slint::SharedString("0A141E"));
+    h.picker().invoke_cancelled();
+    CHECK(!h.picker_open());
+    CHECK(h.user().get_primary_color() == slint::Color::from_rgb_uint8(10, 20, 30));
+    h.user().set_primary_color(primary_before);
+
+    // 33. The ring picks the hue and the square the saturation and the value.
+    const auto near = [](float a, float b) { return std::fabs(a - b) < 0.5f; };
+    h.user().invoke_edit_colors();
+    h.picker().invoke_ring_picked(0.5f, 0.0f);  // the top of the ring
+    CHECK(near(h.picker().get_hue(), 0.0f));
+    h.picker().invoke_ring_picked(1.0f, 0.5f);  // the right of the ring
+    CHECK(near(h.picker().get_hue(), 90.0f));
+    h.picker().invoke_ring_picked(0.5f, 1.0f);  // the bottom of the ring
+    CHECK(near(h.picker().get_hue(), 180.0f));
+    // The square is white at its left edge and black at its bottom edge.
+    h.picker().invoke_square_picked(0.0f, 0.0f);
+    CHECK(h.picker().get_saturation() == 0.0f);
+    CHECK(near(h.picker().get_value(), 1.0f));
+    CHECK(h.picker().get_current() == slint::Color::from_rgb_uint8(255, 255, 255));
+    h.picker().invoke_square_picked(1.0f, 1.0f);
+    CHECK(near(h.picker().get_saturation(), 1.0f));
+    CHECK(h.picker().get_value() == 0.0f);
+    CHECK(h.picker().get_current() == slint::Color::from_rgb_uint8(0, 0, 0));
+
+    // 34. The readouts follow the color, a typed color is applied, and OK and
+    //     Add to Custom Colors write where they should.
+    h.picker().invoke_color_entered(slint::SharedString("00FF00"));
+    CHECK(h.picker().get_hex_text() == slint::SharedString("00FF00"));
+    CHECK(h.picker().get_red_text() == slint::SharedString("0"));
+    CHECK(h.picker().get_green_text() == slint::SharedString("255"));
+    CHECK(h.picker().get_blue_text() == slint::SharedString("0"));
+    CHECK(near(h.picker().get_hue(), 120.0f));
+    // An entry that is not a color leaves the picker on the color it had.
+    h.picker().invoke_color_entered(slint::SharedString("chartreuse"));
+    CHECK(h.picker().get_hex_text() == slint::SharedString("00FF00"));
+    // A tuple reads the same way as a hex value.
+    h.picker().invoke_color_entered(slint::SharedString("10, 20, 30"));
+    CHECK(h.picker().get_hex_text() == slint::SharedString("0A141E"));
+    // OK writes the color into whichever of the two is active.
+    h.user().set_color_idx(1);
+    h.picker().invoke_accepted();
+    CHECK(!h.picker_open());
+    CHECK(h.user().get_secondary_color() == slint::Color::from_rgb_uint8(10, 20, 30));
+    // Add to Custom Colors fills the slot of the dialog's own grid that it
+    // points at, and the next add walks on to the next slot.
+    h.user().invoke_edit_colors();
+    h.picker().invoke_custom_picked(slint::Color::from_rgb_uint8(1, 2, 3), 3);
+    CHECK(h.picker().get_custom_index() == 3);
+    h.picker().invoke_add_custom();
+    CHECK(h.picker().get_custom_index() == 4);
+    const auto customs = h.picker().get_custom_colors();
+    CHECK(customs->row_count() == static_cast<std::size_t>(kDialogCustomColorSlots));
+    const auto filled = customs->row_data(3);
+    CHECK(filled.has_value());
+    CHECK(*filled == slint::Color::from_rgb_uint8(1, 2, 3));
+    // OK moves the slot the dialog points at into the ribbon's strip, which
+    // keeps the last ten colors.
+    h.picker().invoke_custom_picked(slint::Color::from_rgb_uint8(1, 2, 3), 3);
+    h.picker().invoke_accepted();
+    const auto palette = h.user().get_color_palette();
+    CHECK(palette->row_count() == static_cast<std::size_t>(kDefaultPalette.size()) +
+                                    static_cast<std::size_t>(kCustomColorSlots));
+    const auto head = palette->row_data(static_cast<std::size_t>(kDefaultPalette.size()));
+    CHECK(head.has_value());
+    CHECK(*head == slint::Color::from_rgb_uint8(1, 2, 3));
+    h.picker().invoke_cancelled();
+
+    // 35. The Text tab's font list is the families the backend can draw with,
+    //     and each entry names one of them.
+    const auto families = h.font_style().get_families();
+    CHECK(families->row_count() > 0);
+    const auto first_family = families->row_data(0);
+    CHECK(first_family.has_value());
+    CHECK(!first_family->empty());
 
     std::filesystem::remove(save_path);
 

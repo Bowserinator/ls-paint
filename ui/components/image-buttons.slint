@@ -50,6 +50,9 @@ component ButtonText inherits Text {
     wrap: no-wrap;
     overflow: elide;
     horizontal-alignment: center;
+    // A caption shares its row with an icon, so it is centred against it rather
+    // than sitting at the top of its line box.
+    vertical-alignment: center;
 }
 
 
@@ -150,6 +153,9 @@ export component ImageButtonVerticalDropdown {
 // A small icon with text to the right
 export component ImageButtonHorizontal inherits ImageButtonBase {
     in-out property text <=> txt.text;
+    // The color the icon is drawn against. Transparent shows the icon's own
+    // artwork only.
+    in-out property <color> swatch: transparent;
     
     HorizontalLayout {
         padding: Styles.bar-padding;
@@ -159,10 +165,16 @@ export component ImageButtonHorizontal inherits ImageButtonBase {
         alignment: start;
 
         VerticalLayout {
-            Image {
+            Rectangle {
                 width: Styles.bar-small-icon-size;
                 height: Styles.bar-small-icon-size;
-                source: root.icon;
+                background: root.swatch;
+
+                Image {
+                    width: 100%;
+                    height: 100%;
+                    source: root.icon;
+                }
             }
         }
 

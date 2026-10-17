@@ -77,9 +77,14 @@ export global UserState  {
     callback paste-selection();
     callback transform-selection-content(EContentTransform);
 
-    // The text box is committed by the editor (Enter, Escape, focus loss) and by
-    // the C++ side when the user clicks elsewhere or leaves the tool.
+    // The text box is committed by the editor (Enter, focus loss) and by the
+    // C++ side when the user clicks elsewhere or leaves the tool.
     callback commit-text(string);
+    // Escape abandons the box: it closes without writing anything.
+    callback cancel-text;
+    // Raised as the text changes, so the backend can measure what to draw the
+    // preview's rules against.
+    callback measure-text(text: string);
 
     // File tab.
     callback file-new();
@@ -87,6 +92,15 @@ export global UserState  {
     callback file-save();
     callback file-save-as();
     callback file-exit();
+    // TODO: the File menu's recent list. Nothing fills it yet, and nothing
+    // reacts to a click on an entry; the index is a position in recent-files.
+    in property <[string]> recent-files: [];
+    callback file-open-recent(int);
+
+    // View tab "Show or hide" toggles. UI only: nothing reads them yet.
+    in-out property <bool> show-rulers: false;
+    in-out property <bool> show-gridlines: false;
+    in-out property <bool> show-status-bar: true;
     callback paste-from-file();
     callback resize-dialog();
     callback edit-colors();
@@ -110,6 +124,10 @@ export global UserState  {
     in-out property <bool> cursor-on-canvas: false;
     in-out property <float> cursor-x;
     in-out property <float> cursor-y;
+
+    // The paper colour under the pointer as "(r,g,b) #rrggbb", published by the
+    // view; blank while the pointer is off the paper.
+    in-out property <string> hover-color-text: "";
 }
 
 // The zoom ladder the status bar walks: 25% steps below 100, 100% steps
@@ -252,12 +270,28 @@ export global ShapeOverlay {
     in-out property <color> fill-color: white;
 }
 
-// Text tool settings, set by the font controls in the options strip.
+// Text tool settings, set by the font controls in the Text tab.
 export global FontStyle {
     in-out property <string> family: "DejaVu Sans";
     in-out property <length> size: 16px;
     in-out property <bool> bold: false;
     in-out property <bool> italic: false;
+    in-out property <bool> underline: false;
+    in-out property <bool> strike: false;
+    // An opaque background fills the band behind each line with the secondary
+    // color when the block is committed.
+    in-out property <bool> opaque-background: false;
+    // Every family the text tool can draw with. The backend publishes the list,
+    // because only it knows which fonts the platform has.
+    in property <[string]> families: [];
+    // Narrows the family list to the names that contain the query, ignoring case.
+    callback filter-families(query: string);
+    // The factor the overlay's font size is scaled by so that the editing preview
+    // is as large as the committed pixels. The backend republishes it when the
+    // family changes, because only it can measure the face.
+    in-out property <float> preview-scale: 1.0;
+    // Raised when the family changes, so the backend can republish the scale.
+    callback family-changed;
 }
 
 // The text box being edited. The content is written by the editor, and the
@@ -268,6 +302,10 @@ export global TextOverlay {
     in-out property <length> y: 0px;
     in-out property <color> color: black;
     in-out property <string> content: "";
+    // The width of each line in document pixels, published by the backend, so
+    // the preview's underline and strikethrough rules stop at the end of their
+    // line instead of running to the edge of the box.
+    in-out property <[float]> line-widths: [];
 }
 
 // Paint's Edit Colors surface. The picker works in HSV: the ring picks the hue

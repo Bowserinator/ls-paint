@@ -432,3 +432,322 @@ Known limits: the block lands at the canvas origin; a failed paste still only
 prints to stderr. Resizing is verified by the unit test above, not by a capture:
 a GUI resize attempt moved the block but its capture sequence was ambiguous, so
 it is not claimed as a visual result.
+
+## Round 6 — textured outline and fill settings (goal `mvbmfi6r-zn1gun`)
+
+`ref8.PNG` is Paint's shape menus: each part of a shape (its outline and its fill)
+carries either nothing, a solid colour, or one of five brush textures. Both parts
+now carry such a setting and the shape is drawn with it.
+
+| # | Requirement | Verdict | Where |
+| - | ----------- | ------- | ----- |
+| 1 | Outline menu: No outline, Solid color, Crayon, Marker, Oil, Natural pencil, Watercolor | done | `ui/bar/bar-home.slint:37` (`TextureMenu`), `:728` wide popup, `:703` picker page |
+| 2 | Fill menu: No fill, Solid color and the same five | done | `ui/bar/bar-home.slint:714` (same component with `for-fill: true`) |
+| 3 | The old three shape modes are replaced by the two texture settings | done | `src/tools/shape_tool.hpp:60` (`ShapeTexture`), `:62` (`ShapeOptions.outline`, `.fill`), `ui/globals.slint:19`, `:204`, `:205`, `src/ui/ui_state.cpp:206` |
+| 4 | A shape's outline is drawn with the chosen texture | done | `src/tools/shape_tool.cpp:351` (`texture_brush`), `:376` (`stroke_texture`), `:512` |
+| 5 | A shape's fill is drawn with the chosen texture | done | `src/tools/shape_tool.cpp:386` (`interior_clip`), `:402` (`hatch_texture`), `:512` |
+| 6 | The menu icons are generated and marked in the README | done | `icons/textures/generate.sh`, `icons/README.md:18` |
+| 7 | The drag preview shows the texture's base colour; neither part chosen draws nothing | done | `tests/ui_tests.cpp:592` (step 15k), captures below |
+| 8 | A highlighted dropdown row stays inside its panel (follow-up request) | done | `ui/bar/bar-home.slint:704`, `:715` (`panel-width` on the picker pages) |
+
+### Mechanism
+
+- The five textures are the brush profiles the Brushes picker already uses
+  (`src/brushes/brush.cpp`): the outline is stroked with a `BrushEngine` along the
+  shape's path, and the fill is a set of parallel diagonal strokes clipped to the
+  shape's interior by a selection mask.
+- The drag preview stays a Slint `Path`, so it cannot show a texture; it draws the
+  part in its base colour instead, which is the colour the stamps use.
+- The merged Shapes picker (narrow windows) reaches the two lists through pages
+  inside its own panel (`picker-page`), because a nested popup closed the panel.
+
+### Generated icons
+
+`icons/textures/generate.sh` writes seven 32x32 samples: `no-outline.png`,
+`no-fill.png`, `crayon.png`, `marker.png`, `oil.png`, `natural-pencil.png` and
+`watercolor.png`. The five texture samples are shared by both menus. They are
+listed with their users in `icons/README.md`, section "Generated brush and texture
+samples" (line 18).
+
+### Verification
+
+- `cmake --build build -j 8` clean; `env -u WAYLAND_DISPLAY ctest --test-dir build`
+  reports 100% tests passed, 0 failed out of 6.
+- Raster tests: `tests/shape_tool_test.cpp:285` (a textured outline is grainy,
+  differs from the solid one, stays in the box and respects the target clip) and
+  `:364` (a textured fill is grainy, stays inside the polygon and leaves the solid
+  outline in place). Ui test `tests/ui_tests.cpp:592` covers the preview colours and
+  the both-parts-off case.
+- Captures in `build/snapshots-after/round6/`: the Outline menu at 1200x800, the
+  Fill menu at 1200x800, the picker's outline and fill pages at 620x700, one
+  committed shape per texture at 620x700 (`crayon`, `marker`, `oil`, `pencil`,
+  `watercolor`), the mid-drag preview with Crayon chosen, the mid-drag preview of a
+  Crayon fill (pure red at the sampled pixel) and the committed shapes for
+  outline-only, fill-only and neither part.
+- Overflow check: every menu that opens at 620x700 (clipboard, image, tools,
+  brushes, shapes, size, colors, the two picker pages) was captured and analysed;
+  no highlighted row draws outside its panel's border.
+
+### Known limits
+
+- The nine ribbon menus open on the shared `Styles.bar-dropdown-y` line; the wide
+  Outline and Fill menus hang under their own button.
+- The Clipboard menu opens only from its sub-arrow (its button body pastes), so it
+  has no overflow capture.
+- The texture samples are drawn art, not Paint's own bitmaps.
+- The wide Outline and Fill buttons do not light up while their part is chosen;
+  they never did.
+
+### Fill density (user follow-up)
+
+The fill strokes were laid 3px apart for every texture. Crayon keeps that spacing,
+because its gaps are the style: the crayon fill reads as slanted lines. The other
+four textures now lay their strokes one brush width apart, so the strokes touch and
+the interior reads as one grainy surface (`src/tools/shape_tool.cpp:411`).
+
+Measured in a 120x100 crop of the shape interior on the current build:
+
+| Texture | painted / background / colours |
+| ------- | ------------------------------ |
+| Crayon | 9311 / 2689 / 194 |
+| Oil | 12000 / 0 / 65 |
+| Natural pencil | 12000 / 0 / 147 |
+
+Captures: `build/snapshots-after/round6/fill-texture-crayon-620x700.png`,
+`fill-texture-oil-620x700.png` and `fill-texture-natural-pencil-620x700.png`.
+Build clean, ctest 0 failed out of 6.
+
+## Round 7 — the Edit Colors dialog (goal `mvbotd5u-7byjq9`)
+
+### The reference, `ref10.PNG` (Windows Paint's classic dialog)
+
+| Part | What the reference shows |
+| ---- | ------------------------ |
+| Title bar | a dark strip with "Edit Colors" and a close X |
+| Left, top | "Basic colors:" over a 7-column swatch grid, four rows, the current swatch boxed with a dashed outline |
+| Left, middle | "Custom colors:" over two rows of empty white slots |
+| Left, bottom | a wide "Define Custom Colors >>" button, then OK (default) and Cancel |
+| Right, top | a large colour square with a vertical value slider beside it |
+| Right, middle | a colour preview tile captioned "Color|Solid" |
+| Right, fields | Hue / Sat / Lum on the left, Red / Green / Blue on the right |
+| Right, bottom | an "Add to Custom Colors" button spanning the width |
+
+The agreed changes from the reference (user answers): a hue ring with a
+saturation/value square inside it instead of the square plus value slider; live
+RGB tuple, hex and HSV readouts; no "Define Custom Colors >>" step; a single
+preview cell because the app is true colour; typing a hex or an RGB value sets
+the colour.
+
+### The palette grows to 34 slots (task 1)
+
+`src/config.hpp:17` `kCustomColorSlots` went 10 to 14, so the palette is 20 basic
+plus 14 custom slots. The palette is a `slint::VectorModel<slint::Color>`; Slint
+never writes it, so `UiState::set_palette_color(int index, const slint::Color&)`
+(`src/ui/ui_state.cpp`) is the single writer the dialog will use, and
+`UiState` keeps the model in `m_palette` to reach it. Both Colors grids draw four
+rows of ten.
+
+Four rows of 24px cells are 96px tall, which does not fit the ribbon's 86px
+button row, so the grid ran under the "Colors" caption and onto the canvas. The
+cell is now `Styles.bar-color-cell` (20px, `ui/styles.slint:49`), used by both
+grids (`ui/bar/bar-home.slint:937-943`, `:1001-1008`) and by the `cell` input of
+`ColorButton` (`ui/components/image-buttons.slint:234`);
+`ribbon-width-colors` and `bar-colors-menu-width` follow the narrower grid.
+
+Captures: `/tmp/lsp-goal6/wide-palette4.png` (1200x800, four rows inside the
+ribbon with the caption clear) and `/tmp/lsp-goal6/narrow-menu4.png` (620x700,
+the Colors menu with all 34 slots, the Color 1 / Color 2 tiles, the picker tile
+and the caption). Build clean, ctest 0 failed out of 6.
+
+### The dialog, the readouts and the writing paths (tasks 3-5)
+
+`ui/dialogs/edit-colors-dialog.slint` is new. It is a full-window scrim with a
+centred 512x352 panel (`:45`): the title row with the close box, "Basic colors:"
+(`:95`) over the 20 palette colours in a 7-column grid, "Custom colors:" (`:117`)
+over the 14 custom slots in a 7x2 grid, the 132px hue ring (`:148`) drawn with
+`@conic-gradient` (`:155`) and a 12px marker at the current hue (`:195`), the
+72px saturation/value square painted `ColorDialog.hue-color` (`:174`) with a
+left-to-right white overlay (`:194`) and a top-to-bottom black overlay, its own
+marker, a `pointer-event` handler for each of the two (`:213`, `:227`), the
+preview tile, the RGB field (`:263`), the hex field (`:280`), the HSV text
+(`:297`), "Add to Custom Colors" (`:313`), OK (`:320`) and Cancel (`:325`).
+
+`ui/globals.slint:275` is the new `ColorDialog` global (open, hue, saturation,
+value, current, hue-color, rgb-text, hex-text, hsv-text, custom-index, and the
+callbacks accepted / cancelled / add-custom / basic-picked / custom-picked /
+ring-picked / square-picked / color-entered); `ui/globals.slint:92` adds
+`callback edit-colors()` to `UserState`. `ui/appwindow.slint:495` instantiates
+`if ColorDialog.open : EditColorsDialog {}` before the message dialog, so a
+report is never hidden.
+
+`src/ui/ui_state.cpp` holds the whole behaviour: `:386` wires the ribbon button,
+`:389-398` wires the dialog's callbacks, `:445` `set_palette_color` is the only
+writer of the palette model, `:450` `do_open_color_dialog` loads whichever of
+Color 1 / Color 2 is active, `:466` `push_color_dialog` is the single writer of
+the current colour, the hue colour, the RGB tuple, the hex value and the HSV
+text, `:488` OK writes the active swatch and closes, `:507` Add to Custom Colors
+writes `kDefaultPalette.size() + custom-index` and walks the index on, `:515`
+and `:524` load a swatch (basic or custom), `:529` maps a ring position with
+`atan2(dx, -dy)` so 0 degrees is the top and the direction matches the conic
+gradient, `:540` maps the square to `saturation = x`, `value = 1 - y`, and
+`:547` parses a typed value, re-pushing on failure so a typo leaves the colour
+alone.
+
+| Requirement | Verdict | Where |
+| --- | --- | --- |
+| The wide ribbon Edit colors button opens the dialog | done | `ui/bar/bar-home.slint:1026` |
+| The Colors-menu tile and the merged Colors button keep no handler | done | `ui/bar/bar-home.slint:958`, `:1036` |
+| Basic 7-column grid, custom 7x2 grid, Add to Custom Colors, preview, OK, Cancel | done | `ui/dialogs/edit-colors-dialog.slint:95`, `:117`, `:313`, `:320`, `:325` |
+| Hue ring with a marker at the current hue | done | `:155`, `:195`; `src/ui/ui_state.cpp:529` |
+| Square is white at the left edge and black at the bottom edge | done | `:194` and the black overlay below it; `src/ui/ui_state.cpp:540` |
+| Live RGB, hex and HSV readouts | done | `src/ui/ui_state.cpp:466`; `:263`, `:280`, `:297` |
+| Editable RGB and hex fields, a bad entry changes nothing | done | `src/ui/ui_state.cpp:547`; `src/core/color.hpp:34` |
+| OK writes the active colour | done | `src/ui/ui_state.cpp:488` |
+| Add to Custom Colors writes the pointed-at slot | done | `src/ui/ui_state.cpp:507-510` |
+| 14 custom slots, 34 palette slots drawn as 4 rows | done | `src/config.hpp:18`, `ui/styles.slint:49`, `ui/bar/bar-home.slint:937-943`, `:1001-1008` |
+| Colour helpers with their own test suite | done | `src/core/color.hpp:13-34`, `src/core/color.cpp`, `tests/color_tests.cpp`, `tests/CMakeLists.txt:15-18` |
+
+Verification: `cmake --build build -j 8` clean; `env -u WAYLAND_DISPLAY ctest
+--test-dir build` 100% passed, 0 failed out of 7 suites, with UI steps 32-34
+(`tests/ui_tests.cpp:906`, `:920`, `:939`) covering open and Cancel, the ring and
+square arithmetic, the readouts, the fields, OK's target and the custom slot.
+
+Captures in `build/snapshots-after/round8/`: `dialog-open-1200x800.png` and
+`dialog-open-620x700.png` (a narrow window), `dialog-picked-1200x800.png` (after
+a ring drag and a square click: RGB 5, 163, 81, hex #05a351, HSV 149 degrees, 97%,
+64%), `dialog-basic-pick-1200x800.png` (the red basic swatch loaded; the preview
+reads 255, 0, 0), `dialog-custom-colour-1200x800.png` (the first custom slot
+after Add to Custom Colors reads 142, 198, 83), `dialog-applied-1200x800.png`
+(after OK the ribbon's Color 1 swatch reads 142, 198, 83 and the dialog is gone),
+`colors-menu-four-rows-620x700.png`.
+
+Known limits: the fields could not be typed into from this session's X11 harness
+(`xdotool type` had no effect on the window), so the editable-field path rests on
+the ui test rather than a capture; the dialog is reachable only from the wide
+ribbon button, so a narrow window must be widened first; the two markers are
+drawn by arithmetic in Slint rather than by a native slider. No icon was
+generated for this round, so `icons/README.md` needs no new rows: the closing
+note of that file already covers the pre-existing `icons/edit-colors.png`.
+
+## Round 9 — Edit Colors: ref10 layout, a real ring, one font scale (user request)
+
+The user asked for three things: the layout should match the Windows screenshot,
+the ring should look like a ring and change the hue only on a click, and the font
+sizes should come from variables.
+
+| # | Requirement | Verdict | Where |
+|---|---|---|---|
+| 1 | Layout as in `ref10.PNG` | Fixed | `ui/dialogs/edit-colors-dialog.slint` rewritten: 668x430 panel, title row with the close box, left column of the two swatch grids, right column with the ring, the preview tile and its caption, the `Hue/Sat/Lum` readouts beside the editable `Red/Green/Blue` fields, a full-width `Hex` field, and a bottom band of OK, Cancel and a stretching Add to Custom Colors (`:432`) |
+| 2 | A ring, and the hue changes only on a click | Fixed | `ui/dialogs/edit-colors-dialog.slint:179` (the gradient) masked by the even-odd path at `:191`; the ring reports `clicked` at `:252` only, the square keeps its drag handler at `:265` |
+| 3 | One font scale from variables | Fixed | `ui/styles.slint:53-54` `dialog-title-font-size: 14px` and `dialog-font-size: 12px`, used by every text in the dialog; the sizes come from `:55-61` (`dialog-width/height`, `dialog-swatch-size`, `dialog-field-width/height`) |
+
+Why the ring was a square: `border-radius` does not clip a `@conic-gradient`
+background, and `clip: true` on the rounded parent does not clip it either, so the
+220px gradient painted its own square and the white hole in the middle only made
+it read as a square with a circle punched out. The corners outside the 110px
+circle are now painted over with the panel colour by a `Path` that holds the
+square as one subpath and the circle as another with `fill-rule: evenodd`, which
+fills the part between them and leaves the ring itself alone.
+
+The dialog also grew the fields ref10 shows: `Red`, `Green` and `Blue` are
+editable and submit an `r, g, b` tuple through the same parser as the hex field
+(`ui/dialogs/edit-colors-dialog.slint:325`), `Hue`, `Sat` and `Lum` are read-only
+boxes fed by `push_color_dialog` (`src/ui/ui_state.cpp:466`), and the panel is
+`min(Styles.dialog-width, parent.width - 16px)` (`:65`) so it still fits a
+620x700 window.
+
+Verification: `cmake --build build -j 8` clean, `ctest --test-dir build` 100%
+passed 0 failed out of 7 suites (the colour tests and ui tests included).
+`build/snapshots-after/round9/` holds `dialog-ref10-layout-1200x800.png`,
+`dialog-ring-zoom.png` (170% of the ring), `dialog-620x700.png` (the dialog after
+the window shrank) and `dialog-hue-click-1200x800.png`. Measured: clicking the
+bottom of the ring moved the shading square's top-right corner from
+`srgb(235,20,20)` to `srgb(20,225,235)`.
+
+Known limits: the ring still changes the hue once per gesture rather than
+tracking a drag across it, which is what was asked for; ref10's value slider and
+its "Define Custom Colors >>" step are not reproduced (the ring and the square
+replace them); the basic grid holds the app's 20 colours in 3 rows where ref10
+has 28 in 4.
+
+## Round 10 — condensing thresholds re-measured (user request)
+
+The user asked for the widths to be re-measured from screenshots and the
+condensing thresholds redone, keeping the collapse priority order (ladder →
+Clipboard+Image → Tools → Colors → Shapes merge), then approved the plan.
+
+Changed:
+
+- `ui/styles.slint:57` `ribbon-width-about: 80px → 59px`. Every other
+  `ribbon-width-*` was confirmed against the screenshots within 1px.
+- `ui/bar/bar-home.slint:204-208` `shapes-room` now subtracts the ribbon the
+  Clipboard and Image really take (their decided `width-clipboard`,
+  `width-image`) plus the constants for the groups after the grid, so the
+  ladder sees the room those two groups gave back.
+- `ui/bar/bar-home.slint:220-224` `collapsed-shapes` reads the same decided
+  widths instead of `full-width` (every group expanded, 1167px). It still
+  counts Tools and Colors at their full width, because their own conditions
+  read this group's width.
+- `ui/bar/bar-home.slint:232-234` `collapsed-clipboard` became the equivalent
+  strip-width threshold (`strip-width < full-width − ribbon-width-shapes +
+  shapes-width(5) + effective-about + margin`, i.e. 1111px). It fires at the
+  same instant as the old `shape-columns <= 4`, but as a pure function of the
+  window width it can be read by the ladder without a circular binding.
+
+Measured with a 50-frame sweep (620→1600 in 20px steps, one app instance,
+`import -window`; `/tmp/lsp-goal7/sweep.sh`, analysed by `bands2.py`):
+
+| window widths | before | after |
+| --- | --- | --- |
+| 620–760 | Colors group folded, 175–315px free | unchanged |
+| 780–800 | 19px free | unchanged |
+| 820–940 | **grid merged, 23–143px free** | unchanged (see limits) |
+| 960–1100 | **grid merged, 151–283px free** | **grid 4–8 columns, 11–61px free** |
+| 1120+ | grid 5/6/8 columns, 11–33px free | unchanged |
+
+Total free room over every window at or below 1220px: **4469px → 2979px**; no
+window overflows its width in either sweep.
+
+Alternative measured and rejected: counting Tools and Colors at their merged
+width in the grid's merge test keeps the grid visible down to 640px, but the
+slack then moves to those groups (up to 283px free at 820–880px) and the total
+free room rises to 3175px, so the conservative form was kept.
+
+Known limits: at 620–760 the Colors group is the only big group left to fold
+and its 312px step leaves 175–315px free; at 820–940 the grid merges with up to
+143px free because saving it there would need the Tools group merged too, and
+the one-way chain cannot give the grid more columns afterwards. The merged
+Clipboard reserves 4px more than it draws (declared 76px, measured 72px).
+
+Evidence: the 50-frame sweeps are in `/tmp/lsp-goal7/sweep-old` (before) and
+`/tmp/lsp-goal7/sweep-v2` (after); representative before/after pairs for
+820/880/940/1000/1060/1100px are copied to `build/snapshots-after/round10/`.
+`cmake --build build -j 8` clean; no `ctest` run, per the standing "discontinue
+testing" instruction.
+
+## Round 11 — Escape deselects, and a marquee outlines itself while drawn (user request)
+
+Reported (m06126): "1. esc = deselect 2. polygonal and freehand dont show dashed
+selection preview when drawing".
+
+| # | Defect | Root cause | Fix | Evidence |
+|---|--------|-----------|-----|----------|
+| 1 | Escape did nothing | Escape was absent from the shortcut table; `lookup_shortcut` maps every control character with `key + 0x60`, so 0x1b would have read as `{` | `src/ui/shortcuts.cpp:36` matches Escape before that mapping and returns the new `ShortcutAction::Deselect` (`src/ui/shortcuts.hpp:8`); `src/ui/ui_state.cpp:369` runs `m_controller.clear_selection()`, which applies any floating contents first (`src/app/app_controller.cpp:138`) | `tests/ui_tests.cpp` step 14b: `h.key("\x1b")` clears `has-selection`, both ant models and the grips |
+| 2 | No dashed preview while drawing a freehand lasso or a polygon | Both branches only recorded points in the tool (`m_polygon`); the mask stayed empty until release, and `update_ants()` derives the outline from the mask alone | New `SelectionPreview` (`src/tools/tool_context.hpp:44`) published through `ToolUiState::selection`; `SelectionTool` publishes on every press/move (`src/tools/selection_tool.cpp:119,154,162,203-204,213`) and clears on release (`:234`); the polygon's move branch adds the hover point, so the last edge follows the pointer | `tests/selection_tests.cpp` `test_freehand_gesture_publishes_its_path`, `test_polygon_gesture_previews_and_escape_abandons_it` |
+
+The preview is drawn by `append_path_runs` (`src/ui/ui_state.cpp:109`), which
+walks the polyline in single-cell steps and emits one 1x1 `SelectionDash` run per
+cell with the same 3px dash / 6px period / 80ms phase as the border ants, so a
+half-drawn marquee crawls like a finished one. `update_ants()` (`:822,843`) now
+keeps the outline alive when the mask is empty but a path is being drawn, and
+still requires a real selection for the grips.
+
+`SelectionTool::on_key_pressed` (`src/tools/selection_tool.cpp:237`) abandons an
+unfinished gesture, so Escape cannot leave a phantom outline behind.
+
+Known limits: the preview outlines the traced path, not a filled region; a
+committed freehand or polygon selection still shows the rectangular
+bounding-box ants (pre-existing). Verification is `cmake --build build -j 8`
+clean plus `ctest` 7/7 with the new unit and ui steps; no GUI capture round was
+run, per the standing "discontinue testing" instruction, so the dash rendering
+was checked statically rather than in a screenshot.

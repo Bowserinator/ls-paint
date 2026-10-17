@@ -12,6 +12,11 @@ target_link_libraries(lsp_raster_tests PRIVATE lsp_core)
 target_include_directories(lsp_raster_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME lsp_raster_tests COMMAND lsp_raster_tests)
 
+add_executable(lsp_color_tests color_tests.cpp)
+target_link_libraries(lsp_color_tests PRIVATE lsp_core)
+target_include_directories(lsp_color_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME lsp_color_tests COMMAND lsp_color_tests)
+
 add_executable(lsp_text_tests text_test.cpp)
 target_link_libraries(lsp_text_tests PRIVATE lsp_core)
 target_include_directories(lsp_text_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -35,6 +40,9 @@ add_executable(lsp_ui_tests
 target_link_libraries(lsp_ui_tests PRIVATE lsp_core Slint::Slint)
 target_include_directories(lsp_ui_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/appwindow.slint)
+# The dialog windows, in the same namespaces as the application's copies.
+slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/dialogs/edit-colors-window.slint NAMESPACE lsp_colors)
+slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/dialogs/about-window.slint NAMESPACE lsp_about)
 add_test(NAME lsp_ui_tests COMMAND lsp_ui_tests)
 
 # Screenshot tool: renders the app at a matrix of window sizes and writes one
@@ -48,11 +56,11 @@ add_custom_target(snapshots
 )
 
 if(MSVC)
-    foreach(target lsp_tests lsp_raster_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE /W4)
     endforeach()
 else()
-    foreach(target lsp_tests lsp_raster_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE -Wall -Wextra)
     endforeach()
 endif()

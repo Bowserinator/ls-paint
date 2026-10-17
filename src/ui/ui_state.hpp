@@ -36,6 +36,14 @@ private:
   void sync_shape_style();
   // Pulls the font controls into the settings the text commit rasterizes.
   void sync_font_style();
+  // Publishes the family list, narrowed to the names that contain `query`.
+  void publish_font_families(std::string_view query);
+  // Publishes the width of every line of the text the box holds, so the
+  // overlay's underline and strikethrough rules stop at the end of their line.
+  void publish_line_widths(std::string_view text);
+  // Publishes the paper colour under the pointer for the status bar, blank
+  // while the pointer is off the paper.
+  void publish_hover_color();
   // True while a text box is being edited. The tool owns the flag, so the
   // editor's Slint side cannot get out of step with it.
   [[nodiscard]] bool text_open() const noexcept;
@@ -43,6 +51,7 @@ private:
   // call when no box is open: the editor's own commit, a click elsewhere and
   // a tool switch all land here.
   void do_commit_text(const std::string &text);
+  void do_cancel_text();
   void refresh();
 
   // Writes one entry of the ribbon's palette.
@@ -125,6 +134,8 @@ private:
   std::optional<slint::ComponentHandle<lsp_about::AboutWindow>> m_about_window;
   // Kept so the colour picker can write into the palette's custom slots.
   std::shared_ptr<slint::VectorModel<slint::Color>> m_palette;
+  // Every family the text tool can draw with, before the filter box narrows it.
+  std::vector<std::string> m_font_families;
   // The Edit Colors dialog's own custom colors, shared with the dialog while it
   // is open.
   std::shared_ptr<slint::VectorModel<slint::Color>> m_dialog_customs;

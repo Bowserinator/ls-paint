@@ -17,6 +17,8 @@
 #include "config.hpp"
 #include "core/color.hpp"
 #include "io/document_io.hpp"
+#include "text/font_catalog.hpp"
+#include "tools/text_tool.hpp"
 #include "ui/shortcuts.hpp"
 
 namespace lsp {
@@ -272,6 +274,9 @@ UiState::UiState(AppWindow& window, AppController& controller)
         m_palette->push_back(slint::Color::from_rgb_uint8(255, 255, 255));
     m_window.global<UserState>().set_color_palette(m_palette);
 
+    m_font_families = text_font_families();
+    publish_font_families("");
+
     auto gallery = std::make_shared<slint::VectorModel<ShapeGlyph>>();
     for (const EShapeKind kind : kShapeGalleryOrder) {
         const ShapeId id = shape_from_slint(kind);
@@ -283,6 +288,20 @@ UiState::UiState(AppWindow& window, AppController& controller)
     m_window.global<UserState>().on_commit_text([this](const slint::SharedString& text) {
         do_commit_text(std::string(text));
     });
+    m_window.global<UserState>().on_cancel_text([this] { do_cancel_text(); });
+    m_window.global<UserState>().on_measure_text([this](const slint::SharedString& text) {
+        publish_line_widths(std::string_view(text));
+    });
+
+    m_window.global<FontStyle>().on_filter_families([this](const slint::SharedString& query) {
+        publish_font_families(std::string_view(query));
+    });
+    m_window.global<FontStyle>().on_family_changed([this] {
+        const auto& style = m_window.global<FontStyle>();
+        style.set_preview_scale(text_preview_scale(std::string_view(style.get_family())));
+    });
+    m_window.global<FontStyle>().set_preview_scale(
+        text_preview_scale(std::string_view(m_window.global<FontStyle>().get_family())));
 
     m_window.global<UserState>().on_pointer_down([this](float x, float y, bool secondary) {
         const auto& state = m_window.global<UserState>();
@@ -725,6 +744,43 @@ void UiState::sync_shape_style() {
     options.thickness = style.get_thickness();
 }
 
+void UiState::publish_font_families(std::string_view query) {
+    const std::string needle = font_family_key(query);
+    auto families = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    for (const std::string& family : m_font_families) {
+        if (!needle.empty() && font_family_key(family).find(needle) == std::string::npos) continue;
+        families->push_back(slint::SharedString(family));
+    }
+    m_window.global<FontStyle>().set_families(families);
+}
+
+void UiState::publish_line_widths(std::string_view text) {
+    // The controls are read first: the widths belong to the face and size the
+    // preview is drawn with, whatever they are set to right now.
+    sync_font_style();
+    auto widths = std::make_shared<slint::VectorModel<float>>();
+    for (const float width : text_line_widths(text, m_controller.text_options())) {
+        widths->push_back(width);
+    }
+    m_window.global<TextOverlay>().set_line_widths(widths);
+}
+
+void UiState::publish_hover_color() {
+    auto& state = m_window.global<UserState>();
+    const PixelBuffer& paper = m_controller.document().flattened();
+    const int x = static_cast<int>(std::floor(state.get_cursor_x()));
+    const int y = static_cast<int>(std::floor(state.get_cursor_y()));
+    if (!state.get_cursor_on_canvas() || !paper.contains(x, y)) {
+        state.set_hover_color_text(slint::SharedString());
+        return;
+    }
+
+    const Rgba8 pixel = paper.at(x, y);
+    state.set_hover_color_text(
+        slint::SharedString("(" + std::to_string(pixel.r) + "," + std::to_string(pixel.g) + "," +
+                            std::to_string(pixel.b) + ") " + to_hex(pixel)));
+}
+
 void UiState::sync_font_style() {
     const auto& style = m_window.global<FontStyle>();
     TextOptions& options = m_controller.text_options();
@@ -732,6 +788,10 @@ void UiState::sync_font_style() {
     options.size = style.get_size();
     options.bold = style.get_bold();
     options.italic = style.get_italic();
+    options.underline = style.get_underline();
+    options.strikethrough = style.get_strike();
+    options.opaque_background = style.get_opaque_background();
+    options.background = to_rgba(m_window.global<UserState>().get_secondary_color());
 }
 
 bool UiState::text_open() const noexcept { return m_controller.tool_ui().text.visible; }
@@ -748,6 +808,14 @@ void UiState::do_commit_text(const std::string& text) {
     }
     // The commit both wrote pixels and closed the box, so push them out now
     // instead of waiting for whatever event comes next.
+    refresh();
+}
+
+void UiState::do_cancel_text() {
+    if (!text_open()) return;
+    // Close the box and drop what was typed: nothing reaches the paper.
+    m_controller.input().deactivate(ToolId::Text);
+    m_window.global<TextOverlay>().set_content(slint::SharedString());
     refresh();
 }
 
@@ -770,6 +838,8 @@ void UiState::refresh() {
     state.set_selection_y(bounds.y);
     state.set_selection_width(bounds.width);
     state.set_selection_height(bounds.height);
+
+    publish_hover_color();
 
     // A tool that is left while it holds a gesture has to release it: nothing
     // else tells the shape tool that its polygon will never be finished.
@@ -805,6 +875,10 @@ void UiState::refresh() {
     text_box.set_y(text.origin.y);
     text_box.set_color(
         slint::Color::from_argb_uint8(text.color.a, text.color.r, text.color.g, text.color.b));
+    // A box that has just opened has no rules to draw yet, and one that has
+    // closed must not keep the last box's.
+    publish_line_widths(text.visible ? std::string_view(text_box.get_content())
+                                     : std::string_view{});
 
     set_title();
     update_ants();

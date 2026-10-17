@@ -49,6 +49,7 @@ add_library(lsp_core STATIC
     src/brushes/brush_engine.cpp
     src/core/blend_modes.cpp
     src/core/canvas_document.cpp
+    src/core/color.cpp
     src/core/compositor.cpp
     src/core/pixel_buffer.cpp
     src/core/raster.cpp
@@ -60,6 +61,7 @@ add_library(lsp_core STATIC
     src/io/stb_impl.cpp
     src/selection/selection_mask.cpp
     src/selection/selection_ops.cpp
+    src/text/font_catalog.cpp
     src/tools/brush_stroke_tool.cpp
     src/tools/dropper_tool.cpp
     src/tools/fill_tool.cpp
@@ -78,6 +80,17 @@ target_link_libraries(lsp_core PRIVATE clip)
 target_include_directories(lsp_core SYSTEM PRIVATE ${stb_SOURCE_DIR})
 target_compile_definitions(lsp_core PRIVATE LSP_FONT_DIR="${CMAKE_SOURCE_DIR}/third_party/fonts")
 
+# The installed fonts come from the platform: fontconfig on Linux and DirectWrite
+# on Windows.
+if (WIN32)
+    target_sources(lsp_core PRIVATE src/text/font_catalog_windows.cpp)
+    target_link_libraries(lsp_core PRIVATE dwrite)
+else()
+    find_package(Fontconfig REQUIRED)
+    target_sources(lsp_core PRIVATE src/text/font_catalog_linux.cpp)
+    target_link_libraries(lsp_core PRIVATE Fontconfig::Fontconfig)
+endif()
+
 add_executable(ls_paint
     src/main.cpp
     src/render/slint_bridge.cpp
@@ -86,6 +99,11 @@ add_executable(ls_paint
 target_include_directories(ls_paint PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(ls_paint PRIVATE lsp_core Slint::Slint)
 slint_target_sources(ls_paint ui/appwindow.slint)
+# The two dialogs are real windows, shown from the application code. Each is
+# compiled in its own namespace: the files they share with the ribbon would
+# otherwise put the same symbols in the generated code twice.
+slint_target_sources(ls_paint ui/dialogs/edit-colors-window.slint NAMESPACE lsp_colors)
+slint_target_sources(ls_paint ui/dialogs/about-window.slint NAMESPACE lsp_about)
 
 if(MSVC)
     foreach(target lsp_core ls_paint)

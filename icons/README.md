@@ -14,3 +14,49 @@ with proper artwork when a source is available:
 
 The remaining files in this directory predate the shape and file I/O work and
 were not drawn here.
+
+## Generated brush and texture samples
+
+`brushes/generate.sh` draws the nine thumbnails the Brushes picker shows.
+`textures/generate.sh` draws the samples the shape Outline and Fill menus show.
+Run the script after changing a sample; it rewrites the files in place, so each
+picture stays with its generator.
+
+| File | Used by | What it shows |
+| --- | --- | --- |
+| `brushes/brush.png` | Brushes picker in `ui/bar/bar-home.slint` | a round bristle brush |
+| `brushes/calligraphy-1.png` | Brushes picker | a wide flat calligraphy nib |
+| `brushes/calligraphy-2.png` | Brushes picker | a narrow angled calligraphy nib |
+| `brushes/airbrush.png` | Brushes picker | a nozzle spattering drops |
+| `brushes/oil.png` | Brushes picker | a short square oil brush |
+| `brushes/crayon.png` | Brushes picker | a blunt crayon |
+| `brushes/marker.png` | Brushes picker | a broad chisel marker |
+| `brushes/natural-pencil.png` | Brushes picker | a thin wooden pencil |
+| `brushes/watercolor.png` | Brushes picker | a round wash brush |
+| `textures/no-outline.png` | shape Outline menu | a hollow square crossed out |
+| `textures/no-fill.png` | shape Fill menu | an empty square crossed out |
+| `textures/crayon.png` | shape Outline and Fill menus | a grainy crayon band |
+| `textures/marker.png` | shape Outline and Fill menus | even marker strokes |
+| `textures/oil.png` | shape Outline and Fill menus | thick oil strokes |
+| `textures/natural-pencil.png` | shape Outline and Fill menus | thin pencil lines |
+| `textures/watercolor.png` | shape Outline and Fill menus | a soft watercolor wash |
+
+## Generated text background samples
+
+`text/generate.sh` draws the two background selector icons the Text tab shows.
+Run the script after changing one; it rewrites the files in place, so each
+picture stays with its generator.
+
+| File | Used by | What it shows |
+| --- | --- | --- |
+| `text/background-frame.png` | Background group in `ui/bar/bar-text.slint` | a serif A in an open dashed square over a blue square; the Opaque selector paints the text fill color behind the square and the Transparent one shows the blue through it |
+
+## Placeholder icons, replace with real artwork
+
+These are copies of existing icons under their final names, so the File menu and
+the View tab have a file to point at. Draw the real ones over them.
+
+| File | Used by | Copied from |
+| --- | --- | --- |
+| `zoom-in.png`, `zoom-out.png`, `zoom-100.png` | Zoom group in `ui/bar/bar-view.slint` | `magnify.png` |
+| `file-new.png`, `file-open.png`, `file-save.png`, `file-save-as.png`, `file-exit.png` | File menu in `ui/components/file-menu.slint` | `copy.png` |

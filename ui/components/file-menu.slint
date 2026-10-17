@@ -1,0 +1,110 @@
+import { Styles } from "../styles.slint";
+import { LargeDropdown, LargeDropdownItem, LargeDropdownDivider, MnemonicLabel } from "large-dropdown.slint";
+import { UserState } from "../globals.slint";
+
+// The panel the File tab opens: the file commands in a large-icon column and,
+// beside it, the list of recent pictures.
+export component FileMenu {
+    width: Styles.large-menu-width + 2px + Styles.file-menu-recent-width;
+
+    Rectangle {
+        background: Styles.large-menu-recent-background;
+        border-width: 1px;
+        border-color: Styles.large-menu-border;
+    }
+
+    HorizontalLayout {
+        padding: 1px;
+
+        LargeDropdown {
+            LargeDropdownItem {
+                icon: @image-url("../../icons/file-new.png");
+                key: "N"; after: "ew";
+                clicked => { UserState.file-new(); }
+            }
+            LargeDropdownItem {
+                icon: @image-url("../../icons/file-open.png");
+                key: "O"; after: "pen";
+                clicked => { UserState.file-open(); }
+            }
+            LargeDropdownItem {
+                icon: @image-url("../../icons/file-save.png");
+                key: "S"; after: "ave";
+                clicked => { UserState.file-save(); }
+            }
+            LargeDropdownItem {
+                icon: @image-url("../../icons/file-save-as.png");
+                before: "Save "; key: "a"; after: "s";
+                clicked => { UserState.file-save-as(); }
+            }
+            LargeDropdownDivider {}
+            LargeDropdownItem {
+                icon: @image-url("../../icons/file-exit.png");
+                before: "E"; key: "x"; after: "it";
+                clicked => { UserState.file-exit(); }
+            }
+        }
+
+        // The column's right edge: a rule and its white highlight.
+        Rectangle {
+            width: 1px;
+            background: Styles.large-menu-divider;
+        }
+        Rectangle {
+            width: 1px;
+            background: #fefeff;
+        }
+
+        VerticalLayout {
+            width: Styles.file-menu-recent-width - 2px;
+            alignment: start;
+
+            Rectangle {
+                height: Styles.recent-row-height + 2px;
+
+                Text {
+                    x: 7px;
+                    text: "Recent pictures";
+                    color: Styles.large-menu-title-color;
+                    font-size: Styles.bar-font-size;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                    height: Styles.recent-row-height;
+                }
+                Rectangle {
+                    y: Styles.recent-row-height;
+                    height: 1px;
+                    background: Styles.large-menu-divider;
+                }
+                Rectangle {
+                    y: Styles.recent-row-height + 1px;
+                    height: 1px;
+                    background: #fefeff;
+                }
+            }
+
+            // TODO: populate UserState.recent-files and wire file-open-recent.
+            for entry[i] in UserState.recent-files : Rectangle {
+                height: Styles.recent-row-height;
+
+                Rectangle {
+                    background: touch.has-hover ? #e5f1fc : transparent;
+                }
+
+                MnemonicLabel {
+                    x: 7px;
+                    width: parent.width - 7px;
+                    height: parent.height;
+                    key: "\{i + 1}";
+                    after: "  \{entry}";
+                    color: #646464;
+                }
+
+                touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { UserState.file-open-recent(i); }
+                }
+            }
+        }
+    }
+}

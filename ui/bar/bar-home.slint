@@ -1,6 +1,8 @@
 import { Bar, BarDivider, BarItemGroup } from "bar.slint";
-import { ImageButtonVertical, ImageButtonHorizontal, ImageButtonHorizontalDropdown, ImageButtonIcon, ImageButtonVerticalDropdown, ColorButtonVertical, ColorButton } from "../components/image-buttons.slint";
+import { ImageButtonVertical, ImageButtonHorizontal, ImageButtonHorizontalDropdown, ImageButtonIcon, ImageButtonVerticalDropdown } from "../components/image-buttons.slint";
 import { BarDropdown, BarDropdownItem, BarDropdownTitle, BarDropdownDivider, BarSizeDropdownItem } from "../components/bar-dropdown.slint";
+import { ColorsGroup } from "../components/colors-group.slint";
+import { ClipboardGroup } from "../components/clipboard-group.slint";
 import { Styles } from "../styles.slint";
 import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions, EShapeTexture, ShapeStyle, ShapeGallery, BrushGallery } from "../globals.slint";
 
@@ -164,13 +166,14 @@ export component HomeBar inherits Bar {
         root.strip-width >= full-width + Styles.ribbon-width-about + Styles.ribbon-overflow-margin;
     // What the About group costs the ribbon while it is showing.
     private property <length> effective-about:
-        root.about-fits ? Styles.ribbon-width-about + Styles.ribbon-divider : 0px;
-    // The seven groups before About, each with the divider after it, all expanded.
+        root.about-fits ? Styles.ribbon-width-about : 0px;
+    // The seven groups before About and the six dividers between them, all
+    // expanded.
     private property <length> full-width:
         Styles.ribbon-width-clipboard + Styles.ribbon-width-image
             + Styles.ribbon-width-tools + Styles.ribbon-width-brushes
             + Styles.ribbon-width-shapes + Styles.ribbon-width-size
-            + Styles.ribbon-width-colors + 7 * Styles.ribbon-divider;
+            + Styles.ribbon-width-colors + 6 * Styles.ribbon-divider;
 
     // The shapes grid narrows before its group merges: it drops a column at a
     // time down to four, and once it needs more rows than the ribbon band shows,
@@ -198,11 +201,15 @@ export component HomeBar inherits Bar {
     changed shape-columns => {
         root.shape-scroll-row = min(root.shape-scroll-row, root.shape-scroll-max);
     }
-    // The ribbon the Shapes group can have before the groups after it are
-    // squeezed, with every other group still showing its full content.
+    // The ribbon the Shapes group can have. The room the Clipboard and Image
+    // have already given back is known, the groups after the grid are still
+    // full, and About is out of the chain.
     private property <length> shapes-room:
-        root.strip-width - (full-width - Styles.ribbon-width-shapes) - effective-about
-            - Styles.ribbon-overflow-margin;
+        root.strip-width
+            - (width-clipboard + width-image + Styles.ribbon-width-tools
+                + Styles.ribbon-width-brushes + Styles.ribbon-width-size
+                + Styles.ribbon-width-colors + 6 * Styles.ribbon-divider)
+            - effective-about - Styles.ribbon-overflow-margin;
     private property <int> shape-columns:
         root.shapes-room >= root.shapes-width(8) ? 8
             : root.shapes-room >= root.shapes-width(7) ? 7
@@ -210,16 +217,24 @@ export component HomeBar inherits Bar {
             : root.shapes-room >= root.shapes-width(5) ? 5
             : 4;
 
-    // 1. Shapes: it can no longer show four columns, so the group merges.
+    // 1. Shapes: it can no longer show four columns, so the group merges. The
+    // groups after the grid are counted at their full width, because their own
+    // conditions read this group's width and cannot be read back.
     private property <bool> collapsed-shapes:
-        root.strip-width < full-width - Styles.ribbon-width-shapes + root.shapes-width(4)
-            + effective-about + Styles.ribbon-overflow-margin;
+        root.strip-width < width-clipboard + width-image + Styles.ribbon-width-tools
+            + Styles.ribbon-width-brushes + root.shapes-width(4)
+            + Styles.ribbon-width-size + Styles.ribbon-width-colors
+            + 6 * Styles.ribbon-divider + effective-about + Styles.ribbon-overflow-margin;
     private property <length> width-shapes:
         collapsed-shapes ? Styles.ribbon-merged-width : root.shapes-width(root.shape-columns);
 
-    // 2. Clipboard and Image, together: the grid is at its narrowest, so they
-    // give back their room before the Shapes group has to merge.
-    private property <bool> collapsed-clipboard: root.shape-columns <= 4;
+    // 2. Clipboard and Image, together: this is the width at which the grid
+    // would have to give up its fifth column, so they hand back their room
+    // before the Shapes group has to merge. Written from the ribbon width
+    // alone, because the grid reads it to size itself.
+    private property <bool> collapsed-clipboard:
+        root.strip-width < full-width - Styles.ribbon-width-shapes + root.shapes-width(5)
+            + effective-about + Styles.ribbon-overflow-margin;
     // The Clipboard caption is the longest of the merged group names.
     private property <length> width-clipboard:
         collapsed-clipboard ? Styles.ribbon-merged-width + 12px : Styles.ribbon-width-clipboard;
@@ -231,7 +246,7 @@ export component HomeBar inherits Bar {
     private property <bool> collapsed-tools:
         root.strip-width < width-clipboard + width-image + Styles.ribbon-width-tools
             + Styles.ribbon-width-brushes + width-shapes + Styles.ribbon-width-size
-            + Styles.ribbon-width-colors + 7 * Styles.ribbon-divider + effective-about
+            + Styles.ribbon-width-colors + 6 * Styles.ribbon-divider + effective-about
             + Styles.ribbon-overflow-margin;
     private property <length> width-tools:
         collapsed-tools ? Styles.ribbon-merged-width : Styles.ribbon-width-tools;
@@ -240,77 +255,15 @@ export component HomeBar inherits Bar {
     private property <bool> collapsed-colors:
         root.strip-width < width-clipboard + width-image + width-tools
             + Styles.ribbon-width-brushes + width-shapes + Styles.ribbon-width-size
-            + Styles.ribbon-width-colors + 7 * Styles.ribbon-divider + effective-about
+            + Styles.ribbon-width-colors + 6 * Styles.ribbon-divider + effective-about
             + Styles.ribbon-overflow-margin;
     private property <length> width-colors:
         collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
 
     HorizontalLayout {
-        grp-clipboard := BarItemGroup {
-            title: "Clipboard";
-            show-title: !collapsed-clipboard;
-
-            clipboard-dropdown := PopupWindow {
-                y: Styles.bar-dropdown-y;
-                x: clipboard-dropdown-btn.x + Styles.ribbon-group-padding;
-
-                BarDropdown {
-                    BarDropdownItem {
-                        icon: @image-url("../../icons/paste.png"); text: "Paste";
-                        enabled: DocumentState.has-clipboard;
-                        clicked => { UserState.paste-selection(); }
-                    }
-                    BarDropdownItem {
-                        icon: @image-url("../../icons/paste.png"); text: "Paste from file";
-                        clicked => { UserState.paste-from-file(); }
-                    }
-                    BarDropdownDivider {}
-                    BarDropdownItem {
-                        icon: @image-url("../../icons/cut.png"); text: "Cut";
-                        enabled: DocumentState.has-selection;
-                        clicked => { UserState.cut-selection(); }
-                    }
-                    BarDropdownItem {
-                        icon: @image-url("../../icons/copy.png"); text: "Copy";
-                        enabled: DocumentState.has-selection;
-                        clicked => { UserState.copy-selection(); }
-                    }
-                }
-            }
-
-            HorizontalLayout {
-                clipboard-dropdown-btn := ImageButtonVerticalDropdown {
-                    focused1: clipboard-dropdown.is-open;
-                    focused2: clipboard-dropdown.is-open;
-                    // Merged, this button speaks for the whole group.
-                    text: collapsed-clipboard ? "Clipboard" : "Paste";
-                    icon: @image-url("../../icons/copy.png");
-                    width: collapsed-clipboard ? Styles.ribbon-merged-width + 8px : Styles.bar-vertical-btn-width;
-
-                    clicked => { UserState.paste-selection(); }
-                    clicked_dropdown => { clipboard-dropdown.show(); }
-                }
-
-                // Taken out of the layout rather than hidden, so a merged group
-                // is no wider than its button.
-                if (!collapsed-clipboard) : VerticalLayout {
-                    max-width: 64px;
-                    spacing: Styles.bar-list-spacing;
-
-                    ImageButtonHorizontal {
-                        icon: @image-url("../../icons/cut.png");
-                        text: "Cut";
-                        enabled: DocumentState.has-selection;
-                        clicked => { UserState.cut-selection(); }
-                    }
-                    ImageButtonHorizontal {
-                        icon: @image-url("../../icons/copy.png");
-                        text: "Copy";
-                        enabled: DocumentState.has-selection;
-                        clicked => { UserState.copy-selection(); }
-                    }
-                }
-            }
+        ClipboardGroup {
+            merged: collapsed-clipboard;
+            bar-width: root.width;
         }
         BarDivider {}
 
@@ -399,10 +352,55 @@ export component HomeBar inherits Bar {
                 x: image-merged.x;
 
                 BarDropdown {
+                    BarDropdownTitle { text: "Selection Shapes"; }
+                    BarDropdownDivider {}
+
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/selection.png"); text: "Rectangular selection";
+                        focused: UserState.selection-type == ESelectionType.RECTANGULAR;
+                        clicked => {
+                            UserState.select-shape(ESelectionType.RECTANGULAR);
+                            UserState.selected-tool = ETool.SELECTION;
+                        }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/free-selection.png"); text: "Free-hand selection";
+                        focused: UserState.selection-type == ESelectionType.FREEHAND;
+                        clicked => {
+                            UserState.select-shape(ESelectionType.FREEHAND);
+                            UserState.selected-tool = ETool.SELECTION;
+                        }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/selection.png"); text: "Polygon selection";
+                        focused: UserState.selection-type == ESelectionType.POLYGON;
+                        clicked => {
+                            UserState.select-shape(ESelectionType.POLYGON);
+                            UserState.selected-tool = ETool.SELECTION;
+                        }
+                    }
+
+                    BarDropdownDivider {}
+                    BarDropdownTitle { text: "Selection Options"; }
+                    BarDropdownDivider {}
+
                     BarDropdownItem {
                         icon: @image-url("../../icons/select-all.png"); text: "Select all";
                         clicked => { UserState.select-all(); }
                     }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/invert-selection.png"); text: "Invert selection";
+                        clicked => { UserState.invert-selection(); }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/clear-selection.png"); text: "Clear selection";
+                        clicked => { UserState.clear-selection(); }
+                    }
+                    BarDropdownItem {
+                        icon: @image-url("../../icons/transparent-selection.png"); text: "Transparent selection";
+                        clicked => { UserState.transparent-selection(); }
+                    }
+
                     BarDropdownDivider {}
                     BarDropdownItem {
                         icon: @image-url("../../icons/crop.png"); text: "Crop";
@@ -634,7 +632,7 @@ export component HomeBar inherits Bar {
                             x: mod(i, 4) * Styles.bar-brush-cell-size;
                             y: floor(i / 4) * Styles.bar-brush-cell-size;
                             source: glyph.image;
-                            focused: ToolOptions.brush-kind == glyph.kind;
+                            focused: UserState.selected-tool == ETool.BRUSH && ToolOptions.brush-kind == glyph.kind;
                             clicked => {
                                 ToolOptions.brush-kind = glyph.kind;
                                 UserState.selected-tool = ETool.BRUSH;
@@ -672,7 +670,7 @@ export component HomeBar inherits Bar {
                                 x: mod(i, 7) * (Styles.bar-small-icon-size + 6px);
                                 y: floor(i / 7) * (Styles.bar-small-icon-size + 6px);
                                 commands: glyph.commands;
-                                focused: ShapeStyle.kind == glyph.kind;
+                                focused: UserState.selected-tool == ETool.SHAPE && ShapeStyle.kind == glyph.kind;
                                 filled: glyph.filled;
                                 clicked => {
                                     ShapeStyle.kind = glyph.kind;
@@ -792,13 +790,13 @@ export component HomeBar inherits Bar {
                 icon: @image-url("../../icons/shapes.png");
                 focused1: UserState.selected-tool == ETool.SHAPE || shape-gallery-dropdown.is-open;
                 focused2: UserState.selected-tool == ETool.SHAPE || shape-gallery-dropdown.is-open;
+                // Opening the picker shows the choices without taking the tool:
+                // only picking one swaps the tool in.
                 clicked => {
-                    UserState.selected-tool = ETool.SHAPE;
                     root.picker-page = 0;
                     shape-gallery-dropdown.show();
                 }
                 clicked_dropdown => {
-                    UserState.selected-tool = ETool.SHAPE;
                     root.picker-page = 0;
                     shape-gallery-dropdown.show();
                 }
@@ -825,7 +823,7 @@ export component HomeBar inherits Bar {
                         visible: floor(i / root.shape-columns) >= root.shape-scroll-row
                             && floor(i / root.shape-columns) < root.shape-scroll-row + Styles.ribbon-shape-visible-rows;
                         commands: glyph.commands;
-                        focused: ShapeStyle.kind == glyph.kind;
+                        focused: UserState.selected-tool == ETool.SHAPE && ShapeStyle.kind == glyph.kind;
                         clicked => {
                             ShapeStyle.kind = glyph.kind;
                             UserState.selected-tool = ETool.SHAPE;
@@ -1019,159 +1017,10 @@ export component HomeBar inherits Bar {
 
         BarDivider {}
 
-        grp-colors := BarItemGroup {
-            title: "Colors";
-            show-title: !collapsed-colors;
-            width: collapsed-colors ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
-
-            colors-menu := PopupWindow {
-                y: Styles.bar-dropdown-y;
-                // The widest panel in the ribbon: it stays under its button while
-                // the bar has room and slides left to keep its right edge inside
-                // the bar when the button sits near the end of a narrow window.
-                x: grp-colors.x + colors-merged.x + Styles.bar-colors-menu-width
-                        > root.width - Styles.bar-padding
-                    ? root.width - Styles.bar-padding - Styles.bar-colors-menu-width - grp-colors.x
-                    : colors-merged.x;
-
-                BarDropdown {
-                    panel-width: Styles.bar-colors-menu-width;
-
-                    // The swatches sit beside the palette, as Paint draws them.
-                    HorizontalLayout {
-                        padding: 6px;
-                        spacing: 6px;
-
-                        ColorButtonVertical {
-                            width: 50px;
-                            colr: UserState.primary-color;
-                            // Wrapped like Paint's, so the caption never elides.
-                            text: "Color\n1";
-                            focused: UserState.color_idx == 0;
-                            clicked => { UserState.color_idx = 0; }
-                        }
-                        ColorButtonVertical {
-                            width: 50px;
-                            colr: UserState.secondary-color;
-                            text: "Color\n2";
-                            focused: UserState.color_idx == 1;
-                            clicked => { UserState.color_idx = 1; }
-                        }
-
-                        Rectangle {
-                            width: Styles.bar-color-cell * 10;
-                            height: Styles.bar-color-cell * 4;
-
-                            for color[i] in UserState.color_palette: ColorButton {
-                                x: mod(i, 10) * Styles.bar-color-cell;
-                                y: floor(i / 10) * Styles.bar-color-cell;
-                                cell: Styles.bar-color-cell;
-                                colr: color;
-                                clicked => {
-                                    if (UserState.color_idx == 0) {
-                                        UserState.primary-color = color;
-                                    } else {
-                                        UserState.secondary-color = color;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Paint keeps the picker tile at the end of the palette row.
-                        ImageButtonVertical {
-                            width: Styles.bar-vertical-btn-width;
-                            icon: @image-url("../../icons/edit-colors.png");
-                            text: "Edit\ncolors";
-                        }
-                    }
-
-                    Text {
-                        width: Styles.bar-colors-menu-width - 2px;
-                        height: Styles.bar-dropdown-height;
-                        text: "Colors";
-                        font-size: Styles.bar-font-size;
-                        color: #646464;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-
-            HorizontalLayout {
-                // Wrapped in `if` and not hidden with `visible`: an invisible element
-                // still holds its slot in the layout, so the group would not give the
-                // space back when it collapses.
-                if (!collapsed-colors) : HorizontalLayout {
-                    ColorButtonVertical {
-                        width: 50px;
-                        colr: UserState.primary-color;
-                        // Wrapped like Paint's, so the caption never elides.
-                        text: "Color\n1";
-                        focused: UserState.color_idx == 0;
-                        clicked => { UserState.color_idx = 0; }
-                    }
-                    ColorButtonVertical {
-                        width: 50px;
-                        colr: UserState.secondary-color;
-                        text: "Color\n2";
-                        focused: UserState.color_idx == 1;
-                        clicked => { UserState.color_idx = 1; }
-                    }
-
-                    HorizontalLayout {
-                        padding-left: 6px;
-                        padding-right: 6px;
-
-                        Rectangle {
-                            width: Styles.bar-color-cell * 10;
-                            height: Styles.bar-color-cell * 4;
-
-                            for color[i] in UserState.color_palette:
-                                ColorButton {
-                                    x: mod(i, 10) * Styles.bar-color-cell;
-                                    y: floor(i / 10) * Styles.bar-color-cell;
-                                    cell: Styles.bar-color-cell;
-                                    colr: color;
-                                    clicked => {
-                                        if (UserState.color_idx == 0) {
-                                            UserState.primary-color = color;
-                                        } else {
-                                            UserState.secondary-color = color;
-                                        }
-                                    }
-                                }
-                        }
-                    }
-
-                    ImageButtonVertical {
-                        width: 70px;
-                        // Two lines, as Paint draws it, so the caption never elides.
-                        text: "Edit\ncolors";
-                        icon: @image-url("../../icons/edit-colors.png");
-                        clicked => { UserState.edit-colors(); }
-                    }
-
-                    // A little air between the last button and the group's edge.
-                    Rectangle {
-                        width: 4px;
-                        background: transparent;
-                    }
-                }
-
-                colors-merged := ImageButtonVerticalDropdown {
-                    visible: collapsed-colors;
-                    focused1: colors-menu.is-open;
-                    focused2: colors-menu.is-open;
-                    width: collapsed-colors ? Styles.ribbon-merged-button : 0px;
-                    text: "Colors";
-                    icon: @image-url("../../icons/edit-colors.png");
-                    clicked => { colors-menu.show(); }
-                    clicked_dropdown => { colors-menu.show(); }
-                }
-            }
+        ColorsGroup {
+            merged: collapsed-colors;
+            bar-width: root.width;
         }
-
-        BarDivider {}
 
         grp-about := BarItemGroup {
             title: "";

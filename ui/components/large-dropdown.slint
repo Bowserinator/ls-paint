@@ -1,0 +1,126 @@
+import { Styles } from "../styles.slint";
+
+// A caption with one letter underlined, the keyboard mnemonic Windows menus
+// draw. Underline-less text has no per-letter form in Slint, so the letter
+// sits in its own box with a line under it.
+export component MnemonicLabel {
+    in property <string> before;
+    in property <string> key;
+    in property <string> after;
+    in property <color> color: Styles.bar-text-color;
+    in property <length> font-size: Styles.bar-font-size;
+
+    HorizontalLayout {
+        alignment: start;
+
+        Text {
+            text: root.before;
+            color: root.color;
+            font-size: root.font-size;
+            vertical-alignment: center;
+            wrap: no-wrap;
+        }
+
+        Rectangle {
+            width: letter.preferred-width;
+
+            letter := Text {
+                height: parent.height;
+                text: root.key;
+                color: root.color;
+                font-size: root.font-size;
+                vertical-alignment: center;
+                wrap: no-wrap;
+            }
+
+            Rectangle {
+                y: (parent.height + letter.preferred-height) / 2 - 1px;
+                width: 100%;
+                height: 1px;
+                background: root.color;
+            }
+        }
+
+        Text {
+            text: root.after;
+            color: root.color;
+            font-size: root.font-size;
+            vertical-alignment: center;
+            wrap: no-wrap;
+        }
+    }
+}
+
+// The panel of a large-icon dropdown, as the File menu uses: a flat pale
+// column, no icon rule, rows that are tall enough for a 36px picture.
+export component LargeDropdown {
+    in property <length> panel-width: Styles.large-menu-width;
+
+    Rectangle {
+        background: Styles.large-menu-background;
+    }
+
+    VerticalLayout {
+        width: root.panel-width;
+        alignment: start;
+        @children
+    }
+}
+
+// One command: a large icon, then the caption, whose mnemonic letter is split
+// out as before / key / after.
+export component LargeDropdownItem {
+    callback clicked <=> touch.clicked;
+    in property <image> icon;
+    in property <string> before;
+    in property <string> key;
+    in property <string> after;
+    in property <bool> enabled: true;
+
+    width: Styles.large-menu-width;
+    height: Styles.large-menu-item-height;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    Rectangle {
+        background: touch.has-hover && root.enabled ? #e5f1fc : transparent;
+    }
+
+    Image {
+        x: Styles.large-menu-icon-x;
+        y: (root.height - self.height) / 2;
+        width: Styles.large-menu-icon-size;
+        height: Styles.large-menu-icon-size;
+        source: root.icon;
+    }
+
+    MnemonicLabel {
+        x: Styles.large-menu-label-x;
+        width: root.width - self.x;
+        height: root.height;
+        before: root.before;
+        key: root.key;
+        after: root.after;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+    }
+}
+
+// The line between two groups of commands: a rule with a white edge under it.
+export component LargeDropdownDivider {
+    width: Styles.large-menu-width;
+    height: 2px;
+
+    Rectangle {
+        height: 1px;
+        y: 0px;
+        background: Styles.large-menu-divider;
+    }
+    Rectangle {
+        height: 1px;
+        y: 1px;
+        background: #fefeff;
+    }
+}

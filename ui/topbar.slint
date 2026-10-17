@@ -1,35 +1,67 @@
 import { Styles } from "./styles.slint";
+import { ETool, UserState } from "./globals.slint";
 
-import { FileBar } from "./bar/bar-file.slint";
+import { FileMenu } from "./components/file-menu.slint";
 import { HomeBar } from "./bar/bar-home.slint";
+import { TextBar } from "./bar/bar-text.slint";
 import { ViewBar } from "./bar/bar-view.slint";
 
 // One tab of the ribbon strip.
 component RibbonTab inherits Rectangle {
     in property <string> title;
     in property <bool> selected;
-    // The File tab carries the backstage page, so it is tinted when it is up.
+    // The File tab is a button that opens a menu: it is filled blue and is
+    // never the selected page.
     in property <bool> backstage: false;
+    // Held open by the File menu while it is up.
+    in property <bool> pressed: false;
+    // The Text tab: framed by two separators while it is not the one selected.
+    in property <bool> contextual: false;
     callback clicked;
 
-    width: caption.preferred-width + 20px;
     height: Styles.tab-height;
-    background: selected ? (backstage ? Styles.tab-backstage : white) : transparent;
-    border-width: 1px;
-    border-color: selected ? (backstage ? Styles.tab-backstage : #b6b6b6) : transparent;
+    background: backstage ? (pressed || touch.has-hover ? Styles.tab-backstage-open : Styles.tab-backstage)
+        : selected ? Styles.ribbon-background
+        : touch.has-hover ? #f0f1f2
+        : Styles.tab-strip-background;
 
-    caption := Text {
+    // The frame of the selected tab, open at the bottom so it runs into the
+    // ribbon below it.
+    if (root.selected && !root.backstage) : Rectangle {
+        border-width: 1px;
+        border-color: Styles.tab-border;
+    }
+    if (root.selected && !root.backstage) : Rectangle {
+        x: 1px;
+        y: root.height - 1px;
+        width: root.width - 2px;
+        height: 1px;
+        background: Styles.ribbon-background;
+    }
+
+    if (root.contextual && !root.selected) : Rectangle {
+        x: 0px;
+        width: 1px;
+        background: Styles.tab-contextual-border;
+    }
+    if (root.contextual && !root.selected) : Rectangle {
+        x: root.width - 1px;
+        width: 1px;
+        background: Styles.tab-contextual-border;
+    }
+
+    Text {
         width: parent.width;
         height: parent.height;
         text: root.title;
         wrap: no-wrap;
-        color: selected && root.backstage ? white : Styles.bar-text-color;
+        color: root.backstage ? white : Styles.bar-text-color;
         horizontal-alignment: center;
         vertical-alignment: center;
         font-size: Styles.bar-font-size;
     }
 
-    TouchArea {
+    touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
@@ -39,8 +71,19 @@ component RibbonTab inherits Rectangle {
 // window's layout: a layout child would pin the window's width to its preferred
 // size, and the window has to be freely resizable.
 export component TopBar inherits Rectangle {
-    // The window opens on Home, as Paint does.
+    // The window opens on Home, as Paint does. The File tab is not a page, so
+    // 0 is never selected.
     private property <int> tab: 1;
+    // The Text tab is only up while the text tool is, and picking that tool
+    // selects it. Leaving the tool falls back to Home.
+    private property <bool> text-tool: UserState.selected-tool == ETool.TEXT;
+    changed text-tool => {
+        if (root.text-tool) {
+            root.tab = 3;
+        } else if (root.tab == 3) {
+            root.tab = 1;
+        }
+    }
 
     height: Styles.tab-height + Styles.bar-height;
 
@@ -48,35 +91,17 @@ export component TopBar inherits Rectangle {
         y: 0px;
         width: 100%;
         height: Styles.tab-height;
-        background: transparent;
-
-        HorizontalLayout {
-            alignment: start;
-            spacing: 0;
-
-            RibbonTab {
-                title: "File";
-                backstage: true;
-                selected: root.tab == 0;
-                clicked => { root.tab = 0; }
-            }
-            RibbonTab {
-                title: "Home";
-                selected: root.tab == 1;
-                clicked => { root.tab = 1; }
-            }
-            RibbonTab {
-                title: "View";
-                selected: root.tab == 2;
-                clicked => { root.tab = 2; }
-            }
-        }
+        background: Styles.tab-strip-background;
     }
 
-    if (root.tab == 0) : FileBar {
-        y: Styles.tab-height;
+    // The line under the tab strip, which the selected tab covers.
+    Rectangle {
+        y: Styles.tab-height - 1px;
         width: 100%;
+        height: 1px;
+        background: Styles.tab-border;
     }
+
     if (root.tab == 1) : HomeBar {
         y: Styles.tab-height;
         width: 100%;
@@ -84,5 +109,52 @@ export component TopBar inherits Rectangle {
     if (root.tab == 2) : ViewBar {
         y: Styles.tab-height;
         width: 100%;
+    }
+    if (root.tab == 3) : TextBar {
+        y: Styles.tab-height;
+        width: 100%;
+    }
+
+    // Drawn after the bars so the selected tab sits over the line above them.
+    HorizontalLayout {
+        y: 0px;
+        height: Styles.tab-height;
+        alignment: start;
+        spacing: 0;
+
+        RibbonTab {
+            width: Styles.tab-width-file;
+            title: "File";
+            backstage: true;
+            pressed: file-menu.is-open;
+            clicked => { file-menu.show(); }
+        }
+        RibbonTab {
+            width: Styles.tab-width-home;
+            title: "Home";
+            selected: root.tab == 1;
+            clicked => { root.tab = 1; }
+        }
+        RibbonTab {
+            width: Styles.tab-width-view;
+            title: "View";
+            selected: root.tab == 2;
+            clicked => { root.tab = 2; }
+        }
+        RibbonTab {
+            width: Styles.tab-width-text;
+            title: "Text";
+            visible: root.text-tool;
+            contextual: true;
+            selected: root.tab == 3;
+            clicked => { root.tab = 3; }
+        }
+    }
+
+    file-menu := PopupWindow {
+        x: 0px;
+        y: Styles.tab-height;
+
+        FileMenu {}
     }
 }

@@ -1,0 +1,131 @@
+import { DocumentState, UserState } from "../globals.slint";
+import { Styles } from "../styles.slint";
+
+// A ruler along one edge of the canvas view: a tick at every document step,
+// longer ticks with their coordinate on the steps that are numbered, and marks
+// for the pointer and the selection. Both strips are this component, told which
+// way they lie, and they sit beside the view rather than over it.
+export component CanvasRuler inherits Rectangle {
+    // The strip down the left edge: its ticks run downwards and its numbers are
+    // turned to read along it.
+    in property <bool> vertical: false;
+    // The document size along the strip, how long the view is, and where it is
+    // scrolled to: the tick for document step n stands at zoom * n plus the
+    // scroll offset.
+    in property <length> doc-length: 0px;
+    in property <length> view-length: 0px;
+    in property <length> scroll-offset: 0px;
+    // How far the strip's start sits past the document's zero: the top strip
+    // starts above the left strip, not at the view.
+    in property <length> start-in: 0px;
+    in property <bool> show-pointer: false;
+    // Pointer and selection extent along the strip, in document pixels.
+    in property <float> pointer: 0.0;
+    in property <bool> show-selection: false;
+    in property <float> selection-start: 0.0;
+    in property <float> selection-size: 0.0;
+
+    background: Styles.ribbon-background;
+    clip: true;
+
+    // The numbered step: the smallest power of two whose ticks stand at least
+    // 40px apart, so a four digit number fits beside its tick.
+    private property <float> major: UserState.zoom >= 4.0 ? 16.0
+        : UserState.zoom >= 2.0 ? 32.0
+        : UserState.zoom >= 1.0 ? 64.0
+        : UserState.zoom >= 0.5 ? 128.0
+        : UserState.zoom >= 0.25 ? 256.0
+        : 512.0;
+    // Four smaller ticks divide the numbered step.
+    private property <float> minor: root.major / 4.0;
+    private property <length> major-length: 6px;
+    private property <length> minor-length: 3px;
+    private property <length> number-width: 40px;
+    // The area a number is written in, beside the ticks rather than over them.
+    private property <length> number-size: Styles.ruler-size - root.major-length;
+    // The first step the view shows: only the visible stretch is drawn, so the
+    // ruler follows the scroll instead of building a tick per document step.
+    private property <float> first-minor:
+        max(0.0, floor(-root.scroll-offset / (root.minor * UserState.zoom * 1px)));
+    private property <float> first-major:
+        max(0.0, floor(-root.scroll-offset / (root.major * UserState.zoom * 1px)));
+    // The last step the document has, so no tick reaches past its edge.
+    private property <float> last-step: root.doc-length / 1px;
+
+    // The smaller ticks, then the numbered ones over them.
+    for j in ceil(root.view-length / (root.minor * UserState.zoom * 1px)) + 2 : Rectangle {
+        x: root.vertical
+            ? root.width - root.minor-length
+            : root.start-in + root.scroll-offset + (root.first-minor + j) * root.minor * UserState.zoom * 1px;
+        y: root.vertical
+            ? root.start-in + root.scroll-offset + (root.first-minor + j) * root.minor * UserState.zoom * 1px
+            : root.height - root.minor-length;
+        width: root.vertical ? root.minor-length : 1px;
+        height: root.vertical ? 1px : root.minor-length;
+        visible: (root.first-minor + j) * root.minor <= root.last-step;
+        background: Styles.bar-border-light;
+    }
+
+    for j in ceil(root.view-length / (root.major * UserState.zoom * 1px)) + 2 : Rectangle {
+        x: root.vertical
+            ? root.width - root.major-length
+            : root.start-in + root.scroll-offset + (root.first-major + j) * root.major * UserState.zoom * 1px;
+        y: root.vertical
+            ? root.start-in + root.scroll-offset + (root.first-major + j) * root.major * UserState.zoom * 1px
+            : root.height - root.major-length;
+        width: root.vertical ? root.major-length : 1px;
+        height: root.vertical ? 1px : root.major-length;
+        visible: (root.first-major + j) * root.major <= root.last-step;
+        background: Styles.bar-text-color;
+    }
+
+    for j in ceil(root.view-length / (root.major * UserState.zoom * 1px)) + 2 : Text {
+        text: round((root.first-major + j) * root.major);
+        font-size: Styles.bar-font-size;
+        color: Styles.bar-text-color;
+        wrap: no-wrap;
+        horizontal-alignment: root.vertical ? center : left;
+        vertical-alignment: center;
+        // Turned on the left strip, where a number of this width would not fit
+        // across it.
+        transform-rotation: root.vertical ? -90deg : 0deg;
+        x: root.vertical
+            ? root.number-size / 2 - root.number-width / 2
+            : root.start-in + root.scroll-offset + (root.first-major + j) * root.major * UserState.zoom * 1px + 3px;
+        y: root.vertical
+            ? root.start-in + root.scroll-offset + (root.first-major + j) * root.major * UserState.zoom * 1px
+                - root.number-size / 2
+            : 0px;
+        width: root.number-width;
+        height: root.number-size;
+        visible: (root.first-major + j) * root.major <= root.last-step;
+    }
+
+    // The pointer, right across the strip, and the extent of the selection
+    // along the edge the ticks are on.
+    Rectangle {
+        visible: root.show-pointer;
+        x: root.vertical
+            ? 0px
+            : root.start-in + root.scroll-offset + root.pointer * UserState.zoom * 1px;
+        y: root.vertical
+            ? root.start-in + root.scroll-offset + root.pointer * UserState.zoom * 1px
+            : 0px;
+        width: root.vertical ? root.width : 1px;
+        height: root.vertical ? 1px : root.height;
+        background: Styles.bar-text-color;
+    }
+
+    Rectangle {
+        visible: root.show-selection;
+        x: root.vertical
+            ? root.width - root.major-length
+            : root.start-in + root.scroll-offset + root.selection-start * UserState.zoom * 1px;
+        y: root.vertical
+            ? root.start-in + root.scroll-offset + root.selection-start * UserState.zoom * 1px
+            : root.height - root.major-length;
+        width: root.vertical ? root.major-length : root.selection-size * UserState.zoom * 1px;
+        height: root.vertical ? root.selection-size * UserState.zoom * 1px : root.major-length;
+        background: Styles.menu-hover;
+    }
+}

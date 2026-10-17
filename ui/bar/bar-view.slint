@@ -1,38 +1,126 @@
-import { Bar } from "bar.slint";
-import { BarButton } from "../components/image-buttons.slint";
+import { Bar, BarDivider, BarItemGroup } from "bar.slint";
+import { ImageButtonVertical } from "../components/image-buttons.slint";
 import { UserState } from "../globals.slint";
 import { Styles } from "../styles.slint";
 
-// The View tab. Rulers, gridlines and the other display toggles are not built,
-// so this tab carries the zoom commands only.
-export component ViewBar inherits Bar {
+// One "Show or hide" row: a check box and its caption.
+component CheckRow inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked: true;
+    callback toggled;
+
+    height: 21px;
+
     HorizontalLayout {
-        padding: Styles.bar-padding;
-        spacing: 0px;
+        padding-left: Styles.bar-padding * 2;
+        spacing: Styles.bar-padding * 1.5;
         alignment: start;
 
         VerticalLayout {
-            alignment: start;
-            spacing: 0px;
+            alignment: center;
 
-            BarButton {
-                width: 130px;
-                height: 20px;
-                text: "Zoom in";
-                clicked => { UserState.zoom = min(UserState.zoom * 1.25, 7.0); }
-            }
-            BarButton {
-                width: 130px;
-                height: 20px;
-                text: "Zoom out";
-                clicked => { UserState.zoom = max(UserState.zoom / 1.25, 0.125); }
-            }
-            BarButton {
-                width: 130px;
-                height: 20px;
-                text: "100%";
-                clicked => { UserState.zoom = 1.0; }
+            Rectangle {
+                width: 13px;
+                height: 13px;
+                background: white;
+                border-width: 1px;
+                border-color: #6179a0;
+
+                if (root.checked) : Path {
+                    width: 100%;
+                    height: 100%;
+                    viewbox-width: 11;
+                    viewbox-height: 11;
+                    commands: "M 2 5.5 L 4.5 8 L 9 2.5";
+                    stroke: #1a1a1a;
+                    stroke-width: 1.5px;
+                }
             }
         }
+
+        Text {
+            text: root.text;
+            color: Styles.bar-text-color;
+            font-size: Styles.bar-font-size;
+            vertical-alignment: center;
+            wrap: no-wrap;
+        }
+    }
+
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+}
+
+// The View tab. The Show or hide toggles are UI only for now; Display is not
+// part of this tab.
+export component ViewBar inherits Bar {
+    HorizontalLayout {
+        spacing: 0px;
+        alignment: start;
+
+        BarItemGroup {
+            title: "Zoom";
+            width: Styles.ribbon-width-zoom;
+
+            // Lifted 5px: a Rectangle keeps the group's own layout untouched.
+            Rectangle {
+                HorizontalLayout {
+                    y: -5px;
+
+                    ImageButtonVertical {
+                        icon: @image-url("../../icons/zoom-in.png");
+                        text: "Zoom\nin";
+                        clicked => { UserState.zoom = min(UserState.zoom * 1.25, 7.0); }
+                    }
+                    ImageButtonVertical {
+                        icon: @image-url("../../icons/zoom-out.png");
+                        text: "Zoom\nout";
+                        clicked => { UserState.zoom = max(UserState.zoom / 1.25, 0.125); }
+                    }
+                    ImageButtonVertical {
+                        icon: @image-url("../../icons/zoom-100.png");
+                        text: "100\n%";
+                        clicked => { UserState.zoom = 1.0; }
+                    }
+                }
+            }
+        }
+
+        BarDivider {}
+
+        BarItemGroup {
+            title: "Show or hide";
+            width: Styles.ribbon-width-show-hide;
+
+            // Lifted 5px the same way, so the check rows line up with the
+            // Zoom buttons beside them.
+            Rectangle {
+                VerticalLayout {
+                    y: -5px;
+                    alignment: start;
+                    spacing: 6px;
+
+                    CheckRow {
+                        text: "Rulers";
+                        checked <=> UserState.show-rulers;
+                    }
+                    CheckRow {
+                        text: "Gridlines";
+                        checked <=> UserState.show-gridlines;
+                    }
+                    CheckRow {
+                        text: "Status bar";
+                        checked <=> UserState.show-status-bar;
+                    }
+                }
+            }
+        }
+
+        BarDivider {}
     }
 }

@@ -54,7 +54,18 @@ export global Styles {
     out property<length> ribbon-width-shapes: 8 * ribbon-shape-cell + ribbon-shapes-options;
     out property<length> ribbon-width-size: 58px;
     out property<length> ribbon-width-colors: 376px;
-    out property<length> ribbon-width-about: 80px;
+    out property<length> ribbon-width-about: 59px;
+
+    // The View tab: three vertical buttons in Zoom, three check rows in
+    // Show or hide, each with the group's own padding on both sides.
+    out property<length> ribbon-width-zoom: 3 * bar-vertical-btn-width + 2 * ribbon-group-padding;
+    out property<length> ribbon-width-show-hide: 112px;
+
+    // The Text tab: the family control, the size control and the four style
+    // toggles in the Font group, and the two selectors in the Background group,
+    // each with the group's own padding on both sides.
+    out property<length> ribbon-width-font: 156px;
+    out property<length> ribbon-width-background: 112px;
 
     out property<length> bar-small-icon-size: 20px;
     out property<length> bar-large-icon-size: 38px;
@@ -91,6 +102,9 @@ export global Styles {
 
     out property<length> bar-dropdown-width: 192px;
     out property<length> bar-dropdown-height: 28px;
+    // The Text tab's two menus hold text only, so their rows are tighter than
+    // the rows that carry an icon column.
+    out property<length> bar-dropdown-compact-height: 20px;
     out property<length> color-btn-spacing: 4px;
 
     // The Colors dropdown is the one panel wider than the default: it puts the
@@ -107,11 +121,43 @@ export global Styles {
     out property<length> text-options-height: 28px;
 
     // The tab strip above the ribbon.
-    out property<length> tab-height: 24px;
-    out property<color> tab-backstage: #1a6fc4;
+    out property<length> tab-height: 28px;
+    // The File tab: its blue, a shade darker while its menu is open.
+    out property<color> tab-backstage: #2486da;
+    out property<color> tab-backstage-open: #1a6fc4;
+    out property<color> tab-strip-background: white;
+    out property<color> tab-border: #dadbdc;
+    // The separators that frame a contextual tab (Text) while it is not selected.
+    out property<color> tab-contextual-border: #d0d0d0;
+    out property<color> ribbon-background: #f5f6f7;
+    out property<length> tab-width-file: 66px;
+    out property<length> tab-width-home: 70px;
+    out property<length> tab-width-view: 61px;
+    out property<length> tab-width-text: 73px;
+
+    // The File menu: a column of large-icon commands and the recent list beside
+    // it. Sizes are the reference's.
+    out property<length> large-menu-width: 248px;
+    out property<length> large-menu-item-height: 55px;
+    out property<length> large-menu-icon-size: 36px;
+    out property<length> large-menu-icon-x: 6px;
+    out property<length> large-menu-label-x: 51px;
+    out property<length> file-menu-recent-width: 338px;
+    out property<length> recent-row-height: 27px;
+    out property<color> large-menu-background: #fbfcfd;
+    out property<color> large-menu-recent-background: #f6f7f8;
+    out property<color> large-menu-border: #abb8c9;
+    out property<color> large-menu-divider: #dcdddd;
+    out property<color> large-menu-title-color: #646464;
 
     // The canvas right click menu: compact, one column, square corners.
     out property<length> menu-width: 168px;
     out property<length> menu-item-height: 22px;
     out property<color> menu-hover: #c9e0f7;
+
+    // The canvas grid, drawn over the paper: faint enough to keep the artwork
+    // readable through it.
+    out property<color> canvas-grid-color: #dcdcdc;
+    // Thickness of a ruler strip along the canvas view's top and left edges.
+    out property<length> ruler-size: 24px;
 }

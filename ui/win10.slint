@@ -35,6 +35,8 @@ export global Win10 {
     out property<length> field-height: 24px;
     out property<color> field-color: #ffffff;
     out property<color> field-border: #7a7a7a;
+    // The edit field wears a lighter frame than the number boxes.
+    out property<color> field-border-light: #a6a6a6;
 
     // The sunken edge of a swatch: two dark lines above and left, two light
     // lines below and right.
@@ -207,5 +209,57 @@ export component WinNumberBox inherits Rectangle {
         vertical-alignment: center;
         accepted => { root.accepted(); }
         edited => { root.edited(); }
+    }
+}
+
+// A white box holding text, drawn like WinNumberBox. It carries the parts of
+// the std-widgets edit the edit fields here need: the text, the placeholder
+// that stands in while it is empty, and the two events.
+export component WinLineEdit inherits Rectangle {
+    in-out property <string> text: "";
+    in property <string> placeholder-text: "";
+    in property <bool> read-only: false;
+    in property <bool> enabled: true;
+    out property <bool> has-focus <=> input.has-focus;
+    // The text the user has typed so far, and the text as Enter leaves it.
+    callback edited(text: string);
+    callback accepted(text: string);
+
+    width: Win10.field-width;
+    height: Win10.field-height;
+    background: Win10.field-color;
+    border-width: 1px;
+    border-color: Win10.field-border-light;
+    // The whole box is the target: a click in the border goes to the text.
+    forward-focus: input;
+
+    // The placeholder sits where the text does, so the two line up. It is not
+    // drawn while the text is being composed.
+    Text {
+        x: 3px;
+        width: parent.width - 4px;
+        height: parent.height;
+        text: (root.text == "" && input.preedit-text == "") ? root.placeholder-text : "";
+        font-size: Win10.font-size;
+        color: Win10.field-border;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+    }
+
+    // The input reaches to the box's right edge, so a click anywhere but the
+    // three pixels at its left lands on the text and can select it.
+    input := TextInput {
+        x: 3px;
+        width: parent.width - 4px;
+        height: parent.height;
+        text <=> root.text;
+        enabled: root.enabled;
+        read-only: root.read-only;
+        font-size: Win10.font-size;
+        color: Win10.text-color;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        accepted => { root.accepted(self.text); }
+        edited => { root.edited(self.text); }
     }
 }

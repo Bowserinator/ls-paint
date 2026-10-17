@@ -1,0 +1,81 @@
+import { Styles } from "../styles.slint";
+
+import { BarItemGroup } from "../bar/bar.slint";
+import { BarDropdown, BarDropdownDivider, BarDropdownItem } from "bar-dropdown.slint";
+import { ImageButtonHorizontal, ImageButtonVerticalDropdown } from "image-buttons.slint";
+import { UserState, DocumentState } from "../globals.slint";
+
+// The Clipboard group both ribbon bars show, with the panel that opens from it.
+export component ClipboardGroup inherits BarItemGroup {
+    // True while the group stands as one button that opens the panel in place
+    // of its buttons.
+    in property <bool> merged: false;
+    // The width of the bar the group sits in.
+    in property <length> bar-width: 0px;
+
+    title: "Clipboard";
+    show-title: !root.merged;
+    width: root.merged ? Styles.ribbon-merged-width : Styles.ribbon-width-clipboard;
+
+    clipboard-dropdown := PopupWindow {
+        y: Styles.bar-dropdown-y;
+        x: clipboard-dropdown-btn.x + Styles.ribbon-group-padding;
+
+        BarDropdown {
+            BarDropdownItem {
+                icon: @image-url("../../icons/paste.png"); text: "Paste";
+                enabled: DocumentState.has-clipboard;
+                clicked => { UserState.paste-selection(); }
+            }
+            BarDropdownItem {
+                icon: @image-url("../../icons/paste.png"); text: "Paste from file";
+                clicked => { UserState.paste-from-file(); }
+            }
+            BarDropdownDivider {}
+            BarDropdownItem {
+                icon: @image-url("../../icons/cut.png"); text: "Cut";
+                enabled: DocumentState.has-selection;
+                clicked => { UserState.cut-selection(); }
+            }
+            BarDropdownItem {
+                icon: @image-url("../../icons/copy.png"); text: "Copy";
+                enabled: DocumentState.has-selection;
+                clicked => { UserState.copy-selection(); }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        clipboard-dropdown-btn := ImageButtonVerticalDropdown {
+            focused1: clipboard-dropdown.is-open;
+            focused2: clipboard-dropdown.is-open;
+            // Merged, this button speaks for the whole group.
+            text: root.merged ? "Clipboard" : "Paste";
+            icon: @image-url("../../icons/copy.png");
+            width: root.merged ? Styles.ribbon-merged-width + 8px : Styles.bar-vertical-btn-width;
+
+            clicked => { UserState.paste-selection(); }
+            clicked_dropdown => { clipboard-dropdown.show(); }
+        }
+
+        // Taken out of the layout rather than hidden, so a merged group
+        // is no wider than its button.
+        if (!root.merged) : VerticalLayout {
+            max-width: 64px;
+            spacing: Styles.bar-list-spacing;
+
+            ImageButtonHorizontal {
+                icon: @image-url("../../icons/cut.png");
+                text: "Cut";
+                enabled: DocumentState.has-selection;
+                clicked => { UserState.cut-selection(); }
+            }
+            ImageButtonHorizontal {
+                icon: @image-url("../../icons/copy.png");
+                text: "Copy";
+                enabled: DocumentState.has-selection;
+                clicked => { UserState.copy-selection(); }
+            }
+        }
+    }
+}

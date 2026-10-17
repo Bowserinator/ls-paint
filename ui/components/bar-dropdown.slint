@@ -27,9 +27,11 @@ export component BarDropdownDivider {
 
 export component BarDropdownTitle {
     in-out property text <=> txt.text;
+    // The row is as tall as an ordinary menu row unless the menu is tighter.
+    in property <length> title-height: Styles.bar-dropdown-height;
 
     width: Styles.bar-dropdown-width;
-    height: Styles.bar-dropdown-height;
+    height: root.title-height;
 
     Rectangle { background: #f6f7f8; }
 
@@ -45,6 +47,9 @@ export component BarDropdownTitle {
 export component BarDropdownItem {
     callback clicked <=> touch.clicked;
     in-out property text <=> txt.text;
+    // The face the label is drawn in, so a list of family names can preview
+    // each one. Empty draws in the window's default.
+    in property <string> label-family: "";
     in-out property<image> icon;
     in-out property <bool> focused;
     in property <bool> enabled: true;
@@ -82,6 +87,7 @@ export component BarDropdownItem {
         Rectangle { width: 2 * Styles.bar-padding; }
 
         txt := Text {
+            font-family: root.label-family;
             font-size: Styles.bar-font-size;
             color: Styles.bar-text-color;
             horizontal-alignment: left;
@@ -91,6 +97,42 @@ export component BarDropdownItem {
     }
 
     touch := TouchArea { enabled: root.enabled; }
+}
+
+// A menu row for menus whose entries are all text: no icon column and no
+// divider, so the label starts in the row's own padding.
+export component BarDropdownTextItem inherits Rectangle {
+    callback clicked <=> touch.clicked;
+    in-out property <string> text <=> txt.text;
+    // The face the label is drawn in, so a list of family names can preview
+    // each one. Empty draws in the window's default.
+    in property <string> label-family: "";
+    in property <length> label-size: Styles.bar-font-size;
+    in-out property <bool> focused: false;
+
+    width: Styles.bar-dropdown-width;
+    height: Styles.bar-dropdown-compact-height;
+
+    Rectangle {
+        background: focused ? #c9e0f7 : touch.has-hover ? #edf4fc : transparent;
+        border-width: 1px;
+        border-color: focused ? #8dbcec : touch.has-hover ? #bfdcfb : transparent;
+    }
+
+    HorizontalLayout {
+        Rectangle { width: Styles.bar-padding; } // Spacer
+
+        txt := Text {
+            font-family: root.label-family;
+            font-size: root.label-size;
+            color: Styles.bar-text-color;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            height: root.height;
+        }
+    }
+
+    touch := TouchArea {}
 }
 
 export component BarSizeDropdownItem {

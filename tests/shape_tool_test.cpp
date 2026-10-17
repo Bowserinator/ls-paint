@@ -3,7 +3,9 @@
 // heart rather than a stretched one. A kind whose outline crosses itself paints
 // a hole or a seam because the scanline fill counts the overlap twice.
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <utility>
 #include <vector>
@@ -41,6 +43,36 @@ int painted_count(const PixelBuffer& pixels) {
         for (int x = 0; x < pixels.width(); ++x)
             if (pixels.at(x, y).a != 0) ++count;
     return count;
+}
+
+int painted_in(const PixelBuffer& pixels, RectI region) {
+    int count = 0;
+    for (int y = region.y; y < region.bottom(); ++y)
+        for (int x = region.x; x < region.right(); ++x)
+            if (pixels.contains(x, y) && pixels.at(x, y).a != 0) ++count;
+    return count;
+}
+
+// How many different pixel values a drawing uses: a line of one colour has one,
+// a brush texture has several.
+int distinct_values(const PixelBuffer& pixels) {
+    std::vector<Rgba8> seen;
+    for (int y = 0; y < pixels.height(); ++y) {
+        for (int x = 0; x < pixels.width(); ++x) {
+            const Rgba8 pixel = pixels.at(x, y);
+            if (pixel.a == 0) continue;
+            if (std::find(seen.begin(), seen.end(), pixel) == seen.end()) seen.push_back(pixel);
+        }
+    }
+    return static_cast<int>(seen.size());
+}
+
+bool same_pixels(const PixelBuffer& a, const PixelBuffer& b) {
+    if (a.width() != b.width() || a.height() != b.height()) return false;
+    for (int y = 0; y < a.height(); ++y)
+        for (int x = 0; x < a.width(); ++x)
+            if (a.at(x, y) != b.at(x, y)) return false;
+    return true;
 }
 
 // True when the two segments cross away from a shared endpoint.
@@ -130,7 +162,7 @@ void test_outlines_do_not_cross_themselves() {
 
 void test_filled_shapes_leave_no_gap(const ShapeId kind, int width, int height) {
     PixelBuffer pixels(width + 8, height + 8);
-    const ShapeOptions options{kind, ShapeMode::Fill, 3, 8};
+    const ShapeOptions options{kind, ShapeTexture::Solid, ShapeTexture::Solid, 3, 8};
     rasterize_shape(Target{pixels}, kind, {4, 4}, {static_cast<float>(width + 3),
                                                    static_cast<float>(height + 3)},
                     clicked_polygon(), options, kInk, kFill);
@@ -176,7 +208,7 @@ void test_fill_meets_the_outline_at_thin_thickness() {
         if (!shape::is_closed(kind)) continue;
         for (const int thickness : {1, 2}) {
             PixelBuffer pixels(88, 88);
-            const ShapeOptions options{kind, ShapeMode::Fill, thickness, 8};
+            const ShapeOptions options{kind, ShapeTexture::Solid, ShapeTexture::Solid, thickness, 8};
             rasterize_shape(Target{pixels}, kind, {4, 4}, {83, 83}, clicked_polygon(), options, kInk,
                             kFill);
             const int seams = fill_outline_seams(pixels, kFill, kInk);
@@ -191,9 +223,9 @@ void test_fill_meets_the_outline_at_thin_thickness() {
 void test_fill_covers_more_than_the_outline(const ShapeId kind) {
     PixelBuffer outline(88, 88);
     PixelBuffer filled(88, 88);
-    ShapeOptions options{kind, ShapeMode::Outline, 3, 8};
+    ShapeOptions options{kind, ShapeTexture::Solid, ShapeTexture::None, 3, 8};
     rasterize_shape(Target{outline}, kind, {4, 4}, {83, 83}, clicked_polygon(), options, kInk, kFill);
-    options.mode = ShapeMode::Fill;
+    options.fill = ShapeTexture::Solid;
     rasterize_shape(Target{filled}, kind, {4, 4}, {83, 83}, clicked_polygon(), options, kInk, kFill);
     CHECK(painted_count(outline) > 0);
     CHECK(painted_count(filled) > painted_count(outline));
@@ -231,7 +263,7 @@ void test_lightning_fill_is_solid() {
     // The bolt is the kind that used to fill along a single edge because its
     // outline crossed itself near the waist.
     PixelBuffer pixels(88, 88);
-    const ShapeOptions options{ShapeId::Lightning, ShapeMode::Fill, 3, 8};
+    const ShapeOptions options{ShapeId::Lightning, ShapeTexture::Solid, ShapeTexture::Solid, 3, 8};
     rasterize_shape(Target{pixels}, ShapeId::Lightning, {4, 4}, {83, 83}, {}, options, kInk, kFill);
     CHECK(painted_count(pixels) > 1000);
     CHECK(!encloses_background(pixels));
@@ -247,6 +279,134 @@ void test_rectangle_and_oval_use_their_own_primitives() {
     CHECK(box.height == 40);
 }
 
+// A textured outline stamps a brush along the path instead of drawing a hard
+// line: it differs from the solid outline, paints more than one value because
+// of the profile's grain and soft edge, and stays close to the path itself.
+void test_textured_outlines_are_grainy_and_bounded() {
+    const ShapeTexture textures[] = {ShapeTexture::Crayon, ShapeTexture::Marker, ShapeTexture::Oil,
+                                     ShapeTexture::NaturalPencil, ShapeTexture::Watercolor};
+    for (const ShapeId kind :
+         {ShapeId::Rectangle, ShapeId::Oval, ShapeId::Lightning, ShapeId::Star5}) {
+        PixelBuffer solid(88, 88);
+        ShapeOptions options{kind, ShapeTexture::Solid, ShapeTexture::None, 3, 8};
+        rasterize_shape(Target{solid}, kind, {4, 4}, {83, 83}, {}, options, kInk, kFill);
+        CHECK(painted_count(solid) > 0);
+        for (const ShapeTexture texture : textures) {
+            PixelBuffer pixels(88, 88);
+            options.outline = texture;
+            rasterize_shape(Target{pixels}, kind, {4, 4}, {83, 83}, {}, options, kInk, kFill);
+            if (painted_count(pixels) == 0)
+                std::printf("kind %d texture %d painted nothing\n", static_cast<int>(kind),
+                            static_cast<int>(texture));
+            CHECK(painted_count(pixels) > 0);
+            CHECK(!same_pixels(solid, pixels));
+            if (distinct_values(pixels) < 2)
+                std::printf("kind %d texture %d is a flat line\n", static_cast<int>(kind),
+                            static_cast<int>(texture));
+            CHECK(distinct_values(pixels) >= 2);
+            // The drag box spans 4..83; a nib of three pixels reaches two past it.
+            CHECK(painted_in(pixels, RectI{0, 0, 88, 2}) == 0);
+            CHECK(painted_in(pixels, RectI{0, 86, 88, 2}) == 0);
+            CHECK(painted_in(pixels, RectI{0, 0, 2, 88}) == 0);
+            CHECK(painted_in(pixels, RectI{86, 0, 2, 88}) == 0);
+        }
+    }
+}
+
+// The selection the raster target carries holds the stamp back as well, so a
+// textured part cannot write outside the marching ants.
+void test_textured_outline_respects_the_target_clip() {
+    std::vector<std::uint8_t> clip(88 * 88, 1);
+    for (int y = 0; y < 88; ++y)
+        for (int x = 0; x < 44; ++x) clip[static_cast<std::size_t>(y) * 88 + x] = 0;
+    PixelBuffer pixels(88, 88);
+    const ShapeOptions options{ShapeId::Oval, ShapeTexture::Crayon, ShapeTexture::None, 3, 8};
+    rasterize_shape(Target{pixels, clip.data()}, ShapeId::Oval, {4, 4}, {83, 83}, {}, options,
+                    kInk, kFill);
+    CHECK(painted_count(pixels) > 0);
+    CHECK(painted_in(pixels, RectI{0, 0, 44, 88}) == 0);
+}
+
+// A point is inside a closed polygon when a ray to the left crosses its
+// edges an odd number of times.
+bool inside_polygon(const std::vector<Point2f>& points, float x, float y) {
+    bool inside = false;
+    for (std::size_t i = 0, j = points.size() - 1; i < points.size(); j = i++) {
+        const Point2f& a = points[i];
+        const Point2f& b = points[j];
+        if ((a.y > y) != (b.y > y) && x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+    }
+    return inside;
+}
+
+// Distance from a point to the polygon's outline, used to allow for the pixel
+// that a nib straddles where an edge falls between two pixel centres.
+float distance_to_outline(const std::vector<Point2f>& points, float x, float y) {
+    float best = 1.0e9f;
+    for (std::size_t i = 0, j = points.size() - 1; i < points.size(); j = i++) {
+        const Point2f& a = points[i];
+        const Point2f& b = points[j];
+        const float dx = b.x - a.x;
+        const float dy = b.y - a.y;
+        const float length_squared = dx * dx + dy * dy;
+        float t = 0.0f;
+        if (length_squared > 0.0f) t = ((x - a.x) * dx + (y - a.y) * dy) / length_squared;
+        t = std::clamp(t, 0.0f, 1.0f);
+        const float px = a.x + t * dx - x;
+        const float py = a.y + t * dy - y;
+        best = std::min(best, std::sqrt(px * px + py * py));
+    }
+    return best;
+}
+
+// A textured fill covers the shape's inside with the texture's grain and stays
+// inside the shape; with an outline chosen as well, both parts are painted.
+void test_textured_fills_are_grainy_and_bounded() {
+    const ShapeTexture textures[] = {ShapeTexture::Crayon, ShapeTexture::Marker, ShapeTexture::Oil,
+                                     ShapeTexture::NaturalPencil, ShapeTexture::Watercolor};
+    for (const ShapeId kind :
+         {ShapeId::Rectangle, ShapeId::Oval, ShapeId::Lightning, ShapeId::Star5}) {
+        const std::vector<Point2f> points = shape::outline(kind, {4, 4}, {83, 83}, {});
+        CHECK(points.size() >= 3);
+        for (const ShapeTexture texture : textures) {
+            PixelBuffer fill_only(88, 88);
+            ShapeOptions options{kind, ShapeTexture::None, texture, 1, 8};
+            rasterize_shape(Target{fill_only}, kind, {4, 4}, {83, 83}, {}, options, kInk, kFill);
+            if (painted_count(fill_only) == 0)
+                std::printf("kind %d texture %d filled nothing\n", static_cast<int>(kind),
+                            static_cast<int>(texture));
+            CHECK(painted_count(fill_only) > 0);
+            if (distinct_values(fill_only) < 2)
+                std::printf("kind %d texture %d is flat\n", static_cast<int>(kind),
+                            static_cast<int>(texture));
+            CHECK(distinct_values(fill_only) >= 2);
+            int outside = 0;
+            for (int y = 0; y < 88; ++y)
+                for (int x = 0; x < 88; ++x) {
+                    const float px = static_cast<float>(x) + 0.5f;
+                    const float py = static_cast<float>(y) + 0.5f;
+                    if (fill_only.at(x, y).a != 0 && !inside_polygon(points, px, py) &&
+                        distance_to_outline(points, px, py) > 1.5f)
+                        ++outside;
+                }
+            if (outside != 0)
+                std::printf("kind %d texture %d painted %d pixels outside\n",
+                            static_cast<int>(kind), static_cast<int>(texture), outside);
+            CHECK(outside == 0);
+            // The outline is painted as well and never sits inside the fill.
+            PixelBuffer both(88, 88);
+            options.outline = ShapeTexture::Solid;
+            rasterize_shape(Target{both}, kind, {4, 4}, {83, 83}, {}, options, kInk, kFill);
+            CHECK(painted_count(both) > painted_count(fill_only));
+        }
+    }
+    // A hatched interior is painted, not left empty.
+    PixelBuffer hatched(88, 88);
+    const ShapeOptions options{ShapeId::Rectangle, ShapeTexture::Solid, ShapeTexture::Crayon, 1, 8};
+    rasterize_shape(Target{hatched}, ShapeId::Rectangle, {4, 4}, {83, 83}, {}, options, kInk, kFill);
+    CHECK(painted_in(hatched, RectI{10, 10, 60, 60}) > 200);
+}
+
 }  // namespace
 
 int main() {
@@ -256,6 +416,9 @@ int main() {
     test_heart_is_wide_and_centred();
     test_lightning_fill_is_solid();
     test_rectangle_and_oval_use_their_own_primitives();
+    test_textured_outlines_are_grainy_and_bounded();
+    test_textured_outline_respects_the_target_clip();
+    test_textured_fills_are_grainy_and_bounded();
 
     for (const ShapeId kind : kShapeIds) {
         if (!shape::is_closed(kind)) continue;

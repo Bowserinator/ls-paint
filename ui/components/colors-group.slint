@@ -1,0 +1,171 @@
+import { Styles } from "../styles.slint";
+
+import { BarItemGroup } from "../bar/bar.slint";
+import { BarDropdown } from "bar-dropdown.slint";
+import {
+    ColorButton,
+    ColorButtonVertical,
+    ImageButtonVertical,
+    ImageButtonVerticalDropdown,
+} from "image-buttons.slint";
+import { UserState } from "../globals.slint";
+
+// The Colors group both ribbon bars show, with the panel that opens from it.
+export component ColorsGroup inherits BarItemGroup {
+    // True while the group stands as one button that opens the panel in place
+    // of the swatches.
+    in property <bool> merged: false;
+    // The width of the bar the group sits in: the panel slides left to keep its
+    // right edge inside a narrow bar.
+    in property <length> bar-width: 0px;
+
+    title: "Colors";
+    show-title: !root.merged;
+    width: root.merged ? Styles.ribbon-merged-width : Styles.ribbon-width-colors;
+
+    colors-menu := PopupWindow {
+        y: Styles.bar-dropdown-y;
+        // The widest panel in the ribbon: it stays under its button while
+        // the bar has room and slides left to keep its right edge inside
+        // the bar when the button sits near the end of a narrow window.
+        x: root.x + colors-merged.x + Styles.bar-colors-menu-width
+                > root.bar-width - Styles.bar-padding
+            ? root.bar-width - Styles.bar-padding - Styles.bar-colors-menu-width - root.x
+            : colors-merged.x;
+
+        BarDropdown {
+            panel-width: Styles.bar-colors-menu-width;
+
+            // The swatches sit beside the palette, as Paint draws them.
+            HorizontalLayout {
+                padding: 6px;
+                spacing: 6px;
+
+                ColorButtonVertical {
+                    width: 50px;
+                    colr: UserState.primary-color;
+                    // Wrapped like Paint's, so the caption never elides.
+                    text: "Color\n1";
+                    focused: UserState.color_idx == 0;
+                    clicked => { UserState.color_idx = 0; }
+                }
+                ColorButtonVertical {
+                    width: 50px;
+                    colr: UserState.secondary-color;
+                    text: "Color\n2";
+                    focused: UserState.color_idx == 1;
+                    clicked => { UserState.color_idx = 1; }
+                }
+
+                Rectangle {
+                    width: Styles.bar-color-cell * 10;
+                    height: Styles.bar-color-cell * 3;
+
+                    for color[i] in UserState.color_palette: ColorButton {
+                        x: mod(i, 10) * Styles.bar-color-cell;
+                        y: floor(i / 10) * Styles.bar-color-cell;
+                        cell: Styles.bar-color-cell;
+                        colr: color;
+                        clicked => {
+                            if (UserState.color_idx == 0) {
+                                UserState.primary-color = color;
+                            } else {
+                                UserState.secondary-color = color;
+                            }
+                        }
+                    }
+                }
+
+                // Paint keeps the picker tile at the end of the palette row.
+                ImageButtonVertical {
+                    width: Styles.bar-vertical-btn-width;
+                    icon: @image-url("../../icons/edit-colors.png");
+                    text: "Edit\ncolors";
+                }
+            }
+
+            Text {
+                width: Styles.bar-colors-menu-width - 2px;
+                height: Styles.bar-dropdown-height;
+                text: "Colors";
+                font-size: Styles.bar-font-size;
+                color: #646464;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    HorizontalLayout {
+        // Wrapped in `if` and not hidden with `visible`: an invisible element
+        // still holds its slot in the layout, so the group would not give the
+        // space back when it collapses.
+        if (!root.merged) : HorizontalLayout {
+            ColorButtonVertical {
+                width: 50px;
+                colr: UserState.primary-color;
+                // Wrapped like Paint's, so the caption never elides.
+                text: "Color\n1";
+                focused: UserState.color_idx == 0;
+                clicked => { UserState.color_idx = 0; }
+            }
+            ColorButtonVertical {
+                width: 50px;
+                colr: UserState.secondary-color;
+                text: "Color\n2";
+                focused: UserState.color_idx == 1;
+                clicked => { UserState.color_idx = 1; }
+            }
+
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 6px;
+
+                Rectangle {
+                    width: Styles.bar-color-cell * 10;
+                    height: Styles.bar-color-cell * 3;
+
+                    for color[i] in UserState.color_palette:
+                        ColorButton {
+                            x: mod(i, 10) * Styles.bar-color-cell;
+                            y: floor(i / 10) * Styles.bar-color-cell;
+                            cell: Styles.bar-color-cell;
+                            colr: color;
+                            clicked => {
+                                if (UserState.color_idx == 0) {
+                                    UserState.primary-color = color;
+                                } else {
+                                    UserState.secondary-color = color;
+                                }
+                            }
+                        }
+                }
+            }
+
+            ImageButtonVertical {
+                width: 70px;
+                // Two lines, as Paint draws it, so the caption never elides.
+                text: "Edit\ncolors";
+                icon: @image-url("../../icons/edit-colors.png");
+                clicked => { UserState.edit-colors(); }
+            }
+
+            // A little air between the last button and the group's edge.
+            Rectangle {
+                width: 4px;
+                background: transparent;
+            }
+        }
+
+        colors-merged := ImageButtonVerticalDropdown {
+            visible: root.merged;
+            focused1: colors-menu.is-open;
+            focused2: colors-menu.is-open;
+            width: root.merged ? Styles.ribbon-merged-button : 0px;
+            text: "Colors";
+            icon: @image-url("../../icons/edit-colors.png");
+            clicked => { colors-menu.show(); }
+            clicked_dropdown => { colors-menu.show(); }
+        }
+    }
+}

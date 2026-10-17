@@ -3,16 +3,22 @@ import { UserState, DocumentState, ZoomScale } from "globals.slint";
 import { Styles } from "styles.slint";
 
 // The strip along the bottom, split like MS Paint's: where the pointer is,
-// how big the selection is, how big the paper is, two blanks held for later,
-// and the zoom controls on the right. Every cell is a sunken box.
+// how big the selection is, how big the paper is, the colour under the pointer,
+// a blank held for later, and the zoom controls on the right. Every cell is a
+// sunken box.
 export component StatusBar inherits Rectangle {
     background: #eceff1;
     vertical-stretch: 0;
     min-height: 26px;
 
-    // Walked by the window on every zoom change, and written by the drag
-    // itself, so the thumb and the scale never drift apart.
+    // The thumb follows the zoom, and the drag writes it too: both paths meet
+    // here, so the thumb and the scale never drift apart.
     in-out property <float> slider-pos: ZoomScale.pct-to-pos(UserState.zoom * 100);
+
+    // Watched because a drag leaves its own value in the property above: the
+    // thumb is put back on the ladder whenever the scale changes.
+    private property <float> zoom-pct: UserState.zoom * 100;
+    changed zoom-pct => { root.slider-pos = ZoomScale.pct-to-pos(root.zoom-pct); }
 
     // Fired with the notch the slider was dropped on.
     callback zoom-chosen(pct: float);
@@ -93,14 +99,29 @@ export component StatusBar inherits Rectangle {
             }
         }
 
-        // Two blanks, kept for whatever the ribbon grows next.
+        // The colour under the pointer, blank while it is off the paper.
         Rectangle {
             horizontal-stretch: 1;
             background: #f7f8fa;
             border-width: 1px;
             border-color: #c8ccd2;
+
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 6px;
+
+                Text {
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    overflow: elide;
+                    font-size: Styles.bar-font-size;
+                    color: Styles.bar-text-color;
+                    text: UserState.cursor-on-canvas ? UserState.hover-color-text : "";
+                }
+            }
         }
 
+        // A blank, kept for whatever the ribbon grows next.
         Rectangle {
             horizontal-stretch: 1;
             background: #f7f8fa;

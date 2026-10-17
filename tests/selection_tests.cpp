@@ -659,6 +659,50 @@ void test_select_all_and_clear_selection() {
 
 }  // namespace
 
+// The lasso outlines itself while it is still being drawn: the tool publishes
+// the path traced so far, and drops it once the stroke lands.
+void test_freehand_gesture_publishes_its_path() {
+    Fixture fixture;
+    fixture.shape = SelectionShape::Freehand;
+    SelectionTool tool;
+
+    tool.on_pointer_down(fixture.ctx, {4, 4}, PointerButton::Primary);
+    CHECK(fixture.tool_ui.selection.points.size() == 1);
+    tool.on_pointer_move(fixture.ctx, {10, 10});
+    tool.on_pointer_move(fixture.ctx, {20, 14});
+    CHECK(fixture.tool_ui.selection.points.size() == 3);
+    CHECK(fixture.tool_ui.selection.points.front().x == 4.0f);
+    CHECK(fixture.tool_ui.selection.points.back().y == 14.0f);
+
+    tool.on_pointer_up(fixture.ctx, {20, 14});
+    CHECK(fixture.tool_ui.selection.points.empty());
+    CHECK(fixture.doc.selection().active());
+}
+
+// A polygon in progress previews the edge the next click would place, and
+// Escape abandons the whole gesture without touching the selection.
+void test_polygon_gesture_previews_and_escape_abandons_it() {
+    Fixture fixture;
+    fixture.shape = SelectionShape::Polygon;
+    SelectionTool tool;
+
+    tool.on_pointer_down(fixture.ctx, {4, 4}, PointerButton::Primary);
+    tool.on_pointer_down(fixture.ctx, {20, 4}, PointerButton::Primary);
+    CHECK(fixture.tool_ui.selection.points.size() == 2);
+
+    tool.on_pointer_move(fixture.ctx, {20, 20});
+    CHECK(fixture.tool_ui.selection.points.size() == 3);
+    CHECK(fixture.tool_ui.selection.points.back().y == 20.0f);
+
+    tool.on_key_pressed(fixture.ctx, "\x1b");
+    CHECK(fixture.tool_ui.selection.points.empty());
+
+    // The abandoned points are gone: a fresh click starts a new polygon.
+    tool.on_pointer_down(fixture.ctx, {8, 8}, PointerButton::Primary);
+    CHECK(fixture.tool_ui.selection.points.size() == 1);
+    CHECK(!fixture.doc.selection().active());
+}
+
 int main() {
     test_degenerate_marquee_leaves_canvas_paintable();
     test_fewer_than_three_polygon_points_leaves_no_selection();
@@ -687,6 +731,8 @@ int main() {
     test_a_fully_clipped_stroke_leaves_no_undo_entry();
     test_resize_undo_restores_the_selection();
     test_select_all_and_clear_selection();
+    test_freehand_gesture_publishes_its_path();
+    test_polygon_gesture_previews_and_escape_abandons_it();
 
     std::printf(failures == 0 ? "ALL OK\n" : "%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;

@@ -1,0 +1,225 @@
+import { ScrollView } from "std-widgets.slint";
+
+import { Styles } from "../styles.slint";
+
+import { Bar, BarDivider, BarItemGroup } from "bar.slint";
+import { BarDropdown, BarDropdownDivider, BarDropdownTextItem } from "../components/bar-dropdown.slint";
+import { ImageButtonHorizontal } from "../components/image-buttons.slint";
+import { ColorsGroup } from "../components/colors-group.slint";
+import { ClipboardGroup } from "../components/clipboard-group.slint";
+import { StyleToggle, ValueButton } from "../components/text-controls.slint";
+import { FontStyle, UserState } from "../globals.slint";
+import { WinLineEdit } from "../win10.slint";
+
+// The text tool's tab. It stands in for the editing groups while that tool is
+// selected, and holds only the controls the text tool reads.
+export component TextBar inherits Bar {
+    // How much of the font list is on screen at once. The rest is reached by
+    // dragging the list or turning the wheel over it.
+    private property <int> visible-families: 10;
+    // What the family list is filtered by. It lives here rather than in the
+    // popup so the button that opens the popup can clear it.
+    private property <string> family-query: "";
+
+    // The Colors group gives up its swatches for its merged button first, and
+    // the Clipboard group gives up its buttons only once that is not enough.
+    private property <bool> collapsed-colors:
+        root.width < Styles.ribbon-width-font + Styles.ribbon-width-background
+            + Styles.ribbon-width-colors + Styles.ribbon-width-clipboard
+            + 3 * Styles.ribbon-divider + Styles.ribbon-overflow-margin;
+
+    // Written against the ribbon width with the Colors group already merged.
+    private property <bool> collapsed-clipboard:
+        root.width < Styles.ribbon-width-font + Styles.ribbon-width-background
+            + Styles.ribbon-merged-width + Styles.ribbon-width-clipboard
+            + 3 * Styles.ribbon-divider + Styles.ribbon-overflow-margin;
+
+    HorizontalLayout {
+        spacing: 0px;
+        alignment: start;
+
+        ClipboardGroup {
+            merged: root.collapsed-clipboard;
+            bar-width: root.width;
+        }
+
+        BarDivider {}
+
+        grp-font := BarItemGroup {
+            title: "Font";
+            width: Styles.ribbon-width-font;
+
+            VerticalLayout {
+                // Top-aligned, so the two rows sit against the top of the group
+                // the way the Home tab's controls do.
+                alignment: start;
+                spacing: Styles.bar-padding;
+
+                HorizontalLayout {
+                    size-button := ValueButton {
+                        caption: FontStyle.size / 1px;
+                        width: 56px;
+                        focused: size-dropdown.is-open;
+                        clicked => { size-dropdown.show(); }
+                    }
+
+                    StyleToggle {
+                        glyph: "B";
+                        bold-glyph: true;
+                        active: FontStyle.bold;
+                        clicked => { FontStyle.bold = !FontStyle.bold; }
+                    }
+                    StyleToggle {
+                        glyph: "I";
+                        glyph-family: "Times New Roman";
+                        italic-glyph: true;
+                        active: FontStyle.italic;
+                        clicked => { FontStyle.italic = !FontStyle.italic; }
+                    }
+                    StyleToggle {
+                        glyph: "U";
+                        underline-glyph: true;
+                        active: FontStyle.underline;
+                        clicked => { FontStyle.underline = !FontStyle.underline; }
+                    }
+                    StyleToggle {
+                        glyph: "S";
+                        strike-glyph: true;
+                        active: FontStyle.strike;
+                        clicked => { FontStyle.strike = !FontStyle.strike; }
+                    }
+                }
+
+                HorizontalLayout {
+                    family-button := ValueButton {
+                        caption: FontStyle.family;
+                        // The name of the family, drawn in that family.
+                        caption-family: FontStyle.family;
+                        width: Styles.ribbon-width-font - 2 * Styles.ribbon-group-padding;
+                        focused: family-dropdown.is-open;
+                        clicked => {
+                            // A fresh list every time it opens: the filter box
+                            // starts empty.
+                            root.family-query = "";
+                            FontStyle.filter-families("");
+                            family-dropdown.show();
+                        }
+                    }
+                }
+            }
+        }
+
+        BarDivider {}
+
+        BarItemGroup {
+            title: "Background";
+            width: Styles.ribbon-width-background;
+
+            VerticalLayout {
+                alignment: start;
+                spacing: Styles.bar-list-spacing;
+
+                // The two selectors are one setting: the text either covers what
+                // is under it or lets it show through. The opaque one previews
+                // the color the text is filled with.
+                ImageButtonHorizontal {
+                    icon: @image-url("../../icons/text/background-frame.png");
+                    text: "Opaque";
+                    swatch: UserState.secondary-color;
+                    focused: FontStyle.opaque-background;
+                    clicked => { FontStyle.opaque-background = true; }
+                }
+                ImageButtonHorizontal {
+                    icon: @image-url("../../icons/text/background-frame.png");
+                    text: "Transparent";
+                    focused: !FontStyle.opaque-background;
+                    clicked => { FontStyle.opaque-background = false; }
+                }
+            }
+        }
+
+        BarDivider {}
+
+        ColorsGroup {
+            merged: root.collapsed-colors;
+            bar-width: root.width;
+        }
+    }
+
+    family-dropdown := PopupWindow {
+        // Hung off the button itself: a popup's coordinates are window
+        // coordinates, so the button's absolute position is what it needs.
+        x: family-button.absolute-position.x;
+        y: family-button.absolute-position.y;
+        // The filter box is inside the panel, so a click in it must not close
+        // the panel the way the default policy would.
+        close-policy: close-on-click-outside;
+
+        BarDropdown {
+            // As wide as the box that opens it, so the list hangs under the
+            // family control instead of running past it.
+            panel-width: family-button.width;
+
+            // The filter the list is narrowed by.
+            family-filter := WinLineEdit {
+                width: family-button.width - 2px;
+                text <=> root.family-query;
+                placeholder-text: "Filter";
+                edited(text) => { FontStyle.filter-families(text); }
+            }
+
+            BarDropdownDivider {}
+
+            ScrollView {
+                // The panel's width, and not the list's: the view's own
+                // preferred width is 100%, so without this the panel collapses
+                // to the scrollbar and the rows spill out of it.
+                min-width: family-button.width - 2px;
+                // As tall as the list needs, up to the number of rows that fit:
+                // a filtered list is shorter than the panel can be.
+                height: min(root.visible-families, FontStyle.families.length)
+                    * Styles.bar-dropdown-compact-height;
+                viewport-width: self.width;
+                viewport-height: FontStyle.families.length * Styles.bar-dropdown-compact-height;
+                vertical-scrollbar-policy: always-on;
+
+                for family[i] in FontStyle.families : BarDropdownTextItem {
+                    width: family-button.width - 2px;
+                    y: i * Styles.bar-dropdown-compact-height;
+                    text: family;
+                    label-family: family;
+                    // The names read as a preview of the face, so they are set
+                    // a little larger than the surrounding text.
+                    label-size: Styles.bar-font-size * 1.2;
+                    focused: FontStyle.family == family;
+                    clicked => {
+                        FontStyle.family = family;
+                        FontStyle.family-changed();
+                        family-dropdown.close();
+                    }
+                }
+            }
+        }
+    }
+
+    size-dropdown := PopupWindow {
+        x: size-button.absolute-position.x;
+        y: size-button.absolute-position.y;
+
+        BarDropdown {
+            // Only as wide as the box that opens it, since the list holds
+            // numbers and nothing else.
+            panel-width: size-button.width;
+
+            for size in [8px, 9px, 10px, 11px, 12px, 14px, 16px, 18px, 20px, 22px, 24px, 26px, 28px, 36px, 48px, 72px] : BarDropdownTextItem {
+                width: size-button.width - 2px;
+                text: size / 1px;
+                focused: FontStyle.size == size;
+                clicked => {
+                    FontStyle.size = size;
+                    size-dropdown.close();
+                }
+            }
+        }
+    }
+}

@@ -1,9 +1,10 @@
 import { ScrollView, Palette } from "std-widgets.slint";
 import { TopBar } from "topbar.slint";
-import { TextOptionsBar } from "bar/bar-options.slint";
 import { StatusBar } from "statusbar.slint";
+import { Styles } from "styles.slint";
 import { CanvasResizeHandle } from "components/canvas-resize-handle.slint";
 import { CanvasMenuItem, CanvasMenuDivider, CanvasMenuFrame } from "components/canvas-menu.slint";
+import { CanvasRuler } from "components/canvas-ruler.slint";
 import { CanvasShadow } from "components/canvas-shadow.slint";
 import { FileDialog } from "dialogs/file-dialog.slint";
 import { ConfirmDialog } from "dialogs/confirm-dialog.slint";
@@ -12,6 +13,40 @@ import { ResizeDialog } from "dialogs/resize-dialog.slint";
 
 import { UserState, DocumentState, DialogState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay } from "globals.slint";
 export * from "globals.slint";
+
+// The frame the open text box wears: the run pattern the selection outline is
+// made of, held still instead of crawling. Each run is one screen pixel, so the
+// frame stays one pixel thick at every zoom.
+component AntsFrame inherits Rectangle {
+    for i in floor(root.width / 3px) : Rectangle {
+        x: i * 3px;
+        y: 0px;
+        width: min(3px, root.width - i * 3px);
+        height: 1px;
+        background: mod(i, 2) == 0 ? black : white;
+    }
+    for i in floor(root.width / 3px) : Rectangle {
+        x: i * 3px;
+        y: root.height - 1px;
+        width: min(3px, root.width - i * 3px);
+        height: 1px;
+        background: mod(i, 2) == 0 ? black : white;
+    }
+    for i in floor(root.height / 3px) : Rectangle {
+        x: 0px;
+        y: i * 3px;
+        width: 1px;
+        height: min(3px, root.height - i * 3px);
+        background: mod(i, 2) == 0 ? black : white;
+    }
+    for i in floor(root.height / 3px) : Rectangle {
+        x: root.width - 1px;
+        y: i * 3px;
+        width: 1px;
+        height: min(3px, root.height - i * 3px);
+        background: mod(i, 2) == 0 ? black : white;
+    }
+}
 
 export component AppWindow inherits Window {
     in property <image> texture <=> canvas.source;
@@ -27,6 +62,16 @@ export component AppWindow inherits Window {
     property <length> doc-h: DocumentState.canvas-height * 1px;
     property <length> canvas-w: root.doc-w * UserState.zoom;
     property <length> canvas-h: root.doc-h * UserState.zoom;
+
+    // The grid's step in document pixels: the smallest power of two that keeps
+    // a gap of at least 8px on screen, which never leaves more than 16px.
+    property <float> grid-spacing:
+        UserState.zoom >= 4.0 ? 2.0
+        : UserState.zoom >= 2.0 ? 4.0
+        : UserState.zoom >= 1.0 ? 8.0
+        : UserState.zoom >= 0.5 ? 16.0
+        : UserState.zoom >= 0.25 ? 32.0
+        : 64.0;
     property <length> resize-dx;
     property <length> resize-dy;
     // Scratch for set-zoom: how far the viewport slides per pixel of cursor
@@ -60,10 +105,9 @@ export component AppWindow inherits Window {
     }
 
     // Where every zoom change funnels through: clamp the scale to the ends
-    // of the ladder, turn the view around the point under (px, py) so the
-    // document pixel there stays put, and walk the status bar's slider to
-    // the new notch. The zoom changes first because the new canvas size is
-    // what the viewport clamp below has to respect.
+    // of the ladder and turn the view around the point under (px, py) so the
+    // document pixel there stays put. The zoom changes first because the new
+    // canvas size is what the viewport clamp below has to respect.
     function set-zoom(target: float, px: length, py: length) {
         let z = clamp(target, 0.125, 7.0);
         root.zoom-anchor = 1.0 - z / UserState.zoom;
@@ -72,7 +116,6 @@ export component AppWindow inherits Window {
                                          scroll.viewport-x + px * root.zoom-anchor));
         scroll.viewport-y = min(0px, max(min(0px, scroll.visible-height - scroll.viewport-height),
                                          scroll.viewport-y + py * root.zoom-anchor));
-        status-bar.slider-pos = ZoomScale.pct-to-pos(z * 100);
     }
 
     // Ctrl+wheel zooms the view around the point under the cursor; over the
@@ -151,7 +194,47 @@ export component AppWindow inherits Window {
                 vertical-stretch: 1;
                 min-height: 100px;
 
+                // The rulers sit on the view's top and left edges and hold it
+                // clear, so what shrinks while they show is the canvas. The top
+                // strip runs the full width, which puts the document's zero one
+                // strip in from its own start.
+                if UserState.show-rulers : CanvasRuler {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: Styles.ruler-size;
+                    doc-length: root.doc-w;
+                    view-length: scroll.visible-width;
+                    scroll-offset: scroll.viewport-x;
+                    start-in: Styles.ruler-size;
+                    show-pointer: UserState.cursor-on-canvas;
+                    pointer: UserState.cursor-x;
+                    show-selection: DocumentState.has-selection;
+                    selection-start: DocumentState.selection-x;
+                    selection-size: DocumentState.selection-width;
+                }
+
+                if UserState.show-rulers : CanvasRuler {
+                    x: 0px;
+                    y: Styles.ruler-size;
+                    width: Styles.ruler-size;
+                    height: parent.height - Styles.ruler-size;
+                    vertical: true;
+                    doc-length: root.doc-h;
+                    view-length: scroll.visible-height;
+                    scroll-offset: scroll.viewport-y;
+                    show-pointer: UserState.cursor-on-canvas;
+                    pointer: UserState.cursor-y;
+                    show-selection: DocumentState.has-selection;
+                    selection-start: DocumentState.selection-y;
+                    selection-size: DocumentState.selection-height;
+                }
+
                 scroll := ScrollView {
+                    x: UserState.show-rulers ? Styles.ruler-size : 0px;
+                    y: UserState.show-rulers ? Styles.ruler-size : 0px;
+                    width: parent.width - (UserState.show-rulers ? Styles.ruler-size : 0px);
+                    height: parent.height - (UserState.show-rulers ? Styles.ruler-size : 0px);
                     viewport-width: corner-handle.x + corner-handle.width + root.canvas-origin;
                     viewport-height: corner-handle.y + corner-handle.height + root.canvas-origin;
 
@@ -332,6 +415,32 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    // The grid: one line per step, over the paper and under
+                    // everything that is drawn on top of it. The loop stops
+                    // before the far edge, so no line lands outside the paper.
+                    if UserState.show-gridlines : Rectangle {
+                        x: root.canvas-origin;
+                        y: root.canvas-origin;
+                        width: root.canvas-w;
+                        height: root.canvas-h;
+                        background: transparent;
+                        clip: true;
+
+                        for i in floor((root.doc-w - 1px) / (root.grid-spacing * 1px)) + 1 : Rectangle {
+                            x: i * root.grid-spacing * UserState.zoom * 1px;
+                            width: 1px;
+                            height: 100%;
+                            background: Styles.canvas-grid-color;
+                        }
+
+                        for i in floor((root.doc-h - 1px) / (root.grid-spacing * 1px)) + 1 : Rectangle {
+                            y: i * root.grid-spacing * UserState.zoom * 1px;
+                            width: 100%;
+                            height: 1px;
+                            background: Styles.canvas-grid-color;
+                        }
+                    }
+
                     Rectangle {
                         x: root.canvas-origin;
                         y: root.canvas-origin;
@@ -367,16 +476,41 @@ export component AppWindow inherits Window {
                         y: root.canvas-origin + TextOverlay.y * UserState.zoom;
                         width: max(24px, text-field.preferred-width);
                         height: max(1px, text-field.preferred-height);
+                        // The rules are as long as the lines they decorate, so
+                        // the backend is asked to measure again whenever the
+                        // text or the face it is set in changes.
+                        private property <string> mark-text: TextOverlay.content;
+                        private property <length> mark-size: FontStyle.size * FontStyle.preview-scale;
+                        changed mark-text => { UserState.measure-text(mark-text); }
+                        changed mark-size => { UserState.measure-text(TextOverlay.content); }
                         background: transparent;
+                        // The frame is drawn as runs, so the solid border only
+                        // holds the text one pixel clear of it.
                         border-width: 1px;
-                        border-color: #4a86c8;
+                        border-color: transparent;
+
+                        // The opaque setting fills the band behind the text:
+                        // the area the committed pixels fill, in the colour
+                        // the commit uses.
+                        Rectangle {
+                            visible: FontStyle.opaque-background;
+                            x: 1px;
+                            y: 1px;
+                            width: parent.width - 2px;
+                            height: parent.height - 2px;
+                            background: UserState.secondary-color;
+                        }
+
                         text-field := TextInput {
                             width: 100%;
                             height: 100%;
                             text <=> TextOverlay.content;
                             color: TextOverlay.color;
                             font-family: FontStyle.family;
-                            font-size: FontStyle.size * UserState.zoom;
+                            // The raster measures a size as the face's ascent plus
+                            // descent, so the overlay scales by the face's own ratio
+                            // to stay as large as the committed pixels.
+                            font-size: FontStyle.size * UserState.zoom * FontStyle.preview-scale;
                             font-italic: FontStyle.italic;
                             font-weight: FontStyle.bold ? 700 : 400;
                             wrap: no-wrap;
@@ -386,11 +520,49 @@ export component AppWindow inherits Window {
                             init => { self.focus(); }
                             key-pressed(event) => {
                                 if (event.text == "\u{1b}") {
-                                    UserState.commit-text(TextOverlay.content);
+                                    UserState.cancel-text();
                                     return accept;
                                 }
                                 return reject;
                             }
+                        }
+
+                        // The styles are not text properties, so the marks they
+                        // stand for are drawn here: one rule per line, laid out
+                        // from the baseline the input puts that line on.
+                        for i in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] : Rectangle {
+                            x: 0px;
+                            y: i * (text-field.font-metrics.ascent - text-field.font-metrics.descent);
+                            width: i < TextOverlay.line-widths.length ? TextOverlay.line-widths[i] * UserState.zoom * 1px : 0px;
+                            height: text-field.font-metrics.ascent - text-field.font-metrics.descent;
+                            visible: (i + 1) * (text-field.font-metrics.ascent - text-field.font-metrics.descent) <= text-field.preferred-height + 0.5px;
+
+                            Rectangle {
+                                visible: FontStyle.underline;
+                                x: 0px;
+                                y: text-field.font-metrics.ascent + 0.15 * FontStyle.size * UserState.zoom;
+                                width: 100%;
+                                height: 1px;
+                                background: TextOverlay.color;
+                            }
+
+                            Rectangle {
+                                visible: FontStyle.strike;
+                                x: 0px;
+                                y: text-field.font-metrics.ascent - 0.28 * FontStyle.size * UserState.zoom;
+                                width: 100%;
+                                height: 1px;
+                                background: TextOverlay.color;
+                            }
+                        }
+
+                        // Over the text, where the selection's own outline sits:
+                        // on the box's edge, one pixel clear of the glyphs.
+                        AntsFrame {
+                            x: -1px;
+                            y: -1px;
+                            width: parent.width + 2px;
+                            height: parent.height + 2px;
                         }
                     }
 
@@ -462,20 +634,13 @@ export component AppWindow inherits Window {
                         released(dx, dy) => { root.resize-canvas(dx, dy); }
                     }
                 }
-
-                // The text tool's options float over the top of the canvas area,
-                // the way Paint's own text strip does: they are not a ribbon
-                // group and must not take part in the window's layout.
-                TextOptionsBar {
-                    x: 0px;
-                    y: 0px;
-                    width: 100%;
-                }
             }
 
             // The bottom strip: pointer position, selection size, paper size,
-            // two blanks, and the zoom controls on the right.
-            status-bar := StatusBar {
+            // the colour under the pointer, a blank, and the zoom controls.
+            // The View tab's Status Bar box holds it out of the layout when it
+            // is clear, so the canvas takes the space back.
+            if UserState.show-status-bar : StatusBar {
                 vertical-stretch: 0;
 
                 zoom-chosen(pct) => {
