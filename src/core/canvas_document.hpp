@@ -33,6 +33,10 @@ public:
 
     [[nodiscard]] std::vector<PixelBuffer> snapshot() const;
     void restore(std::vector<PixelBuffer> pixels);
+    // Exchanges the layer pixels with another stack, for an undo entry that
+    // hands a whole state back without copying it. The flattened image is
+    // rebuilt from scratch.
+    void swap_pixels(std::vector<PixelBuffer>& pixels);
     void resize(int width, int height, Rgba8 fill);
     void crop_to(RectI region);
 

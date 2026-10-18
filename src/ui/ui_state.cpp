@@ -17,6 +17,7 @@
 
 #include "config.hpp"
 #include "core/color.hpp"
+#include "io/clipboard.hpp"
 #include "io/document_io.hpp"
 #include "store/store_sqlite.hpp"
 #include "text/font_catalog.hpp"
@@ -485,6 +486,12 @@ UiState::UiState(AppWindow& window, AppController& controller)
             case ShortcutAction::Paste: do_paste(); break;
             case ShortcutAction::SelectAll: m_controller.select_all(); break;
             case ShortcutAction::Deselect: m_controller.clear_selection(); break;
+            case ShortcutAction::Delete:
+                // Nothing selected means nothing to clear, and unlike the menu
+                // command this key never touches the whole canvas. Cut and the
+                // eraser erase to the secondary colour, so this does too.
+                if (m_controller.document().selection().active()) m_controller.delete_selection_contents();
+                break;
             case ShortcutAction::New: do_file_new(); break;
             case ShortcutAction::Open: do_file_open(); break;
             case ShortcutAction::Save: do_file_save(); break;
@@ -524,6 +531,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
     });
     m_window.global<UserState>().on_copy_selection([this] { m_controller.copy_selection(); refresh(); });
     m_window.global<UserState>().on_paste_selection([this] { do_paste(); });
+    m_window.global<UserState>().on_check_clipboard([this] { check_clipboard(); });
     m_window.global<UserState>().on_transform_selection_content(
         [this](EContentTransform transform) {
             sync_colors();
@@ -551,6 +559,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
         return slint::CloseRequestResponse::KeepWindowShown;
     });
 
+    check_clipboard();
     refresh();
 
     // The outline crawls on its own: nothing else has to touch it.
@@ -569,7 +578,6 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
 void UiState::load_settings() {
     if (!m_settings) return;
-    slint::Window& window = m_window.window();
 
     if (const std::optional<std::string> family = m_settings->get(kSTORE_KEY_FONT_FAMILY);
         family && !family->empty()) {
@@ -586,16 +594,7 @@ void UiState::load_settings() {
     if (const std::optional<bool> stored = stored_bool(*m_settings, kSTORE_KEY_SHOW_STATUS_BAR))
         m_window.global<UserState>().set_show_status_bar(*stored);
 
-    // The geometry is stored in logical pixels, so the same numbers mean the
-    // same window on a screen with a different scale factor.
-    const std::optional<int> width = stored_int(*m_settings, kSTORE_KEY_WINDOW_WIDTH);
-    const std::optional<int> height = stored_int(*m_settings, kSTORE_KEY_WINDOW_HEIGHT);
-    if (width && height && *width > 0 && *height > 0) {
-        window.set_size(slint::LogicalSize({static_cast<float>(*width), static_cast<float>(*height)}));
-    }
-    const std::optional<int> x = stored_int(*m_settings, kSTORE_KEY_WINDOW_X);
-    const std::optional<int> y = stored_int(*m_settings, kSTORE_KEY_WINDOW_Y);
-    if (x && y) window.set_position(slint::LogicalPosition({static_cast<float>(*x), static_cast<float>(*y)}));
+    restore_settings();
 
     // The File menu's recent list, newest entry first.
     if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_RECENT_FILES)) {
@@ -652,6 +651,21 @@ UiState::SettingsSnapshot UiState::current_settings() const {
     snapshot.status_bar = user.get_show_status_bar();
     snapshot.family = std::string(m_window.global<FontStyle>().get_family());
     return snapshot;
+}
+
+void UiState::restore_settings() {
+    if (!m_settings) return;
+    slint::Window& window = m_window.window();
+    // The geometry is stored in logical pixels, so the same numbers mean the
+    // same window on a screen with a different scale factor.
+    const std::optional<int> width = stored_int(*m_settings, kSTORE_KEY_WINDOW_WIDTH);
+    const std::optional<int> height = stored_int(*m_settings, kSTORE_KEY_WINDOW_HEIGHT);
+    if (width && height && *width > 0 && *height > 0) {
+        window.set_size(slint::LogicalSize({static_cast<float>(*width), static_cast<float>(*height)}));
+    }
+    const std::optional<int> x = stored_int(*m_settings, kSTORE_KEY_WINDOW_X);
+    const std::optional<int> y = stored_int(*m_settings, kSTORE_KEY_WINDOW_Y);
+    if (x && y) window.set_position(slint::LogicalPosition({static_cast<float>(*x), static_cast<float>(*y)}));
 }
 
 void UiState::save_settings() {
@@ -1150,7 +1164,7 @@ void UiState::refresh() {
     const SelectionMask& selection = document.selection();
     const RectI bounds = selection.bounds();
     state.set_has_selection(selection.active() && !bounds.empty());
-    state.set_has_clipboard(!m_controller.clipboard().empty());
+    state.set_has_clipboard(!m_controller.clipboard().empty() || m_system_clipboard);
     state.set_selection_x(bounds.x);
     state.set_selection_y(bounds.y);
     state.set_selection_width(bounds.width);
@@ -1454,18 +1468,34 @@ void UiState::do_file_exit() {
     m_window.hide();
 }
 
+// A shell round trip, so it runs when the ribbon changes tab rather than on
+// every refresh: that is what keeps the Paste commands honest about what the
+// system clipboard holds.
+void UiState::check_clipboard() { m_system_clipboard = Clipboard::has_image(); }
+
 void UiState::do_paste() {
-    // A selection copied in the app pastes as it always did; an empty in-app
-    // clipboard falls back to the image the system clipboard holds.
-    if (!m_controller.clipboard().empty()) {
-        m_controller.paste_clipboard();
-    } else {
-        const IoResult result = m_controller.paste_from_clipboard();
-        if (!result.ok) {
-            std::fprintf(stderr, "Paste failed: %s\n", result.error.c_str());
+    // The system clipboard comes first when it holds an image this program did
+    // not put there. A block copied here keeps its mask, which the clipboard
+    // cannot carry, so that one is pasted from the copy still in memory.
+    std::string error;
+    std::optional<PixelBuffer> held = Clipboard::get_image(&error);
+    const bool copied_here = held.has_value() && !m_controller.clipboard().empty() &&
+                             *held == m_controller.clipboard().pixels;
+    if (!held.has_value() || copied_here) {
+        if (!m_controller.clipboard().empty()) {
+            m_controller.paste_clipboard();
+        } else if (!error.empty()) {
+            show_message("Paste failed", error);
+            return;
+        } else {
+            std::fprintf(stderr, "Paste failed: the clipboard does not contain an image\n");
             return;
         }
+    } else if (const IoResult result = m_controller.paste_image(std::move(*held)); !result.ok) {
+        show_message("Paste failed", result.error);
+        return;
     }
+    m_system_clipboard = true;
     // A pasted block stays a floating selection until it is applied, so hand it
     // to the selection tool: that is what gives it its grips.
     m_window.global<UserState>().set_selected_tool(ETool::SELECTION);

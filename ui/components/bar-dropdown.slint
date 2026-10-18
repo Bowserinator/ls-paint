@@ -158,7 +158,8 @@ export component BarSizeDropdownItem {
 
             Rectangle {
                 width: root.width * 0.7;
-                height: size;
+                // The preview stops growing here: a wider stroke spills out of the row.
+                height: min(size, 40px);
                 background: black;
             }
         }

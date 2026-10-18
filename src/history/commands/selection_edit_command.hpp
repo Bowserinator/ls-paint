@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <utility>
 
 #include "core/pixel_buffer.hpp"
 #include "history/command.hpp"
@@ -36,6 +37,13 @@ public:
 
     void undo(CanvasDocument& document) override { apply(document, m_before, m_mask_before, m_float_before); }
     void redo(CanvasDocument& document) override { apply(document, m_after, m_mask_after, m_float_after); }
+
+    [[nodiscard]] std::size_t memory_bytes() const noexcept override {
+        std::size_t total = pixel_bytes(m_before) + pixel_bytes(m_after);
+        if (m_float_before) total += pixel_bytes(m_float_before->content);
+        if (m_float_after) total += pixel_bytes(m_float_after->content);
+        return total;
+    }
 
 private:
     void apply(CanvasDocument& document, const PixelBuffer& pixels, const SelectionMask& mask,

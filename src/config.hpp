@@ -17,7 +17,11 @@ inline constexpr int kMaxImageDimension = 16384;
 // The application's own name: the folder under the user's config directory that
 // the settings database lives in.
 inline constexpr std::string_view kAPP_ID = "ls_paint";
-inline constexpr std::size_t kMaxHistoryEntries = 200;
+inline constexpr std::size_t kMaxHistoryEntries = 20;
+// The stack also keeps a size budget, because one entry can hold a whole
+// canvas: at 4096x4096 a single geometry entry is 64 MB, so the entry count
+// alone would let the history grow into gigabytes.
+inline constexpr std::size_t kMaxHistoryBytes = 512u * 1024u * 1024u;
 // The custom half of the palette. The ribbon shows the whole palette ten to a
 // row, so the default colors and these together fill three rows.
 inline constexpr int kCustomColorSlots = 10;

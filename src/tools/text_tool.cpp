@@ -267,72 +267,93 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
     const int strike_rise = static_cast<int>(std::lround(options.size * kStrikeRise));
 
     RectI touched;
-    int previous = 0;
     std::size_t index = 0;
+    // One line at a time, in three passes: the background bands, then the
+    // glyphs over them, then the rules. A band drawn between two glyphs would
+    // paint over the tail a slanted glyph leaves over its neighbour.
+    struct Placed {
+        std::uint32_t codepoint;
+        int pen_x;
+        int advance_px;
+    };
+    std::vector<Placed> line;
     while (index < text.size()) {
-        const std::uint32_t codepoint = next_codepoint(text, index);
-        if (codepoint == '\n') {
-            pen_x = left;
-            pen_y += line_height;
-            line_top += line_height;
-            previous = 0;
-            continue;
-        }
-
-        int advance = 0;
-        int left_side_bearing = 0;
-        stbtt_GetCodepointHMetrics(&font->info, static_cast<int>(codepoint), &advance,
-                                   &left_side_bearing);
-        if (previous != 0) {
-            pen_x += static_cast<int>(
-                std::lround(stbtt_GetCodepointKernAdvance(&font->info, previous,
-                                                          static_cast<int>(codepoint)) *
-                            scale));
-        }
-
-        const int pen_start = pen_x;
-        const int advance_px = static_cast<int>(std::lround(advance * scale));
-        if (options.opaque_background && advance_px > 0) {
-            const RectI band{pen_start, line_top, advance_px, line_height};
-            raster::draw_rect_fill(target, band, options.background);
-            touched = touched.united(band);
-        }
-
-        int width = 0;
-        int height = 0;
-        int x_offset = 0;
-        int y_offset = 0;
-        unsigned char* raw = stbtt_GetCodepointBitmap(&font->info, scale, scale,
-                                                      static_cast<int>(codepoint), &width, &height,
-                                                      &x_offset, &y_offset);
-        if (raw != nullptr) {
-            const GlyphBitmap glyph =
-                shape_glyph(raw, width, height, x_offset, y_offset, options);
-            if (glyph.width > 0 && glyph.height > 0) {
-                const RectI box{pen_x + glyph.x, pen_y + glyph.y, glyph.width, glyph.height};
-                raster::draw_glyph(target, box.x, box.y, glyph.width, glyph.height, glyph.width,
-                                   glyph.coverage.data(), color);
-                touched = touched.united(box);
+        line.clear();
+        int previous = 0;
+        bool wrapped = false;
+        while (index < text.size()) {
+            const std::uint32_t codepoint = next_codepoint(text, index);
+            if (codepoint == '\n') {
+                wrapped = true;
+                break;
             }
-            stbtt_FreeBitmap(raw, nullptr);
+
+            int advance = 0;
+            int left_side_bearing = 0;
+            stbtt_GetCodepointHMetrics(&font->info, static_cast<int>(codepoint), &advance,
+                                       &left_side_bearing);
+            if (previous != 0) {
+                pen_x += static_cast<int>(
+                    std::lround(stbtt_GetCodepointKernAdvance(&font->info, previous,
+                                                              static_cast<int>(codepoint)) *
+                                scale));
+            }
+
+            const int pen_start = pen_x;
+            const int advance_px = static_cast<int>(std::lround(advance * scale));
+            if (options.opaque_background && advance_px > 0) {
+                const RectI band{pen_start, line_top, advance_px, line_height};
+                raster::draw_rect_fill(target, band, options.background);
+                touched = touched.united(band);
+            }
+            line.push_back({codepoint, pen_start, advance_px});
+            pen_x += advance_px;
+            previous = static_cast<int>(codepoint);
+        }
+
+        for (const Placed& placed : line) {
+            int width = 0;
+            int height = 0;
+            int x_offset = 0;
+            int y_offset = 0;
+            unsigned char* raw = stbtt_GetCodepointBitmap(&font->info, scale, scale,
+                                                          static_cast<int>(placed.codepoint), &width,
+                                                          &height, &x_offset, &y_offset);
+            if (raw != nullptr) {
+                const GlyphBitmap glyph =
+                    shape_glyph(raw, width, height, x_offset, y_offset, options);
+                if (glyph.width > 0 && glyph.height > 0) {
+                    const RectI box{placed.pen_x + glyph.x, pen_y + glyph.y, glyph.width,
+                                    glyph.height};
+                    raster::draw_glyph(target, box.x, box.y, glyph.width, glyph.height, glyph.width,
+                                       glyph.coverage.data(), color);
+                    touched = touched.united(box);
+                }
+                stbtt_FreeBitmap(raw, nullptr);
+            }
         }
 
         // The marks follow the glyphs, so a descender cannot cut the rule.
-        if (advance_px > 0) {
+        for (const Placed& placed : line) {
+            if (placed.advance_px <= 0) continue;
             if (options.underline) {
-                const RectI bar{pen_start, pen_y + underline_drop, advance_px, mark_thickness};
+                const RectI bar{placed.pen_x, pen_y + underline_drop, placed.advance_px,
+                                mark_thickness};
                 raster::draw_rect_fill(target, bar, color);
                 touched = touched.united(bar);
             }
             if (options.strikethrough) {
-                const RectI bar{pen_start, pen_y - strike_rise, advance_px, mark_thickness};
+                const RectI bar{placed.pen_x, pen_y - strike_rise, placed.advance_px,
+                                mark_thickness};
                 raster::draw_rect_fill(target, bar, color);
                 touched = touched.united(bar);
             }
         }
 
-        pen_x += advance_px;
-        previous = static_cast<int>(codepoint);
+        if (!wrapped) break;
+        pen_x = left;
+        pen_y += line_height;
+        line_top += line_height;
     }
     return touched.intersected(target.pixels.bounds());
 }

@@ -76,6 +76,9 @@ export global UserState  {
     callback copy-selection();
     callback paste-selection();
     callback transform-selection-content(EContentTransform);
+    // Asks whether the system clipboard holds an image, so the paste commands
+    // can offer themselves. Raised when the ribbon changes tab.
+    callback check-clipboard;
 
     // The text box is committed by the editor (Enter, focus loss) and by the
     // C++ side when the user clicks elsewhere or leaves the tool.

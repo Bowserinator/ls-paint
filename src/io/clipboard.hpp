@@ -13,8 +13,9 @@ class Clipboard {
 public:
     // Puts `image` on the clipboard. False when it cannot be locked.
     [[nodiscard]] static bool set_image(const PixelBuffer& image);
-    // Reads an image off the clipboard. Nullopt when there is none.
-    [[nodiscard]] static std::optional<PixelBuffer> get_image();
+    // Reads an image off the clipboard. Nullopt when there is none, or when the
+    // image is over the size limit, which `error` then explains.
+    [[nodiscard]] static std::optional<PixelBuffer> get_image(std::string* error = nullptr);
     // Reads the clipboard as text. False when it holds no text.
     [[nodiscard]] static bool get_text(std::string& text);
     // True when the clipboard advertises an image, whether or not it can be read.

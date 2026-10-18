@@ -17,21 +17,25 @@ namespace {
 
 // The Wayland clipboard carries large images the X11 bridge truncates, so it is
 // read first when the session is Wayland.
-constexpr std::size_t kMaxClipboardBytes = 64u * 1024u * 1024u;
+constexpr std::size_t kMaxClipboardBytes = 256u * 1024u * 1024u;
 
-// Runs `command` and returns its standard output. No value when it fails.
-std::optional<std::string> run_capture(const std::string& command) {
-    std::FILE* pipe = popen(command.c_str(), "r");
+// Runs `command` and returns its standard output, one byte past the limit at
+// most. The reader stops there on purpose: a pipeline that is cut off gets
+// EPIPE, so the writer exits instead of blocking for ever on a full pipe.
+std::optional<std::string> run_capture(const std::string& command, bool* too_large = nullptr) {
+    const std::string limited = command + " | head -c " + std::to_string(kMaxClipboardBytes + 1);
+    std::FILE* pipe = popen(limited.c_str(), "r");
     if (pipe == nullptr) return std::nullopt;
     std::string output;
     char buffer[8192];
     std::size_t read = 0;
-    while ((read = std::fread(buffer, 1, sizeof buffer, pipe)) > 0) {
-        output.append(buffer, read);
-        if (output.size() > kMaxClipboardBytes) break;
-    }
+    while ((read = std::fread(buffer, 1, sizeof buffer, pipe)) > 0) output.append(buffer, read);
     const bool complete = pclose(pipe) == 0;
-    if (!complete || output.size() > kMaxClipboardBytes) return std::nullopt;
+    if (output.size() > kMaxClipboardBytes) {
+        if (too_large != nullptr) *too_large = true;
+        return std::nullopt;
+    }
+    if (!complete) return std::nullopt;
     return output;
 }
 
@@ -65,18 +69,22 @@ std::vector<std::string> wayland_types() {
     return types;
 }
 
-std::optional<std::string> wayland_bytes(const std::string& type) {
-    return run_capture("wl-paste --type " + type);
+std::optional<std::string> wayland_bytes(const std::string& type, bool* too_large = nullptr) {
+    return run_capture("wl-paste --type " + type, too_large);
 }
 
-std::optional<PixelBuffer> wayland_image() {
+std::optional<PixelBuffer> wayland_image(std::string* error) {
+    bool too_large = false;
     for (const std::string& type : wayland_types()) {
         if (type.rfind("image/", 0) != 0) continue;
-        const std::optional<std::string> bytes = wayland_bytes(type);
+        const std::optional<std::string> bytes = wayland_bytes(type, &too_large);
         if (!bytes) continue;
         LoadResult decoded = load_from_memory(bytes->data(), bytes->size());
         if (decoded.ok) return std::move(decoded.pixels);
     }
+    if (too_large && error != nullptr)
+        *error = "The clipboard image is larger than the " +
+                 std::to_string(kMaxClipboardBytes / (1024u * 1024u)) + " MB this program reads.";
     return std::nullopt;
 }
 
@@ -130,8 +138,8 @@ bool Clipboard::set_image(const PixelBuffer& image) {
     return clip::set_image(wrapped);
 }
 
-std::optional<PixelBuffer> Clipboard::get_image() {
-    if (std::optional<PixelBuffer> image = wayland_image()) return image;
+std::optional<PixelBuffer> Clipboard::get_image(std::string* error) {
+    if (std::optional<PixelBuffer> image = wayland_image(error)) return image;
 
     clip::image image;
     if (!clip::get_image(image) || !image.is_valid()) return std::nullopt;
@@ -140,6 +148,9 @@ std::optional<PixelBuffer> Clipboard::get_image() {
     if (spec.width == 0 || spec.height == 0) return std::nullopt;
     if (spec.width > static_cast<unsigned long>(kMaxImageDimension) ||
         spec.height > static_cast<unsigned long>(kMaxImageDimension)) {
+        if (error != nullptr)
+            *error = "The clipboard image is larger than the " +
+                     std::to_string(kMaxImageDimension) + " pixel limit.";
         return std::nullopt;
     }
 

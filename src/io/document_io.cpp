@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <system_error>
 #include <vector>
@@ -18,6 +19,31 @@ namespace lsp {
 namespace {
 
 constexpr int kJpegQuality = 90;
+
+// stb reads and writes through fopen, which cannot open a path outside the
+// ANSI code page on Windows, so the file is opened here and handed over as a
+// stream.
+std::FILE* open_read(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return _wfopen(path.wstring().c_str(), L"rb");
+#else
+    return std::fopen(path.string().c_str(), "rb");
+#endif
+}
+
+std::FILE* open_write(const std::filesystem::path& path) {
+#ifdef _WIN32
+    return _wfopen(path.wstring().c_str(), L"wb");
+#else
+    return std::fopen(path.string().c_str(), "wb");
+#endif
+}
+
+// The vendored stb_image_write wants a void callback, so a write error is
+// caught by the fclose check in save() instead of here.
+void write_stream(void* context, void* data, int size) {
+    std::fwrite(data, 1, static_cast<std::size_t>(size), static_cast<std::FILE*>(context));
+}
 
 std::string lower_extension(const std::filesystem::path& path) {
     std::string extension = path.extension().string();
@@ -63,10 +89,13 @@ LoadResult load(const std::filesystem::path& path) {
     std::error_code error;
     if (!std::filesystem::is_regular_file(path, error)) return {false, {}, "Not a file: " + path.string()};
 
+    std::FILE* file = open_read(path);
+    if (file == nullptr) return {false, {}, "Cannot open: " + path.string()};
     int width = 0;
     int height = 0;
     int channels = 0;
-    std::uint8_t* data = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
+    std::uint8_t* data = stbi_load_from_file(file, &width, &height, &channels, 4);
+    std::fclose(file);
     if (data == nullptr) return {false, {}, std::string("Cannot decode image: ") + stbi_failure_reason()};
     return from_decoded(data, width, height, path.string());
 }
@@ -98,19 +127,24 @@ bool save(const CanvasDocument& document, const std::filesystem::path& path, Ima
     const PixelBuffer& source = document.flattened();
     if (source.width() <= 0 || source.height() <= 0) return fail("Nothing to save: " + path.string());
 
-    const std::string target = path.string();
+    std::FILE* file = open_write(path);
+    if (file == nullptr) return fail("Cannot write " + path.string());
+
     int written = 0;
     if (format == ImageFormat::Png) {
-        written = stbi_write_png(target.c_str(), source.width(), source.height(), 4,
-                                 source.row(0).data(), source.width() * 4);
+        written = stbi_write_png_to_func(write_stream, file, source.width(), source.height(), 4,
+                                         source.row(0).data(), source.width() * 4);
+    } else if (format == ImageFormat::Bmp) {
+        const std::vector<std::uint8_t> bytes = to_rgb_bytes(flatten_to_opaque(source));
+        written = stbi_write_bmp_to_func(write_stream, file, source.width(), source.height(), 3,
+                                         bytes.data());
     } else {
         const std::vector<std::uint8_t> bytes = to_rgb_bytes(flatten_to_opaque(source));
-        written = format == ImageFormat::Bmp
-                      ? stbi_write_bmp(target.c_str(), source.width(), source.height(), 3, bytes.data())
-                      : stbi_write_jpg(target.c_str(), source.width(), source.height(), 3, bytes.data(),
-                                       kJpegQuality);
+        written = stbi_write_jpg_to_func(write_stream, file, source.width(), source.height(), 3,
+                                         bytes.data(), kJpegQuality);
     }
-    if (written == 0) return fail("Failed to write " + target);
+    const bool closed = std::fclose(file) == 0;
+    if (written == 0 || !closed) return fail("Failed to write " + path.string());
     return true;
 }
 

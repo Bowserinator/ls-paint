@@ -53,7 +53,11 @@ export global Styles {
     out property<length> ribbon-shapes-options: ribbon-shape-mode-width + 2 * ribbon-group-padding;
     out property<length> ribbon-width-shapes: 8 * ribbon-shape-cell + ribbon-shapes-options;
     out property<length> ribbon-width-size: 58px;
-    out property<length> ribbon-width-colors: 376px;
+    // Two swatch buttons, the ten-wide palette with its air, the picker tile
+    // and the gap before the group's edge, plus the group's own padding.
+    out property<length> ribbon-width-colors:
+        2 * ribbon-group-padding + 2 * bar-vertical-btn-width
+            + (6px + bar-color-cell * 10 + 6px) + 70px + 4px;
     out property<length> ribbon-width-about: 59px;
 
     // The View tab: three vertical buttons in Zoom, three check rows in
@@ -110,7 +114,7 @@ export global Styles {
     // The Colors dropdown is the one panel wider than the default: it puts the
     // two swatches beside the ten wide palette and the picker tile.
     out property<length> bar-colors-menu-width:
-        2px + 6px + 50px + 6px + 50px + 6px + bar-color-cell * 10
+        2px + 6px + bar-vertical-btn-width + 6px + bar-vertical-btn-width + 6px + bar-color-cell * 10
             + 6px + bar-vertical-btn-width + 6px;
     // The Shapes dropdown holds the glyph grid and, beside it, the outline and
     // fill buttons.

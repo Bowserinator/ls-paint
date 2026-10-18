@@ -104,12 +104,12 @@ void AppController::flip_vertical() {
 }
 
 // Whole-image geometry always ends deselected: the mask belongs to the old
-// geometry, so only undo has anything to put back.
-void AppController::push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before,
-                                       std::optional<FloatingContents> floating_after) {
-    m_history.push(std::make_unique<CanvasResizeCommand>(
-        std::move(before), std::move(selection_before), m_document.snapshot(),
-        SelectionMask(m_document.width(), m_document.height()), std::move(floating_after)));
+// geometry, so only undo has anything to put back. The entry keeps that old
+// state alone, and every undo and redo exchanges it with the document's, which
+// is what keeps a layer from being copied on the way in.
+void AppController::push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before) {
+    m_history.push(std::make_unique<CanvasResizeCommand>(std::move(before), std::move(selection_before),
+                                                         std::nullopt));
 }
 
 void AppController::commit_selection_contents() { m_context.commit_selection(); }
@@ -276,12 +276,16 @@ IoResult AppController::copy_to_clipboard() {
 }
 
 IoResult AppController::paste_from_clipboard() {
-    std::optional<PixelBuffer> image = Clipboard::get_image();
+    std::string error;
+    std::optional<PixelBuffer> image = Clipboard::get_image(&error);
     if (!image) {
+        if (!error.empty()) return IoResult::failure(error);
         return IoResult::failure("The clipboard does not contain an image" + clipboard_contents_note());
     }
     return paste_pixels(std::move(*image));
 }
+
+IoResult AppController::paste_image(PixelBuffer image) { return paste_pixels(std::move(image)); }
 
 IoResult AppController::paste_from_file(const std::filesystem::path& path) {
     LoadResult loaded = load(path);
@@ -309,7 +313,7 @@ IoResult AppController::paste_pixels(PixelBuffer image) {
 
     // A whole-layer snapshot is what a canvas change needs: undo has to restore
     // the pixels, the previous size and the floating block together.
-    push_geometry_edit(std::move(before), std::move(selection_before), m_document.floating());
+    push_geometry_edit(std::move(before), std::move(selection_before));
     return IoResult::success();
 }
 

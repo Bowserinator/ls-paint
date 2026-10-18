@@ -997,6 +997,19 @@ export component HomeBar inherits Bar {
                         text: "10px"; size: 10px;
                         clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 10; }
                     }
+                    BarSizeDropdownItem {
+                        text: "20px"; size: 20px;
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 20; }
+                    }
+                    BarSizeDropdownItem {
+                        text: "40px"; size: 40px;
+                        // An outline stops at 32: only the brush keeps growing.
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 32; }
+                    }
+                    BarSizeDropdownItem {
+                        text: "80px"; size: 80px;
+                        clicked => { ToolOptions.brush-size = self.size; ShapeStyle.thickness = 32; }
+                    }
                 }
             }
 

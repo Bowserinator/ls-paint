@@ -1,6 +1,7 @@
 #include "core/canvas_document.hpp"
 
 #include <algorithm>
+#include <utility>
 
 #include "core/compositor.hpp"
 
@@ -44,6 +45,19 @@ void CanvasDocument::restore(std::vector<PixelBuffer> pixels) {
     // hand the mask back themselves, anything else starts deselected.
     m_selection = SelectionMask(base.width(), base.height());
     m_floating.reset();
+    m_dirty = {};
+    mark_dirty(bounds());
+}
+
+void CanvasDocument::swap_pixels(std::vector<PixelBuffer>& pixels) {
+    // One buffer per layer, as in restore(): anything else would leave part of
+    // the stack at the old size. The selection and the floating block are the
+    // caller's business; the geometry entry hands both back itself.
+    const std::size_t count = std::min(pixels.size(), m_layers.layers().size());
+    if (count == 0) return;
+    for (std::size_t i = 0; i < count; ++i) std::swap(m_layers.at(i).pixels, pixels[i]);
+    const PixelBuffer& base = m_layers.at(0).pixels;
+    m_flattened = PixelBuffer(base.width(), base.height());
     m_dirty = {};
     mark_dirty(bounds());
 }

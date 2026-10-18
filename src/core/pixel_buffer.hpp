@@ -49,4 +49,11 @@ private:
     std::vector<Rgba8> m_pixels;
 };
 
+// Bytes one buffer of this size holds, for callers that budget their own
+// memory: the undo stack measures its entries with this.
+[[nodiscard]] inline std::size_t pixel_bytes(const PixelBuffer& pixels) noexcept {
+    return static_cast<std::size_t>(pixels.width()) * static_cast<std::size_t>(pixels.height()) *
+           sizeof(Rgba8);
+}
+
 }  // namespace lsp

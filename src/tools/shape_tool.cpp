@@ -400,6 +400,12 @@ SelectionMask interior_clip(raster::Target target, std::span<const Point2f> poin
 // Textured fills cover the interior with parallel strokes. Crayon keeps the gaps
 // between its strokes, the other textures let them touch so the interior reads as
 // one grainy surface instead of as lines.
+// Stamps one stroke per diagonal line, which is the most expensive fill the
+// tools have: the work grows with the square of a shape's height. Past this
+// budget the hatch is widened, so a very large fill gets a slightly coarser
+// texture instead of blocking the UI for seconds.
+constexpr float kHatchWorkBudget = 12.0e6f;
+
 void hatch_texture(raster::Target target, std::span<const Point2f> points, int thickness,
                    ShapeTexture texture, Rgba8 color) {
     if (points.size() < 3) return;
@@ -413,15 +419,24 @@ void hatch_texture(raster::Target target, std::span<const Point2f> points, int t
     const float gap = texture == ShapeTexture::Crayon
                           ? std::max(3.0f, static_cast<float>(thickness))
                           : std::max(1.0f, static_cast<float>(thickness) * 0.9f);
-    const float step = gap * 1.41421356f;
+    float step = gap * 1.41421356f;
     const float top = static_cast<float>(box.y);
     const float bottom = static_cast<float>(box.bottom());
     const float height = bottom - top;
+    const float lines = (static_cast<float>(box.width) + height) / step;
+    const float work = lines * height * 1.41421356f;
+    if (work > kHatchWorkBudget) step *= work / kHatchWorkBudget;
     for (float x = static_cast<float>(box.x) - height; x < static_cast<float>(box.right());
          x += step) {
+        // Only the middle of the diagonal lands inside the box, so the strokes
+        // at either end are cut to their visible part: a corner line does not
+        // stamp its way across the empty region beside the shape.
+        const float from = std::max(x, static_cast<float>(box.x));
+        const float to = std::min(x + height, static_cast<float>(box.right()));
+        if (to - from < 0.5f) continue;
         BrushEngine engine(brush, color, interior);
-        (void)engine.stroke_to(target.pixels, Point2f{x, top});
-        (void)engine.stroke_to(target.pixels, Point2f{x + height, bottom});
+        (void)engine.stroke_to(target.pixels, Point2f{from, top + (from - x)});
+        (void)engine.stroke_to(target.pixels, Point2f{to, top + (to - x)});
     }
 }
 

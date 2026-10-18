@@ -24,6 +24,11 @@ class UiState {
 public:
   UiState(AppWindow &window, AppController &controller);
 
+  // Puts the remembered window size and place back. The constructor runs this
+  // before the window is first shown; main() runs it again once the window
+  // exists, because a position set too early is what some backends drop.
+  void restore_settings();
+
   // The Edit Colors window, made on first use. Its state lives in the window
   // itself, so the tests read it here rather than from a global.
   [[nodiscard]] lsp_colors::EditColorsWindow &color_window();
@@ -149,6 +154,9 @@ private:
   void do_file_exit();
   void do_paste();
   void do_paste_from_file();
+  // Asks the system clipboard whether it holds an image, so the Paste commands
+  // know whether to offer themselves. Run when the ribbon changes tab.
+  void check_clipboard();
 
   // The File menu's recent list. A path is added when a document is opened or
   // saved, and the list is kept newest first, without repeats.
@@ -220,6 +228,8 @@ private:
   bool m_rotate_hover = false;
   bool m_rotate_active = false;
   bool m_text_open = false;
+  // Whether the system clipboard last offered an image, for the Paste commands.
+  bool m_system_clipboard = false;
   // Timed here because Slint's pointer events carry no click count.
   std::chrono::steady_clock::time_point m_last_press;
   Point2f m_last_press_position;

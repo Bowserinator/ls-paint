@@ -391,11 +391,19 @@ void SelectionTool::finish_rotate_drag(ToolContext& context, Point2f position) {
 }
 
 bool SelectionTool::on_cancel(ToolContext& context) {
-    if (m_drag != Drag::Rotate) return false;
+    // A gesture in progress is abandoned by putting the mask and the hovering
+    // block back where the press found them: the same work for a marquee, a
+    // contents move, a resize and a rotation, since all of them rebuild from
+    // those snapshots.
+    const bool dragging = m_drag != Drag::None;
+    const bool lassoing = !m_polygon.empty();
+    if (!dragging && !lassoing) return false;
     context.document.selection() = std::move(m_mask_before);
     context.document.floating() = std::move(m_float_before);
     context.document.mark_dirty(context.document.bounds());
     context.ui.rotate = {};
+    context.ui.selection.points.clear();
+    m_polygon.clear();
     m_drag = Drag::None;
     return true;
 }

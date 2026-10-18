@@ -15,6 +15,10 @@ public:
     void undo(CanvasDocument& document) override { apply(document, m_before); }
     void redo(CanvasDocument& document) override { apply(document, m_after); }
 
+    [[nodiscard]] std::size_t memory_bytes() const noexcept override {
+        return pixel_bytes(m_before) + pixel_bytes(m_after);
+    }
+
 private:
     void apply(CanvasDocument& document, const PixelBuffer& pixels) const;
 

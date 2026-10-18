@@ -36,6 +36,8 @@ std::optional<ShortcutAction> lookup_shortcut(std::string_view text, bool ctrl, 
     // Escape arrives as a control character, which the key mapping below would
     // read as the letter '{'; it is matched before that.
     if (text == "\x1b" && !ctrl && !shift) return ShortcutAction::Deselect;
+    // Delete arrives the same way, as the DEL control code.
+    if (text == "\x7f" && !ctrl && !shift) return ShortcutAction::Delete;
 
     if (text.size() != 1) return std::nullopt;
 

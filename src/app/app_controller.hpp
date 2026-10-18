@@ -79,13 +79,15 @@ public:
     IoResult copy_to_clipboard();
     IoResult paste_from_clipboard();
     IoResult paste_from_file(const std::filesystem::path& path);
+    // Pastes pixels the caller has already read, such as one off the system
+    // clipboard.
+    IoResult paste_image(PixelBuffer image);
     [[nodiscard]] bool selection_clipboard_empty() const noexcept { return m_clipboard.empty(); }
 
 private:
     void commit_selection_contents();
     void install_floating(FloatingContents contents);
-    void push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before,
-                            std::optional<FloatingContents> floating_after = std::nullopt);
+    void push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before);
     void push_selection_edit(SelectionEdit edit);
     IoResult paste_pixels(PixelBuffer image);
     // The region Copy and Cut take: the selection when there is one, otherwise

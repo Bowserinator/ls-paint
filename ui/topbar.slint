@@ -77,6 +77,11 @@ export component TopBar inherits Rectangle {
     // The Text tab is only up while the text tool is, and picking that tool
     // selects it. Leaving the tool falls back to Home.
     private property <bool> text-tool: UserState.selected-tool == ETool.TEXT;
+    // The paste commands ask the system clipboard about itself when the page
+    // changes, which keeps a shell round trip out of the drawing path.
+    changed tab => {
+        UserState.check-clipboard();
+    }
     changed text-tool => {
         if (root.text-tool) {
             root.tab = 3;

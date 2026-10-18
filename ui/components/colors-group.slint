@@ -42,7 +42,6 @@ export component ColorsGroup inherits BarItemGroup {
                 spacing: 6px;
 
                 ColorButtonVertical {
-                    width: 50px;
                     colr: UserState.primary-color;
                     // Wrapped like Paint's, so the caption never elides.
                     text: "Color\n1";
@@ -50,7 +49,6 @@ export component ColorsGroup inherits BarItemGroup {
                     clicked => { UserState.color_idx = 0; }
                 }
                 ColorButtonVertical {
-                    width: 50px;
                     colr: UserState.secondary-color;
                     text: "Color\n2";
                     focused: UserState.color_idx == 1;
@@ -102,7 +100,6 @@ export component ColorsGroup inherits BarItemGroup {
         // space back when it collapses.
         if (!root.merged) : HorizontalLayout {
             ColorButtonVertical {
-                width: 50px;
                 colr: UserState.primary-color;
                 // Wrapped like Paint's, so the caption never elides.
                 text: "Color\n1";
@@ -110,7 +107,6 @@ export component ColorsGroup inherits BarItemGroup {
                 clicked => { UserState.color_idx = 0; }
             }
             ColorButtonVertical {
-                width: 50px;
                 colr: UserState.secondary-color;
                 text: "Color\n2";
                 focused: UserState.color_idx == 1;
