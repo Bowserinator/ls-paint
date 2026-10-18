@@ -51,7 +51,7 @@ export component ClipboardGroup inherits BarItemGroup {
             focused2: clipboard-dropdown.is-open;
             // Merged, this button speaks for the whole group.
             text: root.merged ? "Clipboard" : "Paste";
-            icon: @image-url("../../icons/copy.png");
+            icon: @image-url("../../icons/paste.png");
             width: root.merged ? Styles.ribbon-merged-width + 8px : Styles.bar-vertical-btn-width;
 
             clicked => { UserState.paste-selection(); }

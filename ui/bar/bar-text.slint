@@ -123,14 +123,14 @@ export component TextBar inherits Bar {
                 // is under it or lets it show through. The opaque one previews
                 // the color the text is filled with.
                 ImageButtonHorizontal {
-                    icon: @image-url("../../icons/text/background-frame.png");
+                    icon: @image-url("../../icons/text/background-opaque.png");
                     text: "Opaque";
                     swatch: UserState.secondary-color;
                     focused: FontStyle.opaque-background;
                     clicked => { FontStyle.opaque-background = true; }
                 }
                 ImageButtonHorizontal {
-                    icon: @image-url("../../icons/text/background-frame.png");
+                    icon: @image-url("../../icons/text/background-transparent.png");
                     text: "Transparent";
                     focused: !FontStyle.opaque-background;
                     clicked => { FontStyle.opaque-background = false; }

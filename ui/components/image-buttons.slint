@@ -59,9 +59,31 @@ component ButtonText inherits Text {
 // Buttons
 // +--------------------------------+
 
+// The big icon a ribbon button leads with, optionally in a light box: a group's
+// icon reads as a tile once the group sheds the buttons around it.
+component LargeIcon inherits Rectangle {
+    in property <image> icon;
+    in property <bool> boxed: false;
+
+    width: Styles.bar-large-icon-size;
+    height: Styles.bar-large-icon-size;
+
+    Image {
+        width: 100%;
+        height: 100%;
+        source: root.icon;
+    }
+    if root.boxed : Rectangle {
+        background: transparent;
+        border-width: 1px;
+        border-color: Styles.ribbon-icon-border-color;
+    }
+}
+
 // An icon with text below
 export component ImageButtonVertical inherits ImageButtonBase {
     in-out property text <=> txt.text;
+    in-out property <bool> boxed-icon: false;
 
     width: Styles.bar-vertical-btn-width;
     
@@ -69,10 +91,9 @@ export component ImageButtonVertical inherits ImageButtonBase {
         HorizontalLayout {
             alignment: center;
 
-            Image {
-                width: Styles.bar-large-icon-size;
-                height: Styles.bar-large-icon-size;
-                source: root.icon;
+            LargeIcon {
+                icon: root.icon;
+                boxed: root.boxed-icon;
             }
         }
         txt := ButtonText { font-size: root.font-size; }
@@ -109,6 +130,7 @@ export component ImageButtonVerticalDropdown {
     in-out property<string> text;
     in-out property<image> icon: @image-url("../../icons/paste.png");
     in-out property<length> font-size: Styles.bar-font-size;
+    in-out property <bool> boxed-icon: false;
 
     out property<bool> any-hovered: btn1.is-hovered || btn2.is-hovered;
 
@@ -125,10 +147,9 @@ export component ImageButtonVerticalDropdown {
             force_hover: any-hovered;
 
             PaddedLayoutH {
-                Image {
-                    width: Styles.bar-large-icon-size;
-                    height: Styles.bar-large-icon-size;
-                    source: root.icon;
+                LargeIcon {
+                    icon: root.icon;
+                    boxed: root.boxed-icon;
                 }
             }
         }

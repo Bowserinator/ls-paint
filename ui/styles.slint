@@ -28,6 +28,8 @@ export global Styles {
     // it is there to find without being a rule.
     out property<length> ribbon-divider: 1px;
     out property<color> ribbon-divider-color: #dcdfe3;
+    // The box around a ribbon group's icon, a step darker than the divider.
+    out property<color> ribbon-icon-border-color: #b0b6bd;
     // The space between a group's edge and its buttons, on each side. Every
     // width below includes it twice.
     out property<length> ribbon-group-padding: 2px;
@@ -76,6 +78,12 @@ export global Styles {
     // One cell of the Brushes dropdown: twice a shape glyph cell, so the brush
     // pictures read at a glance.
     out property<length> bar-brush-cell-size: (bar-small-icon-size + 6px) * 2;
+    // The room around a brush picture inside its cell. The outline sits on the
+    // picture, so this gap is the cell's own margin.
+    out property<length> bar-brush-cell-padding: 3px;
+    // The picture's backing inside a brush cell: a hint of blue, just enough to
+    // set the picture apart from the panel behind it.
+    out property<color> bar-brush-cell-background: #eff5fc;
     // One cell of a palette grid. Four rows of ten have to fit the ribbon, so a
     // cell is shorter than a swatch button.
     out property<length> bar-color-cell: bar-small-icon-size;

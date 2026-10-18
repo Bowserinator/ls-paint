@@ -246,24 +246,26 @@ export global ShapeGallery {
     in property <[ShapeGlyph]> items;
 }
 
-// One entry of the Brushes picker, in the order the picker shows them.
+// One entry of the Brushes picker, in the order the picker shows them. The
+// name is what the picker shows while the pointer rests on the entry.
 export struct BrushGlyph {
     kind: EBrushKind,
     image: image,
+    name: string,
 }
 export global BrushGallery {
     in property <[BrushGlyph]> items: [
-        { kind: EBrushKind.BRUSH, image: @image-url("../icons/brushes/brush.png") },
-        { kind: EBrushKind.CALLIGRAPHY_1, image: @image-url("../icons/brushes/calligraphy-1.png") },
-        { kind: EBrushKind.CALLIGRAPHY_2, image: @image-url("../icons/brushes/calligraphy-2.png") },
-        { kind: EBrushKind.AIRBRUSH, image: @image-url("../icons/brushes/airbrush.png") },
-        { kind: EBrushKind.OIL, image: @image-url("../icons/brushes/oil.png") },
-        { kind: EBrushKind.CRAYON, image: @image-url("../icons/brushes/crayon.png") },
-        { kind: EBrushKind.MARKER, image: @image-url("../icons/brushes/marker.png") },
-        { kind: EBrushKind.NATURAL_PENCIL, image: @image-url("../icons/brushes/natural-pencil.png") },
-        { kind: EBrushKind.WATERCOLOR, image: @image-url("../icons/brushes/watercolor.png") },
-        { kind: EBrushKind.BLUR, image: @image-url("../icons/brushes/blur.png") },
-        { kind: EBrushKind.LIQUIFY, image: @image-url("../icons/brushes/liquify.png") },
+        { kind: EBrushKind.BRUSH, image: @image-url("../icons/brushes/brush.png"), name: "Brush" },
+        { kind: EBrushKind.CALLIGRAPHY_1, image: @image-url("../icons/brushes/calligraphy-1.png"), name: "Calligraphy 1" },
+        { kind: EBrushKind.CALLIGRAPHY_2, image: @image-url("../icons/brushes/calligraphy-2.png"), name: "Calligraphy 2" },
+        { kind: EBrushKind.AIRBRUSH, image: @image-url("../icons/brushes/airbrush.png"), name: "Airbrush" },
+        { kind: EBrushKind.OIL, image: @image-url("../icons/brushes/oil.png"), name: "Oil" },
+        { kind: EBrushKind.CRAYON, image: @image-url("../icons/brushes/crayon.png"), name: "Crayon" },
+        { kind: EBrushKind.MARKER, image: @image-url("../icons/brushes/marker.png"), name: "Marker" },
+        { kind: EBrushKind.NATURAL_PENCIL, image: @image-url("../icons/brushes/natural-pencil.png"), name: "Natural Pencil" },
+        { kind: EBrushKind.WATERCOLOR, image: @image-url("../icons/brushes/watercolor.png"), name: "Watercolor" },
+        { kind: EBrushKind.BLUR, image: @image-url("../icons/brushes/blur.png"), name: "Blur" },
+        { kind: EBrushKind.LIQUIFY, image: @image-url("../icons/brushes/liquify.png"), name: "Liquify" },
     ];
 }
 

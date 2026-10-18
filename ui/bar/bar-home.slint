@@ -11,20 +11,38 @@ import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions
 component BrushGlyphButton inherits Rectangle {
     in property <image> source;
     in property <bool> focused: false;
+    // The cell's place in the grid and the brush it stands for, so the panel
+    // can name the cell the pointer rests on.
+    in property <int> index: 0;
+    in property <string> name: "";
     callback clicked;
+    callback hover-changed(index: int, name: string, hovered: bool);
+    out property <bool> hovered: touch.has-hover;
 
     width: Styles.bar-brush-cell-size;
     height: Styles.bar-brush-cell-size;
-    border-width: 1px;
-    border-color: focused ? #8dbcec : touch.has-hover ? #c3ddf8 : Styles.bar-border-light;
-    background: focused ? #c9e0f7 : touch.pressed ? #d5e6f7 : transparent;
+    background: transparent;
 
-    Image {
-        x: 3px;
-        y: 3px;
-        width: root.width - 6px;
-        height: root.height - 6px;
-        source: root.source;
+    changed hovered => { root.hover-changed(root.index, root.name, self.hovered); }
+
+    // The outline sits on the picture. The room around it belongs to the cell,
+    // so neighbouring pictures keep their distance.
+    Rectangle {
+        x: Styles.bar-brush-cell-padding;
+        y: Styles.bar-brush-cell-padding;
+        width: parent.width - 2 * Styles.bar-brush-cell-padding;
+        height: parent.height - 2 * Styles.bar-brush-cell-padding;
+        border-width: 1px;
+        border-color: root.focused ? #8dbcec : root.hovered ? #c3ddf8 : Styles.ribbon-icon-border-color;
+        background: root.focused ? #c9e0f7 : touch.pressed ? #d5e6f7 : Styles.bar-brush-cell-background;
+
+        Image {
+            x: 1px;
+            y: 1px;
+            width: parent.width - 2px;
+            height: parent.height - 2px;
+            source: root.source;
+        }
     }
 
     touch := TouchArea {
@@ -139,6 +157,9 @@ export component HomeBar inherits Bar {
     // Which page the merged Shapes picker shows: 0 the shape gallery,
     // 1 the outline list, 2 the fill list.
     private property <int> picker-page: 0;
+    // Which brush cell the pointer rests on, and its name, or nothing.
+    private property <int> hovered-brush: -1;
+    private property <string> hovered-name: "";
 
     // The Tools group owns these tools; the Brushes group owns the brush.
     private property <bool> tools-active: UserState.selected-tool == ETool.PENCIL
@@ -443,7 +464,8 @@ export component HomeBar inherits Bar {
                 // still holds its slot, which would squeeze the group's content.
                 width: collapsed-image ? Styles.ribbon-merged-button : 0px;
                 text: "Image";
-                icon: @image-url("../../icons/resize.png");
+                icon: @image-url("../../icons/resize_large.png");
+                boxed-icon: true;
                 clicked => { image-menu.show(); }
                 clicked_dropdown => { image-menu.show(); }
             }
@@ -546,6 +568,7 @@ export component HomeBar inherits Bar {
                 width: collapsed-tools ? Styles.ribbon-merged-button : 0px;
                 text: "Tools";
                 icon: @image-url("../../icons/tools.png");
+                boxed-icon: true;
                 clicked => { tools-menu.show(); }
                 clicked_dropdown => { tools-menu.show(); }
             }
@@ -604,10 +627,11 @@ export component HomeBar inherits Bar {
                 width: Styles.ribbon-merged-button + 8px;
                 text: "Brushes";
                 icon: @image-url("../../icons/brushes.png");
+                boxed-icon: true;
                 focused1: brushes-dropdown.is-open || UserState.selected-tool == ETool.BRUSH;
                 focused2: brushes-dropdown.is-open || UserState.selected-tool == ETool.BRUSH;
-                clicked => { brushes-dropdown.show(); }
-                clicked_dropdown => { brushes-dropdown.show(); }
+                clicked => { root.hovered-brush = -1; brushes-dropdown.show(); }
+                clicked_dropdown => { root.hovered-brush = -1; brushes-dropdown.show(); }
             }
         }
 
@@ -632,11 +656,45 @@ export component HomeBar inherits Bar {
                             x: mod(i, 4) * Styles.bar-brush-cell-size;
                             y: floor(i / 4) * Styles.bar-brush-cell-size;
                             source: glyph.image;
+                            index: i;
+                            name: glyph.name;
                             focused: UserState.selected-tool == ETool.BRUSH && ToolOptions.brush-kind == glyph.kind;
+                            hover-changed(index, name, hovered) => {
+                                if (hovered) {
+                                    root.hovered-brush = index;
+                                    root.hovered-name = name;
+                                } else if (root.hovered-brush == index) {
+                                    root.hovered-brush = -1;
+                                }
+                            }
                             clicked => {
                                 ToolOptions.brush-kind = glyph.kind;
                                 UserState.selected-tool = ETool.BRUSH;
+                                root.hovered-brush = -1;
                                 brushes-dropdown.close();
+                            }
+                        }
+
+                        // The name of the brush under the pointer: a squared label
+                        // hung from the middle of the picture's bottom edge.
+                        Rectangle {
+                            visible: root.hovered-brush >= 0;
+                            width: 92px;
+                            height: 22px;
+                            x: mod(root.hovered-brush, 4) * Styles.bar-brush-cell-size
+                                + Styles.bar-brush-cell-size / 2;
+                            y: floor(root.hovered-brush / 4) * Styles.bar-brush-cell-size
+                                + Styles.bar-brush-cell-size - Styles.bar-brush-cell-padding - 4px;
+                            background: #303030;
+
+                            Text {
+                                x: 6px;
+                                width: parent.width - 12px;
+                                y: (parent.height - self.height) / 2;
+                                text: root.hovered-name;
+                                overflow: elide;
+                                font-size: Styles.bar-font-size;
+                                color: white;
                             }
                         }
                     }
@@ -788,6 +846,7 @@ export component HomeBar inherits Bar {
                 width: collapsed-shapes ? Styles.ribbon-merged-button : 0px;
                 text: "Shapes";
                 icon: @image-url("../../icons/shapes.png");
+                boxed-icon: true;
                 focused1: UserState.selected-tool == ETool.SHAPE || shape-gallery-dropdown.is-open;
                 focused2: UserState.selected-tool == ETool.SHAPE || shape-gallery-dropdown.is-open;
                 // Opening the picker shows the choices without taking the tool:
