@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <span>
 #include <string>
 #include <string_view>
@@ -45,7 +46,7 @@ enum class ShapeId {
     Lightning,
 };
 
-// Every kind in ribbon order; the gallery and the tests iterate this.
+// Every kind in ribbon order.
 inline constexpr std::array<ShapeId, 23> kShapeIds{
     ShapeId::Line,      ShapeId::Curve,          ShapeId::Oval,          ShapeId::Rectangle,
     ShapeId::RoundedRect, ShapeId::Polygon,      ShapeId::Triangle,      ShapeId::RightTriangle,
@@ -59,12 +60,16 @@ inline constexpr std::array<ShapeId, 23> kShapeIds{
 // out, `Solid` paints it in one color, the rest lay down a brush texture.
 enum class ShapeTexture { None, Solid, Crayon, Marker, Oil, NaturalPencil, Watercolor };
 
+inline constexpr int kMinShapeThickness = 1;
+inline constexpr int kMaxShapeThickness = 32;
+inline constexpr int kDefaultCornerRadius = 8;
+
 struct ShapeOptions {
     ShapeId kind = ShapeId::Rectangle;
     ShapeTexture outline = ShapeTexture::Solid;
     ShapeTexture fill = ShapeTexture::None;
-    int thickness = 1;  // px, 1..32 from ToolOptions.shape-thickness
-    int corner_radius = 8;
+    int thickness = kMinShapeThickness;  // px
+    int corner_radius = kDefaultCornerRadius;
 };
 
 // Written by ShapeTool, read by UiState when it synchronizes the canvas overlay.
@@ -73,7 +78,7 @@ struct ShapePreview {
     bool draw_fill = false;
     bool draw_outline = true;
     Rgba8 outline_color{0, 0, 0, 255};
-    Rgba8 fill_color{255, 255, 255, 255};
+    Rgba8 fill_color = kWhite;
     std::string commands;  // SVG path data in canvas pixels
 };
 

@@ -41,6 +41,7 @@ add_executable(lsp_ui_tests
     ui_tests.cpp
     ${CMAKE_SOURCE_DIR}/src/render/slint_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ui_state.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/cursor_overlay.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/file_picker.cpp
 )
 target_link_libraries(lsp_ui_tests PRIVATE lsp_core Slint::Slint)

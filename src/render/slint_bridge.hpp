@@ -21,4 +21,7 @@ private:
     slint::SharedPixelBuffer<slint::Rgba8Pixel> m_pixels;
 };
 
+// Copies `source` into an image that stands on its own.
+[[nodiscard]] slint::Image image_from(const PixelBuffer& source);
+
 }  // namespace lsp

@@ -5,31 +5,69 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <numbers>
+#include <utility>
 #include <vector>
 
 #include "brushes/brush_engine.hpp"
 #include "selection/selection_mask.hpp"
 #include "tools/stroke_recorder.hpp"
 #include "tools/tool_context.hpp"
+#include "utils/key_text.hpp"
+#include "utils/math.hpp"
 
 namespace lsp {
 
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
-constexpr float kRadians = kPi / 180.0f;
-
-// mspaint's fixed corner for the rounded rectangle and callout kinds.
-constexpr float kCornerRadius = 8.0f;
+// The corner of the rounded rectangle and callout kinds.
+constexpr float kCornerRadius = static_cast<float>(kDefaultCornerRadius);
 // The callout tail hangs below the body inside the same drag rectangle.
 constexpr float kTailHeightRatio = 0.25f;
 constexpr float kTailTipRatio = 0.12f;
 constexpr float kTailLeftRatio = 0.20f;
 constexpr float kTailRightRatio = 0.44f;
 
+// How close a click has to be to the first vertex to close a polygon, to the
+// last vertex to count as a repeat of it, and how close the last two vertices
+// have to be for the second to be the stray one a double click leaves behind.
+constexpr float kClosePolygonDistance = 8.0f;
+constexpr float kRepeatedVertexDistance = 3.0f;
+constexpr float kDoubleClickVertexDistance = 12.0f;
+
+// Textured fills: the brush strokes of a hatch are at least this far apart for
+// the crayon, whose gaps show, and this share of the brush size apart for the
+// textures that are meant to touch. A stroke shorter than the minimum length
+// is not worth stamping.
+constexpr float kCrayonMinGap = 3.0f;
+constexpr float kTouchingGapRatio = 0.9f;
+constexpr float kMinHatchStrokeLength = 0.5f;
+// How far either side of a pixel the repair of a solid fill looks for the
+// other colour.
+constexpr int kBridgeReach = 2;
+
+int clamped_thickness(const ShapeOptions& options) {
+    return std::clamp(options.thickness, kMinShapeThickness, kMaxShapeThickness);
+}
+
 Point2f point_at(Point2f center, float rx, float ry, float degrees) {
-    return {center.x + rx * std::cos(degrees * kRadians),
-            center.y + ry * std::sin(degrees * kRadians)};
+    const float radians = radians_from_degrees(degrees);
+    return {center.x + rx * std::cos(radians), center.y + ry * std::sin(radians)};
+}
+
+// The unit-square points laid over a drag box, whose far edges are its last
+// pixels.
+template <std::size_t Count>
+std::vector<Point2f> fit_to_box(RectI box, const std::array<Point2f, Count>& unit) {
+    const float x0 = static_cast<float>(box.x);
+    const float y0 = static_cast<float>(box.y);
+    const float width = static_cast<float>(box.width - 1);
+    const float height = static_cast<float>(box.height - 1);
+    std::vector<Point2f> points;
+    points.reserve(unit.size());
+    for (const Point2f& corner : unit)
+        points.push_back({x0 + corner.x * width, y0 + corner.y * height});
+    return points;
 }
 
 // Both arc ends are included; a duplicated point where two arcs meet is
@@ -108,10 +146,11 @@ std::vector<Point2f> ellipse_points(RectI box) {
 std::vector<Point2f> curve_points(Point2f a, Point2f b) {
     // A single-arc curve: the drag defines the bow, so the curve bulges
     // perpendicular to the drag by a quarter of its length.
+    constexpr float kBow = 0.25f;
+    constexpr int kSamples = 24;
     const float dx = b.x - a.x;
     const float dy = b.y - a.y;
-    const Point2f control{(a.x + b.x) / 2.0f - dy * 0.25f, (a.y + b.y) / 2.0f + dx * 0.25f};
-    constexpr int kSamples = 24;
+    const Point2f control{(a.x + b.x) / 2.0f - dy * kBow, (a.y + b.y) / 2.0f + dx * kBow};
     std::vector<Point2f> points;
     points.reserve(kSamples + 1);
     for (int i = 0; i <= kSamples; ++i) {
@@ -146,7 +185,7 @@ std::vector<Point2f> rounded_box_points(RectI box, float radius) {
 // Body rectangle of a callout, with the tail below it still inside the drag box.
 RectI callout_body(RectI box) {
     const float tail = std::max(4.0f, (box.height - 1) * kTailHeightRatio);
-    const int body_height = std::max(1, box.height - static_cast<int>(std::lround(tail)));
+    const int body_height = std::max(1, box.height - round_to_int(tail));
     return {box.x, box.y, box.width, body_height};
 }
 
@@ -197,7 +236,7 @@ std::vector<Point2f> callout_cloud_points(RectI box) {
     const float ry = (body.height - 1) / 2.0f;
     std::vector<Point2f> points;
     for (float angle = 160.0f; angle <= 470.0f; angle += 3.0f) {
-        const float bump = 1.0f + kBumpDepth * std::cos(kBumps * angle * kRadians);
+        const float bump = 1.0f + kBumpDepth * std::cos(kBumps * radians_from_degrees(angle));
         points.push_back(point_at(center, rx * bump, ry * bump, angle));
     }
     points.push_back({box.x + kTailTipRatio * static_cast<float>(box.width - 1),
@@ -210,7 +249,8 @@ std::vector<Point2f> heart_points(RectI box) {
     std::vector<Point2f> points;
     points.reserve(kSamples);
     for (int i = 0; i < kSamples; ++i) {
-        const float t = 2.0f * kPi * static_cast<float>(i) / static_cast<float>(kSamples);
+        const float t = 2.0f * std::numbers::pi_v<float> * static_cast<float>(i) /
+                        static_cast<float>(kSamples);
         const float sine = std::sin(t);
         points.push_back({16.0f * sine * sine * sine,
                           13.0f * std::cos(t) - 5.0f * std::cos(2.0f * t) -
@@ -247,30 +287,14 @@ std::vector<Point2f> lightning_points(RectI box) {
     const std::array<Point2f, 6> unit{Point2f{0.62f, 0.0f}, Point2f{0.20f, 0.52f},
                                       Point2f{0.42f, 0.52f}, Point2f{0.30f, 1.0f},
                                       Point2f{0.80f, 0.44f}, Point2f{0.56f, 0.44f}};
-    std::vector<Point2f> points;
-    points.reserve(unit.size());
-    const float x0 = static_cast<float>(box.x);
-    const float y0 = static_cast<float>(box.y);
-    const float width = static_cast<float>(box.width - 1);
-    const float height = static_cast<float>(box.height - 1);
-    for (const Point2f& corner : unit)
-        points.push_back({x0 + corner.x * width, y0 + corner.y * height});
-    return points;
+    return fit_to_box(box, unit);
 }
 
 std::vector<Point2f> polygon_glyph(RectI box) {
-    const float x0 = static_cast<float>(box.x);
-    const float y0 = static_cast<float>(box.y);
-    const float width = static_cast<float>(box.width - 1);
-    const float height = static_cast<float>(box.height - 1);
     const std::array<Point2f, 5> unit{Point2f{0.05f, 0.95f}, Point2f{0.05f, 0.35f},
                                       Point2f{0.45f, 0.05f}, Point2f{0.95f, 0.45f},
                                       Point2f{0.85f, 0.95f}};
-    std::vector<Point2f> points;
-    points.reserve(unit.size());
-    for (const Point2f& corner : unit)
-        points.push_back({x0 + corner.x * width, y0 + corner.y * height});
-    return points;
+    return fit_to_box(box, unit);
 }
 
 RectI shape_bounds(ShapeId kind, Point2f a, Point2f b, std::span<const Point2f> polygon,
@@ -298,6 +322,43 @@ void publish(ToolContext& context, const std::vector<Point2f>& points, bool clos
     preview.commands = shape::svg_commands(points, closed);
 }
 
+// Paints the finished shape into the active layer as one history entry.
+void commit_shape(ToolContext& context, ShapeId kind, Point2f a, Point2f b,
+                  std::span<const Point2f> polygon, PointerButton button) {
+    const ShapeOptions& options = context.shape_options;
+    const RectI region = shape_bounds(kind, a, b, polygon, clamped_thickness(options))
+                             .intersected(context.document.bounds());
+    if (region.empty()) return;
+
+    const LayerTarget layer = context.layer_target();
+    StrokeRecorder recorder(context.document);
+    rasterize_shape(layer.target(), kind, a, b, polygon, options, context.colors.ink(button),
+                    context.colors.other_ink(button));
+    recorder.touch(region);
+    recorder.commit(context.history);
+}
+
+// Whether pixels of the two colours lie within kBridgeReach of a pixel in one
+// direction.
+struct Neighbours {
+    bool fill = false;
+    bool outline = false;
+};
+
+Neighbours look(const PixelBuffer& pixels, RectI area, int x, int y, int step_x, int step_y,
+                Rgba8 fill_color, Rgba8 outline_color) {
+    Neighbours found;
+    for (int distance = 1; distance <= kBridgeReach; ++distance) {
+        const int px = x + step_x * distance;
+        const int py = y + step_y * distance;
+        if (!area.contains(px, py)) continue;
+        const Rgba8 pixel = pixels.at(px, py);
+        found.fill = found.fill || pixel == fill_color;
+        found.outline = found.outline || pixel == outline_color;
+    }
+    return found;
+}
+
 // The stroke follows the pixel grid, so along a diagonal edge it can leave a
 // one-pixel line of background between itself and the fill. Repaint such a
 // pixel with the fill colour: only a pixel that has the fill colour on one side
@@ -312,38 +373,19 @@ void bridge_fill_to_outline(raster::Target target, RectI area, Rgba8 fill_color,
         for (int x = area.x; x < area.right(); ++x) {
             const Rgba8 here = target.pixels.at(x, y);
             if (here == fill_color || here == outline_color || !target.allows(x, y)) continue;
-            bool fill_left = false, outline_left = false, fill_right = false, outline_right = false;
-            bool fill_up = false, outline_up = false, fill_down = false, outline_down = false;
-            for (int d = 1; d <= 2; ++d) {
-                if (x - d >= area.x) {
-                    const Rgba8 pixel = target.pixels.at(x - d, y);
-                    fill_left = fill_left || pixel == fill_color;
-                    outline_left = outline_left || pixel == outline_color;
-                }
-                if (x + d < area.right()) {
-                    const Rgba8 pixel = target.pixels.at(x + d, y);
-                    fill_right = fill_right || pixel == fill_color;
-                    outline_right = outline_right || pixel == outline_color;
-                }
-                if (y - d >= area.y) {
-                    const Rgba8 pixel = target.pixels.at(x, y - d);
-                    fill_up = fill_up || pixel == fill_color;
-                    outline_up = outline_up || pixel == outline_color;
-                }
-                if (y + d < area.bottom()) {
-                    const Rgba8 pixel = target.pixels.at(x, y + d);
-                    fill_down = fill_down || pixel == fill_color;
-                    outline_down = outline_down || pixel == outline_color;
-                }
-            }
-            const bool sideways = (fill_left && outline_right) || (outline_left && fill_right);
-            const bool upright = (fill_up && outline_down) || (outline_up && fill_down);
+            const auto probe = [&](int step_x, int step_y) {
+                return look(target.pixels, area, x, y, step_x, step_y, fill_color, outline_color);
+            };
+            const Neighbours left = probe(-1, 0);
+            const Neighbours right = probe(1, 0);
+            const Neighbours up = probe(0, -1);
+            const Neighbours down = probe(0, 1);
+            const bool sideways = (left.fill && right.outline) || (left.outline && right.fill);
+            const bool upright = (up.fill && down.outline) || (up.outline && down.fill);
             if (sideways || upright) bridges.emplace_back(x, y);
         }
     }
-    for (const std::pair<int, int>& pixel : bridges) {
-        target.pixels.at(pixel.first, pixel.second) = fill_color;
-    }
+    for (const auto& [x, y] : bridges) target.pixels.at(x, y) = fill_color;
 }
 
 // The brush a texture draws with. The profile comes from the brush engine, so a
@@ -380,13 +422,14 @@ void stroke_texture(raster::Target target, std::span<const Point2f> points, int 
     BrushEngine engine(texture_brush(texture, thickness), color, clip);
     for (const Point2f& point : points) (void)engine.stroke_to(target.pixels, point);
     if (closed) (void)engine.stroke_to(target.pixels, points.front());
+    (void)engine.finish(target.pixels);
 }
 
 // The shape's interior, held back by the clip the raster target carries.
 SelectionMask interior_clip(raster::Target target, std::span<const Point2f> points) {
     const RectI bounds = target.pixels.bounds();
     SelectionMask interior(bounds.width, bounds.height);
-    interior.fill_polygon(std::vector<Point2f>(points.begin(), points.end()));
+    interior.fill_polygon(points);
     if (target.clip_mask == nullptr) return interior;
     std::vector<std::uint8_t> bytes = interior.extract_region(bounds);
     const std::size_t count = bytes.size();
@@ -397,15 +440,15 @@ SelectionMask interior_clip(raster::Target target, std::span<const Point2f> poin
     return interior;
 }
 
-// Textured fills cover the interior with parallel strokes. Crayon keeps the gaps
-// between its strokes, the other textures let them touch so the interior reads as
-// one grainy surface instead of as lines.
 // Stamps one stroke per diagonal line, which is the most expensive fill the
 // tools have: the work grows with the square of a shape's height. Past this
 // budget the hatch is widened, so a very large fill gets a slightly coarser
 // texture instead of blocking the UI for seconds.
 constexpr float kHatchWorkBudget = 12.0e6f;
 
+// Covers the interior with parallel strokes. Crayon keeps the gaps between its
+// strokes, the other textures let them touch so the interior reads as one
+// grainy surface instead of as lines.
 void hatch_texture(raster::Target target, std::span<const Point2f> points, int thickness,
                    ShapeTexture texture, Rgba8 color) {
     if (points.size() < 3) return;
@@ -417,14 +460,14 @@ void hatch_texture(raster::Target target, std::span<const Point2f> points, int t
     // needs a step of gap * sqrt(2) along the x axis. A gap just under the brush
     // size leaves no background between the strokes.
     const float gap = texture == ShapeTexture::Crayon
-                          ? std::max(3.0f, static_cast<float>(thickness))
-                          : std::max(1.0f, static_cast<float>(thickness) * 0.9f);
-    float step = gap * 1.41421356f;
+                          ? std::max(kCrayonMinGap, static_cast<float>(thickness))
+                          : std::max(1.0f, static_cast<float>(thickness) * kTouchingGapRatio);
+    float step = gap * std::numbers::sqrt2_v<float>;
     const float top = static_cast<float>(box.y);
     const float bottom = static_cast<float>(box.bottom());
     const float height = bottom - top;
     const float lines = (static_cast<float>(box.width) + height) / step;
-    const float work = lines * height * 1.41421356f;
+    const float work = lines * height * std::numbers::sqrt2_v<float>;
     if (work > kHatchWorkBudget) step *= work / kHatchWorkBudget;
     for (float x = static_cast<float>(box.x) - height; x < static_cast<float>(box.right());
          x += step) {
@@ -433,20 +476,21 @@ void hatch_texture(raster::Target target, std::span<const Point2f> points, int t
         // stamp its way across the empty region beside the shape.
         const float from = std::max(x, static_cast<float>(box.x));
         const float to = std::min(x + height, static_cast<float>(box.right()));
-        if (to - from < 0.5f) continue;
+        if (to - from < kMinHatchStrokeLength) continue;
         BrushEngine engine(brush, color, interior);
         (void)engine.stroke_to(target.pixels, Point2f{from, top + (from - x)});
         (void)engine.stroke_to(target.pixels, Point2f{to, top + (to - x)});
+        (void)engine.finish(target.pixels);
     }
 }
 
 }  // namespace
 
 RectI shape::normalized_rect(Point2f a, Point2f b) {
-    const int left = static_cast<int>(std::lround(std::min(a.x, b.x)));
-    const int top = static_cast<int>(std::lround(std::min(a.y, b.y)));
-    const int right = static_cast<int>(std::lround(std::max(a.x, b.x)));
-    const int bottom = static_cast<int>(std::lround(std::max(a.y, b.y)));
+    const int left = round_to_int(std::min(a.x, b.x));
+    const int top = round_to_int(std::min(a.y, b.y));
+    const int right = round_to_int(std::max(a.x, b.x));
+    const int bottom = round_to_int(std::max(a.y, b.y));
     // The drag corners are the shape's outermost pixels, so a click still has a
     // pixel to draw and the box never collapses to nothing.
     return {left, top, std::max(1, right - left + 1), std::max(1, bottom - top + 1)};
@@ -530,7 +574,7 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
     const bool wants_fill = !open && options.fill != ShapeTexture::None;
     const bool solid_outline = options.outline == ShapeTexture::Solid;
     const bool solid_fill = options.fill == ShapeTexture::Solid;
-    const int thickness = std::clamp(options.thickness, 1, 32);
+    const int thickness = clamped_thickness(options);
     const RectI box = shape::normalized_rect(a, b);
     const bool plain = (solid_outline || !wants_outline) && (solid_fill || !wants_fill);
 
@@ -580,9 +624,7 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
     if (wants_fill && wants_outline && solid_fill && solid_outline) {
         RectI area{};
         for (const Point2f& point : points) {
-            const int x = static_cast<int>(std::floor(point.x));
-            const int y = static_cast<int>(std::floor(point.y));
-            area = area.united(RectI{x, y, 1, 1});
+            area = area.united(RectI{floor_to_int(point.x), floor_to_int(point.y), 1, 1});
         }
         const int pad = thickness + 1;
         bridge_fill_to_outline(target, RectI{area.x - pad, area.y - pad, area.width + 2 * pad,
@@ -605,12 +647,12 @@ void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerB
         update_preview(context, position);
         return;
     }
-    if (m_polygon.size() >= 3 && distance(position, m_polygon.front()) <= 8.0f) {
+    if (m_polygon.size() >= 3 && distance(position, m_polygon.front()) <= kClosePolygonDistance) {
         close_polygon(context);
         return;
     }
     // Two clicks in the same spot are the double-click that closes the polygon.
-    if (distance(position, m_polygon.back()) <= 3.0f) return;
+    if (distance(position, m_polygon.back()) <= kRepeatedVertexDistance) return;
     m_polygon.push_back(position);
     update_preview(context, position);
 }
@@ -634,18 +676,19 @@ void ShapeTool::on_pointer_up(ToolContext& context, Point2f position) {
 
 void ShapeTool::on_key_pressed(ToolContext& context, std::string_view text) {
     if (!m_polygon_open) return;
-    if (text == "\n") {
+    if (text == kKeyEnter) {
         close_polygon(context);
         return;
     }
-    if (text == "\u001b") cancel_polygon(context);
+    if (text == kKeyEscape) cancel_polygon(context);
 }
 
 void ShapeTool::on_double_click(ToolContext& context) {
     if (!m_polygon_open) return;
     // Slint reports the double click after the second press already placed a
     // vertex, so drop that near-duplicate before closing.
-    if (m_polygon.size() >= 2 && distance(m_polygon.back(), m_polygon[m_polygon.size() - 2]) <= 12.0f)
+    if (m_polygon.size() >= 2 &&
+        distance(m_polygon.back(), m_polygon[m_polygon.size() - 2]) <= kDoubleClickVertexDistance)
         m_polygon.pop_back();
     close_polygon(context);
 }
@@ -671,28 +714,13 @@ void ShapeTool::update_preview(ToolContext& context, Point2f cursor) {
         publish(context, points, false, m_button);
         return;
     }
-    publish(context, shape::outline(context.shape_options.kind, m_origin, cursor, {}), 
+    publish(context, shape::outline(context.shape_options.kind, m_origin, cursor, {}),
             shape::is_closed(context.shape_options.kind), m_button);
 }
 
 void ShapeTool::commit_drag(ToolContext& context, Point2f end) {
     m_cursor = end;
-    const ShapeId kind = context.shape_options.kind;
-    const ShapeOptions& options = context.shape_options;
-    const RectI region =
-        shape_bounds(kind, m_origin, end, {}, std::clamp(options.thickness, 1, 32))
-            .intersected(context.document.bounds());
-    if (region.empty()) return;
-
-    const Rgba8 outline = context.colors.ink(m_button);
-    const Rgba8 fill = context.colors.other_ink(m_button);
-    const std::vector<std::uint8_t> clip = context.selection_clip();
-    raster::Target target{context.document.active_layer().pixels,
-                          clip.empty() ? nullptr : clip.data()};
-    StrokeRecorder recorder(context.document);
-    rasterize_shape(target, kind, m_origin, end, {}, options, outline, fill);
-    recorder.touch(region);
-    recorder.commit(context.history);
+    commit_shape(context, context.shape_options.kind, m_origin, end, {}, m_button);
 }
 
 void ShapeTool::close_polygon(ToolContext& context) {
@@ -703,21 +731,7 @@ void ShapeTool::close_polygon(ToolContext& context) {
     context.ui.shape.visible = false;
     if (vertices.size() < 3) return;
 
-    const ShapeOptions& options = context.shape_options;
-    const RectI region = shape_bounds(ShapeId::Polygon, m_origin, m_cursor, vertices,
-                                      std::clamp(options.thickness, 1, 32))
-                             .intersected(context.document.bounds());
-    if (region.empty()) return;
-
-    const Rgba8 outline = context.colors.ink(m_button);
-    const Rgba8 fill = context.colors.other_ink(m_button);
-    const std::vector<std::uint8_t> clip = context.selection_clip();
-    raster::Target target{context.document.active_layer().pixels,
-                          clip.empty() ? nullptr : clip.data()};
-    StrokeRecorder recorder(context.document);
-    rasterize_shape(target, ShapeId::Polygon, m_origin, m_cursor, vertices, options, outline, fill);
-    recorder.touch(region);
-    recorder.commit(context.history);
+    commit_shape(context, ShapeId::Polygon, m_origin, m_cursor, vertices, m_button);
 }
 
 void ShapeTool::cancel_polygon(ToolContext& context) {

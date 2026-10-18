@@ -5,14 +5,34 @@
 #include <sqlite3.h>
 #include <system_error>
 
+#include "utils/path_text.hpp"
+
 namespace lsp {
 
 namespace {
 
-constexpr const char* kCREATE_TABLE_SQL = "CREATE TABLE IF NOT EXISTS kv ("
-                                          "  key   TEXT PRIMARY KEY,"
-                                          "  value TEXT NOT NULL"
-                                          ");";
+constexpr const char* kCreateTableSql =
+    "CREATE TABLE IF NOT EXISTS kv ("
+    "  key   TEXT PRIMARY KEY,"
+    "  value TEXT NOT NULL"
+    ");";
+
+// SQLite names a database's write-ahead log and its shared-memory file after
+// the database itself. Moving a corrupted database without them leaves a stale
+// pair beside the fresh file, which a later open may replay or reject.
+void move_wal_sidecars(const std::filesystem::path& from, const std::filesystem::path& to) {
+    for (const char* suffix : {"-wal", "-shm"}) {
+        std::filesystem::path source = from;
+        source += suffix;
+        std::filesystem::path destination = to;
+        destination += suffix;
+        std::error_code error;
+        if (!std::filesystem::exists(source, error)) continue;
+        std::filesystem::rename(source, destination, error);
+        if (!error) continue;
+        std::filesystem::remove(source, error);
+    }
+}
 
 }  // namespace
 
@@ -22,137 +42,82 @@ SQLiteStore::SQLiteStore(std::filesystem::path path) : m_path(std::move(path)) {
 }
 
 SQLiteStore::~SQLiteStore() {
-    if (m_db)
-        sqlite3_close(m_db);
+    if (m_db) sqlite3_close(m_db);
+}
+
+void SQLiteStore::close_db() {
+    sqlite3_close(m_db);
+    m_db = nullptr;
+}
+
+bool SQLiteStore::connect() {
+    if (sqlite3_open(utf8_from_path(m_path).c_str(), &m_db) != SQLITE_OK) {
+        std::fprintf(stderr, "SQLiteStore: failed to open '%s': %s\n", utf8_from_path(m_path).c_str(),
+                     m_db ? sqlite3_errmsg(m_db) : "unknown error");
+        if (m_db) close_db();
+        return false;
+    }
+    // A write-ahead log keeps a crash mid-save from corrupting committed data,
+    // and settings do not need to survive a power loss.
+    sqlite3_exec(m_db, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
+    sqlite3_exec(m_db, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
+    return true;
+}
+
+bool SQLiteStore::create_table() {
+    char* error = nullptr;
+    if (sqlite3_exec(m_db, kCreateTableSql, nullptr, nullptr, &error) == SQLITE_OK) return true;
+    std::fprintf(stderr, "SQLiteStore: failed to create table: %s\n", error ? error : "unknown error");
+    sqlite3_free(error);
+    close_db();
+    return false;
 }
 
 void SQLiteStore::open_db() {
-    std::error_code ec;
+    std::error_code error;
     const auto parent = m_path.parent_path();
-    if (!parent.empty())
-        std::filesystem::create_directories(parent, ec);
+    if (!parent.empty()) std::filesystem::create_directories(parent, error);
 
-    if (sqlite3_open(m_path.string().c_str(), &m_db) != SQLITE_OK) {
-        std::fprintf(stderr, "SQLiteStore: failed to open '%s': %s\n", m_path.string().c_str(),
-                     m_db ? sqlite3_errmsg(m_db) : "unknown error");
-        if (m_db) {
-            sqlite3_close(m_db);
-            m_db = nullptr;
-        }
-        return;
-    }
+    if (!connect()) return;
 
-    // Config is a small, single-writer local file: WAL means a crash mid-save
-    // can't corrupt data that was already committed, and NORMAL sync is
-    // plenty safe for settings that aren't relied on to survive a power loss.
-    sqlite3_exec(m_db, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
-    sqlite3_exec(m_db, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
-
-    // A file can pass sqlite3_open() (which mostly just validates the
-    // header) while its data pages are corrupted -- e.g. a crash that
-    // truncated the file mid-write, disk bit-rot, or a hand-edited/garbage
-    // file that happens to still look like a database. Left unchecked, that
-    // corruption doesn't surface until some later get()/load()/save() call
-    // fails, at which point the caller has already been told the store is
-    // healthy() and keeps silently retrying against a file that will never
-    // work -- settings just stop persisting, forever, with nothing but a log
-    // line to show for it. Rather than leave it that broken, replace the
-    // corrupted file with a fresh one so persistence keeps working; the
-    // corrupted original is kept alongside it rather than deleted, and
-    // was_recovered()/recovery_backup_path() let the caller tell the user
-    // their settings were reset instead of that happening silently.
+    // A damaged file can still open, so it is checked before it is used.
     if (!database_is_healthy()) {
-        std::fprintf(stderr, "SQLiteStore: '%s' failed integrity check\n", m_path.string().c_str());
-        sqlite3_close(m_db);
-        m_db = nullptr;
+        std::fprintf(stderr, "SQLiteStore: '%s' failed integrity check\n", utf8_from_path(m_path).c_str());
+        close_db();
         recover_from_corruption();
         return;
     }
-
-    char* err = nullptr;
-    if (sqlite3_exec(m_db, kCREATE_TABLE_SQL, nullptr, nullptr, &err) != SQLITE_OK) {
-        std::fprintf(stderr, "SQLiteStore: failed to create table: %s\n", err ? err : "unknown error");
-        sqlite3_free(err);
-        sqlite3_close(m_db);
-        m_db = nullptr;
-    }
+    (void)create_table();
 }
-
-namespace {
-
-// SQLite names a database's write-ahead log and its shared-memory file after
-// the database itself. Moving a corrupted database without them leaves a stale
-// pair beside the fresh file, which a later open may replay or reject.
-void move_wal_sidecars(const std::filesystem::path& from, const std::filesystem::path& to) {
-    for (const char* suffix : {"-wal", "-shm"}) {
-        const std::filesystem::path source = from.string() + suffix;
-        std::error_code exists_ec;
-        if (!std::filesystem::exists(source, exists_ec))
-            continue;
-        std::error_code rename_ec;
-        std::filesystem::rename(source, to.string() + suffix, rename_ec);
-        if (!rename_ec)
-            continue;
-        std::error_code remove_ec;
-        std::filesystem::remove(source, remove_ec);
-    }
-}
-
-}  // namespace
 
 void SQLiteStore::recover_from_corruption() {
-    std::error_code ec;
+    std::error_code error;
     const auto stamp = std::chrono::duration_cast<std::chrono::seconds>(
-                            std::chrono::system_clock::now().time_since_epoch())
-                            .count();
+                           std::chrono::system_clock::now().time_since_epoch())
+                           .count();
     auto backup_path = m_path;
     backup_path += ".corrupt-" + std::to_string(stamp);
 
-    std::filesystem::rename(m_path, backup_path, ec);
-    if (ec) {
-        // Couldn't even move it aside (permissions, read-only fs, etc.) --
-        // don't risk clobbering whatever's there. Fall back to the same
-        // in-memory-only mode a failed open already uses.
-        std::fprintf(stderr, "SQLiteStore: could not move aside corrupted '%s': %s\n", m_path.string().c_str(),
-                     ec.message().c_str());
+    std::filesystem::rename(m_path, backup_path, error);
+    if (error) {
+        // Without the file moved aside there is nothing safe to replace it
+        // with, so the store stays in memory only.
+        std::fprintf(stderr, "SQLiteStore: could not move aside corrupted '%s': %s\n",
+                     utf8_from_path(m_path).c_str(), error.message().c_str());
         return;
     }
     std::fprintf(stderr, "SQLiteStore: backed up corrupted '%s' to '%s', starting fresh\n",
-                 m_path.string().c_str(), backup_path.string().c_str());
+                 utf8_from_path(m_path).c_str(), utf8_from_path(backup_path).c_str());
 
     move_wal_sidecars(m_path, backup_path);
 
-    if (sqlite3_open(m_path.string().c_str(), &m_db) != SQLITE_OK) {
-        std::fprintf(stderr, "SQLiteStore: failed to create replacement db '%s': %s\n",
-                     m_path.string().c_str(), m_db ? sqlite3_errmsg(m_db) : "unknown error");
-        if (m_db) {
-            sqlite3_close(m_db);
-            m_db = nullptr;
-        }
-        return;
-    }
-    sqlite3_exec(m_db, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
-    sqlite3_exec(m_db, "PRAGMA synchronous=NORMAL;", nullptr, nullptr, nullptr);
+    if (!connect() || !create_table()) return;
 
-    char* err = nullptr;
-    if (sqlite3_exec(m_db, kCREATE_TABLE_SQL, nullptr, nullptr, &err) != SQLITE_OK) {
-        std::fprintf(stderr, "SQLiteStore: failed to create table in replacement db: %s\n",
-                     err ? err : "unknown error");
-        sqlite3_free(err);
-        sqlite3_close(m_db);
-        m_db = nullptr;
-        return;
-    }
-
-    m_recovered   = true;
+    m_recovered = true;
     m_backup_path = std::move(backup_path);
 }
 
 bool SQLiteStore::database_is_healthy() const {
-    // quick_check is the cheap, non-exhaustive variant (unlike the full
-    // integrity_check it doesn't verify indexes/foreign keys), which is
-    // plenty for a single-table local settings file and stays fast even if
-    // the file is large. A brand-new/empty database also reports "ok".
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, "PRAGMA quick_check(1);", -1, &stmt, nullptr) != SQLITE_OK)
         return false;
@@ -160,7 +125,7 @@ bool SQLiteStore::database_is_healthy() const {
     bool ok = false;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         const auto* text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-        ok                = text && std::string_view(text) == "ok";
+        ok = text && std::string_view(text) == "ok";
     }
     sqlite3_finalize(stmt);
     return ok;
@@ -168,8 +133,7 @@ bool SQLiteStore::database_is_healthy() const {
 
 std::optional<std::string> SQLiteStore::get(std::string_view key) const {
     auto it = m_data.find(std::string(key));
-    if (it == m_data.end())
-        return std::nullopt;
+    if (it == m_data.end()) return std::nullopt;
     return it->second;
 }
 
@@ -177,13 +141,10 @@ void SQLiteStore::set(std::string_view key, std::string_view value) {
     m_data[std::string(key)] = std::string(value);
 }
 
-bool SQLiteStore::erase(std::string_view key) {
-    return m_data.erase(std::string(key)) > 0;
-}
+bool SQLiteStore::erase(std::string_view key) { return m_data.erase(std::string(key)) > 0; }
 
 void SQLiteStore::load() {
-    if (!m_db)
-        return;
+    if (!m_db) return;
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, "SELECT key, value FROM kv;", -1, &stmt, nullptr) != SQLITE_OK) {
@@ -196,17 +157,16 @@ void SQLiteStore::load() {
     std::map<std::string, std::string> loaded;
     int step_result = SQLITE_DONE;
     while ((step_result = sqlite3_step(stmt)) == SQLITE_ROW) {
-        const auto* key_text   = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        const auto* key_text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
         const auto* value_text = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-        if (!key_text)
-            continue;
+        if (!key_text) continue;
         loaded[std::string(key_text)] = value_text ? std::string(value_text) : std::string();
     }
 
-    if (step_result != SQLITE_DONE)
+    if (step_result != SQLITE_DONE) {
         std::fprintf(stderr, "SQLiteStore: failed to read every row: %s\n", sqlite3_errmsg(m_db));
-    else {
-        m_data   = std::move(loaded);
+    } else {
+        m_data = std::move(loaded);
         m_loaded = true;
     }
 
@@ -214,16 +174,15 @@ void SQLiteStore::load() {
 }
 
 void SQLiteStore::save() const {
-    if (!m_db)
-        return;
+    if (!m_db) return;
 
     // Nothing was read and nothing was set: writing would clear the table.
-    if (!m_loaded && m_data.empty())
-        return;
+    if (!m_loaded && m_data.empty()) return;
 
     char* err = nullptr;
     if (sqlite3_exec(m_db, "BEGIN IMMEDIATE TRANSACTION;", nullptr, nullptr, &err) != SQLITE_OK) {
-        std::fprintf(stderr, "SQLiteStore: failed to begin transaction: %s\n", err ? err : "unknown error");
+        std::fprintf(stderr, "SQLiteStore: failed to begin transaction: %s\n",
+                     err ? err : "unknown error");
         sqlite3_free(err);
         return;
     }
@@ -237,7 +196,8 @@ void SQLiteStore::save() const {
     }
 
     sqlite3_stmt* stmt = nullptr;
-    if (ok && sqlite3_prepare_v2(m_db, "INSERT INTO kv (key, value) VALUES (?, ?);", -1, &stmt, nullptr) != SQLITE_OK) {
+    if (ok && sqlite3_prepare_v2(m_db, "INSERT INTO kv (key, value) VALUES (?, ?);", -1, &stmt,
+                                 nullptr) != SQLITE_OK) {
         std::fprintf(stderr, "SQLiteStore: failed to prepare insert: %s\n", sqlite3_errmsg(m_db));
         ok = false;
     }
@@ -248,14 +208,14 @@ void SQLiteStore::save() const {
             sqlite3_bind_text(stmt, 1, key.data(), static_cast<int>(key.size()), SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 2, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
             if (sqlite3_step(stmt) != SQLITE_DONE) {
-                std::fprintf(stderr, "SQLiteStore: failed to write key '%s': %s\n", key.c_str(), sqlite3_errmsg(m_db));
+                std::fprintf(stderr, "SQLiteStore: failed to write key '%s': %s\n", key.c_str(),
+                             sqlite3_errmsg(m_db));
                 ok = false;
                 break;
             }
         }
     }
-    if (stmt)
-        sqlite3_finalize(stmt);
+    if (stmt) sqlite3_finalize(stmt);
 
     sqlite3_exec(m_db, ok ? "COMMIT;" : "ROLLBACK;", nullptr, nullptr, nullptr);
 }

@@ -11,7 +11,7 @@ export component ValueButton inherits Rectangle {
     callback clicked;
 
     height: 22px;
-    background: focused ? #c9e0f7 : touch.has-hover ? #e5f1fb : white;
+    background: focused ? Styles.menu-hover : touch.has-hover ? #e5f1fb : white;
     border-width: 1px;
     border-color: focused ? #8dbcec : #c8c8c8;
 
@@ -59,7 +59,7 @@ export component StyleToggle inherits Rectangle {
 
     width: 24px;
     height: 22px;
-    background: active ? #c9e0f7 : touch.has-hover ? #e5f1fb : transparent;
+    background: active ? Styles.menu-hover : touch.has-hover ? #e5f1fb : transparent;
     border-width: 1px;
     border-color: active ? #8dbcec : transparent;
 

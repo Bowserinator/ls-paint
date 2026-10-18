@@ -8,7 +8,8 @@ PixelBuffer PixelBuffer::copy_region(RectI region) const {
     region = region.intersected(bounds());
     PixelBuffer result(region.width, region.height);
     for (int y = 0; y < region.height; ++y) {
-        const auto source = row(region.y + y).subspan(static_cast<std::size_t>(region.x), static_cast<std::size_t>(region.width));
+        const auto source = row(region.y + y).subspan(static_cast<std::size_t>(region.x),
+                                                      static_cast<std::size_t>(region.width));
         std::ranges::copy(source, result.row(y).begin());
     }
     return result;
@@ -17,7 +18,8 @@ PixelBuffer PixelBuffer::copy_region(RectI region) const {
 void PixelBuffer::blit(int x, int y, const PixelBuffer& source) {
     const RectI area = RectI{x, y, source.width(), source.height()}.intersected(bounds());
     for (int target_y = area.y; target_y < area.bottom(); ++target_y) {
-        const auto pixels = source.row(target_y - y).subspan(static_cast<std::size_t>(area.x - x), static_cast<std::size_t>(area.width));
+        const auto pixels = source.row(target_y - y).subspan(static_cast<std::size_t>(area.x - x),
+                                                             static_cast<std::size_t>(area.width));
         std::ranges::copy(pixels, row(target_y).begin() + area.x);
     }
 }
@@ -29,6 +31,12 @@ PixelBuffer PixelBuffer::rotated_90_cw() const {
             result.at(m_height - 1 - y, x) = at(x, y);
     return result;
 }
+
+PixelBuffer PixelBuffer::rotated_90_ccw() const {
+    return rotated_90_cw().rotated_90_cw().rotated_90_cw();
+}
+
+PixelBuffer PixelBuffer::rotated_180() const { return rotated_90_cw().rotated_90_cw(); }
 
 PixelBuffer PixelBuffer::flipped_horizontal() const {
     PixelBuffer result(m_width, m_height);

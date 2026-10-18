@@ -14,24 +14,20 @@ inline constexpr int kMaxCanvasDimension = 4096;
 // Images larger than this are refused on load and never produced by growth.
 inline constexpr int kMaxImageDimension = 16384;
 
-// The application's own name: the folder under the user's config directory that
-// the settings database lives in.
-inline constexpr std::string_view kAPP_ID = "ls_paint";
+// The application's name, which is also the name of its config folder.
+inline constexpr std::string_view kAppId = "ls_paint";
 inline constexpr std::size_t kMaxHistoryEntries = 20;
-// The stack also keeps a size budget, because one entry can hold a whole
-// canvas: at 4096x4096 a single geometry entry is 64 MB, so the entry count
-// alone would let the history grow into gigabytes.
+// The history also keeps a size budget, because one entry can hold a whole
+// canvas.
 inline constexpr std::size_t kMaxHistoryBytes = 512u * 1024u * 1024u;
-// The custom half of the palette. The ribbon shows the whole palette ten to a
-// row, so the default colors and these together fill three rows.
+// The custom colors in the ribbon's palette.
 inline constexpr int kCustomColorSlots = 10;
-// The File menu's recent list: the openings and savings it remembers.
+// The number of files the File menu's recent list remembers.
 inline constexpr std::size_t kMaxRecentFiles = 10;
-// The grid of custom colors the Edit Colors dialog edits, two rows of eight.
-// OK moves the slot the dialog points at into the ribbon's strip.
+// The custom colors in the Edit Colors dialog, two rows of eight.
 inline constexpr int kDialogCustomColorSlots = 16;
 
-// Extensions the file dialogs offer and document_io can write.
+// Extensions of the image files the application reads and writes.
 inline constexpr std::array<std::string_view, 4> kImageExtensions{".png", ".bmp", ".jpg", ".jpeg"};
 
 inline constexpr std::array<Rgba8, 20> kDefaultPalette{{

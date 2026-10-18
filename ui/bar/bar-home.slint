@@ -34,7 +34,7 @@ component BrushGlyphButton inherits Rectangle {
         height: parent.height - 2 * Styles.bar-brush-cell-padding;
         border-width: 1px;
         border-color: root.focused ? #8dbcec : root.hovered ? #c3ddf8 : Styles.ribbon-icon-border-color;
-        background: root.focused ? #c9e0f7 : touch.pressed ? #d5e6f7 : Styles.bar-brush-cell-background;
+        background: root.focused ? Styles.menu-hover : touch.pressed ? #d5e6f7 : Styles.bar-brush-cell-background;
 
         Image {
             x: 1px;
@@ -68,7 +68,7 @@ component TextureMenu inherits BarDropdown {
     }
     BarDropdownItem {
         width: root.item-width;
-        icon: root.for-fill ? @image-url("../../icons/shape-fill.png") : @image-url("../../icons/shape-outline.png");
+        icon: @image-url("../../icons/textures/solid.png");
         text: "Solid color";
         focused: root.current == EShapeTexture.SOLID;
         clicked => { root.picked(EShapeTexture.SOLID); }
@@ -154,9 +154,15 @@ export component HomeBar inherits Bar {
     // conditions below read the width directly. A tab switch builds the bar again
     // and no resize follows, so a value that arrives later leaves the bar collapsed.
     private property <length> strip-width: root.width;
-    // Which page the merged Shapes picker shows: 0 the shape gallery,
-    // 1 the outline list, 2 the fill list.
-    private property <int> picker-page: 0;
+    // Where the Outline and Fill rows sit inside the Shapes picker's panel, so
+    // the list a row opens can hang below that row.
+    private property <length> shape-page-row-x:
+        1px + 6px + 7 * (Styles.bar-small-icon-size + 6px) + 6px;
+    private property <length> shape-page-row-y: 1px + 6px;
+    private property <length> shape-page-row-height:
+        Styles.bar-small-icon-size + Styles.bar-padding;
+    private property <length> shape-page-row-step:
+        root.shape-page-row-height + Styles.bar-list-spacing;
     // Which brush cell the pointer rests on, and its name, or nothing.
     private property <int> hovered-brush: -1;
     private property <string> hovered-name: "";
@@ -328,7 +334,7 @@ export component HomeBar inherits Bar {
                 BarDropdown {
                     BarDropdownTitle { text: "Selection Shapes"; }
                     BarDropdownDivider {}
-    
+
                     BarDropdownItem {
                         icon: @image-url("../../icons/selection.png"); text: "Rectangular selection";
                         focused: UserState.selection-type == ESelectionType.RECTANGULAR;
@@ -477,7 +483,7 @@ export component HomeBar inherits Bar {
                 width: collapsed-image ? 0px : Styles.ribbon-width-image - 2 * Styles.ribbon-group-padding;
                 select-dropdown-btn := ImageButtonVerticalDropdown {
                     text: "Select";
-                    icon: 
+                    icon:
                         UserState.selection-type == ESelectionType.RECTANGULAR ? @image-url("../../icons/selection.png") :
                         UserState.selection-type == ESelectionType.FREEHAND ? @image-url("../../icons/free-selection.png") :
                         @image-url("../../icons/selection.png");
@@ -712,11 +718,14 @@ export component HomeBar inherits Bar {
             shape-gallery-dropdown := PopupWindow {
                 y: Styles.bar-dropdown-y;
                 x: collapsed-shapes ? shape-merged.x : shape-box.x;
+                // A click inside the panel picks or opens something, so only a
+                // press outside closes the picker.
+                close-policy: close-on-click-outside;
 
                 BarDropdown {
                     panel-width: Styles.bar-shapes-menu-width;
 
-                    if (root.picker-page == 0) : HorizontalLayout {
+                    HorizontalLayout {
                         padding: 6px;
                         spacing: 6px;
 
@@ -740,63 +749,26 @@ export component HomeBar inherits Bar {
 
                         VerticalLayout {
                             alignment: start;
+                            spacing: Styles.bar-list-spacing;
 
                             // Merged away, the outline and fill buttons have no home
-                            // of their own, so the picker carries them. Clicking one
+                            // of their own, so the picker carries them, in the same
+                            // one-line shape the expanded group uses. Clicking one
                             // turns the picker over to that part's list.
-                            shape-outline-btn := ImageButtonVerticalDropdown {
-                                width: Styles.bar-shape-mode-btn-width;
+                            shape-outline-btn := ImageButtonHorizontalDropdown {
+                                width: Styles.ribbon-shape-mode-width;
                                 text: "Outline";
                                 icon: @image-url("../../icons/shape-outline.png");
-                                focused1: ShapeStyle.outline != EShapeTexture.NONE;
-                                focused2: ShapeStyle.outline != EShapeTexture.NONE;
-                                clicked => {
-                                    root.picker-page = 1;
-                                    shape-gallery-dropdown.show();
-                                }
-                                clicked_dropdown => {
-                                    root.picker-page = 1;
-                                    shape-gallery-dropdown.show();
-                                }
+                                focused: ShapeStyle.outline != EShapeTexture.NONE;
+                                clicked => { shape-outline-page.show(); }
                             }
-                            shape-fill-btn := ImageButtonVerticalDropdown {
-                                width: Styles.bar-shape-mode-btn-width;
+                            shape-fill-btn := ImageButtonHorizontalDropdown {
+                                width: Styles.ribbon-shape-mode-width;
                                 text: "Fill";
                                 icon: @image-url("../../icons/shape-fill.png");
-                                focused1: ShapeStyle.fill != EShapeTexture.NONE;
-                                focused2: ShapeStyle.fill != EShapeTexture.NONE;
-                                clicked => {
-                                    root.picker-page = 2;
-                                    shape-gallery-dropdown.show();
-                                }
-                                clicked_dropdown => {
-                                    root.picker-page = 2;
-                                    shape-gallery-dropdown.show();
-                                }
+                                focused: ShapeStyle.fill != EShapeTexture.NONE;
+                                clicked => { shape-fill-page.show(); }
                             }
-                        }
-                    }
-
-                    if (root.picker-page == 1) : TextureMenu {
-                        panel-width: Styles.bar-shapes-menu-width;
-                        item-width: Styles.bar-shapes-menu-width - 2px;
-                        current: ShapeStyle.outline;
-                        picked(texture) => {
-                            ShapeStyle.outline = texture;
-                            root.picker-page = 0;
-                            shape-gallery-dropdown.show();
-                        }
-                    }
-
-                    if (root.picker-page == 2) : TextureMenu {
-                        panel-width: Styles.bar-shapes-menu-width;
-                        item-width: Styles.bar-shapes-menu-width - 2px;
-                        for-fill: true;
-                        current: ShapeStyle.fill;
-                        picked(texture) => {
-                            ShapeStyle.fill = texture;
-                            root.picker-page = 0;
-                            shape-gallery-dropdown.show();
                         }
                     }
 
@@ -805,9 +777,45 @@ export component HomeBar inherits Bar {
                         height: Styles.bar-dropdown-height;
                         text: "Shapes";
                         font-size: Styles.bar-font-size;
-                        color: #646464;
+                        color: Styles.large-menu-title-color;
                         horizontal-alignment: center;
                         vertical-alignment: center;
+                    }
+                }
+
+                // The lists the picker's rows open. They are declared inside
+                // the picker, so showing one leaves the picker itself up, with
+                // the list on top of it, and a press outside only closes the
+                // list.
+                shape-outline-page := PopupWindow {
+                    y: root.shape-page-row-y + root.shape-page-row-height;
+                    x: root.shape-page-row-x;
+
+                    TextureMenu {
+                        panel-width: Styles.bar-shapes-menu-width;
+                        item-width: Styles.bar-shapes-menu-width - 2px;
+                        current: ShapeStyle.outline;
+                        picked(texture) => {
+                            ShapeStyle.outline = texture;
+                            shape-outline-page.close();
+                        }
+                    }
+                }
+
+                shape-fill-page := PopupWindow {
+                    y: root.shape-page-row-y + root.shape-page-row-step
+                        + root.shape-page-row-height;
+                    x: root.shape-page-row-x;
+
+                    TextureMenu {
+                        panel-width: Styles.bar-shapes-menu-width;
+                        item-width: Styles.bar-shapes-menu-width - 2px;
+                        for-fill: true;
+                        current: ShapeStyle.fill;
+                        picked(texture) => {
+                            ShapeStyle.fill = texture;
+                            shape-fill-page.close();
+                        }
                     }
                 }
             }
@@ -852,11 +860,9 @@ export component HomeBar inherits Bar {
                 // Opening the picker shows the choices without taking the tool:
                 // only picking one swaps the tool in.
                 clicked => {
-                    root.picker-page = 0;
                     shape-gallery-dropdown.show();
                 }
                 clicked_dropdown => {
-                    root.picker-page = 0;
                     shape-gallery-dropdown.show();
                 }
             }
@@ -904,7 +910,7 @@ export component HomeBar inherits Bar {
                     Rectangle {
                         width: 100%;
                         height: Styles.ribbon-shape-scrollbar;
-                        background: #f5f6f7;
+                        background: Styles.ribbon-background;
                         border-width: 1px;
                         border-color: Styles.bar-border-light;
 
@@ -966,7 +972,7 @@ export component HomeBar inherits Bar {
                     Rectangle {
                         width: 100%;
                         height: Styles.ribbon-shape-scrollbar;
-                        background: #f5f6f7;
+                        background: Styles.ribbon-background;
                         border-width: 1px;
                         border-color: Styles.bar-border-light;
 

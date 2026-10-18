@@ -62,7 +62,6 @@ public:
     void paste_clipboard();
     void transform_selection_contents(ContentTransform transform);
     [[nodiscard]] const ClipboardContent& clipboard() const noexcept { return m_clipboard; }
-    [[nodiscard]] bool has_selection() const noexcept { return m_document.selection().active(); }
     // Drops a block that is still hovering: the paste or lift never landed, so
     // nothing is written to the layer and no undo step is recorded.
     bool discard_floating();
@@ -85,14 +84,22 @@ public:
     // Pastes pixels the caller has already read, such as one off the system
     // clipboard.
     IoResult paste_image(PixelBuffer image);
-    [[nodiscard]] bool selection_clipboard_empty() const noexcept { return m_clipboard.empty(); }
 
 private:
     void commit_selection_contents();
     void install_floating(FloatingContents contents);
     void push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before);
     void push_selection_edit(SelectionEdit edit);
-    IoResult paste_pixels(PixelBuffer image);
+    // Applies `change` to the whole document as one undo step, after the
+    // floating selection has been put down.
+    template <typename ChangeFn>
+    void edit_geometry(ChangeFn change) {
+        commit_selection_contents();
+        std::vector<PixelBuffer> before = m_document.snapshot();
+        SelectionMask selection_before = m_document.selection();
+        change();
+        push_geometry_edit(std::move(before), std::move(selection_before));
+    }
     // The region Copy and Cut take: the selection when there is one, otherwise
     // the whole canvas.
     [[nodiscard]] RectI copy_source_rect() const;

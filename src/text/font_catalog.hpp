@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -25,6 +26,9 @@ struct FontFace {
 // The spelling a family name sorts and deduplicates by.
 [[nodiscard]] std::string font_family_key(std::string_view family);
 
+// Puts the faces in the order of their family keys.
+void sort_faces(std::vector<FontFace>& faces);
+
 class FontCatalog {
 public:
     virtual ~FontCatalog() = default;
@@ -36,6 +40,10 @@ public:
     // family. A match is only accepted when it names the requested family, so
     // a substitution the platform makes on its own is never mistaken for a hit.
     [[nodiscard]] virtual std::string face_path(std::string_view family) const = 0;
+
+    // The file of an installed face that has a glyph for `codepoint`, empty
+    // when no installed face does.
+    [[nodiscard]] virtual std::string face_path_covering(char32_t codepoint) const = 0;
 };
 
 // The catalog of the running platform.

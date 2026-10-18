@@ -47,15 +47,10 @@ void test_format_from_extension_is_case_insensitive() {
     CHECK(format_from_extension("notes.txt") == std::nullopt);
 }
 
-void test_format_lookup_helpers_round_trip() {
+void test_extension_lookup_round_trips() {
     CHECK(std::string(extension_for(ImageFormat::Png)) == ".png");
     CHECK(std::string(extension_for(ImageFormat::Bmp)) == ".bmp");
     CHECK(std::string(extension_for(ImageFormat::Jpeg)) == ".jpg");
-    for (const ImageFormat format : {ImageFormat::Png, ImageFormat::Bmp, ImageFormat::Jpeg}) {
-        CHECK(format_from_index(index_from(format)) == format);
-    }
-    // An out of range index falls back to Png instead of mis-indexing.
-    CHECK(format_from_index(99) == ImageFormat::Png);
 }
 
 void test_flatten_to_opaque_blends_and_drops_alpha() {
@@ -150,7 +145,7 @@ void test_save_reports_a_missing_directory() {
 
 int main() {
     test_format_from_extension_is_case_insensitive();
-    test_format_lookup_helpers_round_trip();
+    test_extension_lookup_round_trips();
     test_flatten_to_opaque_blends_and_drops_alpha();
     test_png_round_trip_keeps_pixels();
     test_bmp_round_trip_flattens_translucent_pixels();

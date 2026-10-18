@@ -37,7 +37,7 @@ export component BarDropdownTitle {
 
     txt := Text {
         font-size: Styles.bar-font-size;
-        color: #646464;
+        color: Styles.large-menu-title-color;
         font-weight: 700;
         horizontal-alignment: left;
         x: Styles.bar-padding;
@@ -59,7 +59,7 @@ export component BarDropdownItem {
 
     opacity: enabled ? 1.0 : 0.4;
     Rectangle {
-        background: focused ? #c9e0f7 : touch.has-hover ? #edf4fc : transparent;
+        background: focused ? Styles.menu-hover : touch.has-hover ? #edf4fc : transparent;
         border-width: 1px;
         border-color: focused ? #8dbcec : touch.has-hover ? #bfdcfb : transparent;
     }
@@ -114,7 +114,7 @@ export component BarDropdownTextItem inherits Rectangle {
     height: Styles.bar-dropdown-compact-height;
 
     Rectangle {
-        background: focused ? #c9e0f7 : touch.has-hover ? #edf4fc : transparent;
+        background: focused ? Styles.menu-hover : touch.has-hover ? #edf4fc : transparent;
         border-width: 1px;
         border-color: focused ? #8dbcec : touch.has-hover ? #bfdcfb : transparent;
     }

@@ -1,6 +1,6 @@
 import { Bar, BarDivider, BarItemGroup } from "bar.slint";
 import { ImageButtonVertical } from "../components/image-buttons.slint";
-import { UserState } from "../globals.slint";
+import { UserState, ZoomScale } from "../globals.slint";
 import { Styles } from "../styles.slint";
 
 // One "Show or hide" row: a check box and its caption.
@@ -75,12 +75,12 @@ export component ViewBar inherits Bar {
                     ImageButtonVertical {
                         icon: @image-url("../../icons/zoom-in.png");
                         text: "Zoom\nin";
-                        clicked => { UserState.zoom = min(UserState.zoom * 1.25, 7.0); }
+                        clicked => { UserState.zoom = min(UserState.zoom * ZoomScale.step, ZoomScale.max-zoom); }
                     }
                     ImageButtonVertical {
                         icon: @image-url("../../icons/zoom-out.png");
                         text: "Zoom\nout";
-                        clicked => { UserState.zoom = max(UserState.zoom / 1.25, 0.125); }
+                        clicked => { UserState.zoom = max(UserState.zoom / ZoomScale.step, ZoomScale.min-zoom); }
                     }
                     ImageButtonVertical {
                         icon: @image-url("../../icons/zoom-100.png");

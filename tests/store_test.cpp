@@ -38,18 +38,18 @@ void test_a_value_survives_a_reopen() {
     {
         SQLiteStore store(path);
         CHECK(store.healthy());
-        CHECK(!store.get(kSTORE_KEY_WINDOW_WIDTH).has_value());
-        store.set(kSTORE_KEY_WINDOW_WIDTH, "1024");
-        store.set(kSTORE_KEY_FONT_FAMILY, "DejaVu Serif");
+        CHECK(!store.get(kStoreKeyWindowWidth).has_value());
+        store.set(kStoreKeyWindowWidth, "1024");
+        store.set(kStoreKeyFontFamily, "DejaVu Serif");
         store.save();
     }
 
     SQLiteStore reopened(path);
     CHECK(reopened.healthy());
     CHECK(!reopened.was_recovered());
-    const std::optional<std::string> width = reopened.get(kSTORE_KEY_WINDOW_WIDTH);
+    const std::optional<std::string> width = reopened.get(kStoreKeyWindowWidth);
     CHECK(width.has_value() && *width == "1024");
-    const std::optional<std::string> family = reopened.get(kSTORE_KEY_FONT_FAMILY);
+    const std::optional<std::string> family = reopened.get(kStoreKeyFontFamily);
     CHECK(family.has_value() && *family == "DejaVu Serif");
 }
 
@@ -57,30 +57,30 @@ void test_erase_removes_a_key() {
     const std::filesystem::path path = fresh_directory("lsp_store_erase") / "config.sqlite3";
     {
         SQLiteStore store(path);
-        store.set(kSTORE_KEY_SHOW_RULERS, "1");
-        store.set(kSTORE_KEY_SHOW_GRIDLINES, "1");
+        store.set(kStoreKeyShowRulers, "1");
+        store.set(kStoreKeyShowGridlines, "1");
         store.save();
     }
 
     {
         SQLiteStore store(path);
-        CHECK(store.erase(kSTORE_KEY_SHOW_RULERS));
+        CHECK(store.erase(kStoreKeyShowRulers));
         CHECK(!store.erase("never_set"));
         store.save();
     }
 
     SQLiteStore reopened(path);
-    CHECK(!reopened.get(kSTORE_KEY_SHOW_RULERS).has_value());
-    const std::optional<std::string> grid = reopened.get(kSTORE_KEY_SHOW_GRIDLINES);
+    CHECK(!reopened.get(kStoreKeyShowRulers).has_value());
+    const std::optional<std::string> grid = reopened.get(kStoreKeyShowGridlines);
     CHECK(grid.has_value() && *grid == "1");
 }
 
 void test_a_large_value_survives_a_reopen() {
     const std::filesystem::path path = fresh_directory("lsp_store_large") / "config.sqlite3";
-    const std::string long_value(kSTORE_KEY_RECENT_FILES.size() * 40, 'x');
+    const std::string long_value(kStoreKeyRecentFiles.size() * 40, 'x');
     {
         SQLiteStore store(path);
-        store.set(kSTORE_KEY_RECENT_FILES, "first|second|third");
+        store.set(kStoreKeyRecentFiles, "first|second|third");
         store.set("long_value", long_value);
         store.save();
     }
@@ -88,7 +88,7 @@ void test_a_large_value_survives_a_reopen() {
     SQLiteStore reopened(path);
     const std::optional<std::string> stored = reopened.get("long_value");
     CHECK(stored.has_value() && *stored == long_value);
-    const std::optional<std::string> files = reopened.get(kSTORE_KEY_RECENT_FILES);
+    const std::optional<std::string> files = reopened.get(kStoreKeyRecentFiles);
     CHECK(files.has_value() && *files == "first|second|third");
     CHECK(decode_list(*files) == std::vector<std::string>({"first", "second", "third"}));
 }
@@ -111,14 +111,14 @@ void test_an_unreadable_database_is_backed_up_and_replaced() {
         backup = store.recovery_backup_path();
         CHECK(!backup.empty());
         CHECK(std::filesystem::exists(backup));
-        CHECK(!store.get(kSTORE_KEY_WINDOW_WIDTH).has_value());
-        store.set(kSTORE_KEY_WINDOW_WIDTH, "800");
+        CHECK(!store.get(kStoreKeyWindowWidth).has_value());
+        store.set(kStoreKeyWindowWidth, "800");
         store.save();
     }
 
     SQLiteStore reopened(path);
     CHECK(!reopened.was_recovered());
-    CHECK(reopened.get(kSTORE_KEY_WINDOW_WIDTH).value_or("") == "800");
+    CHECK(reopened.get(kStoreKeyWindowWidth).value_or("") == "800");
 
     // The unreadable original is kept beside the replacement, byte for byte.
     std::string backed_up(garbage.size(), '\0');
@@ -147,8 +147,8 @@ void test_a_list_round_trips_through_encoding() {
 
 void test_the_default_path_names_the_app_directory() {
     const std::filesystem::path path = default_store_path();
-    CHECK(path.filename() == kSTORE_FILENAME);
-    CHECK(path.parent_path().filename() == kAPP_ID);
+    CHECK(path.filename() == kStoreFilename);
+    CHECK(path.parent_path().filename() == kAppId);
     // The base is the platform's per-user config directory, so XDG_CONFIG_HOME
     // decides it wherever that variable is set.
     if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0')
@@ -161,7 +161,7 @@ void test_a_store_that_never_loaded_does_not_clear_the_table() {
     const std::filesystem::path path = fresh_directory("lsp_store_noload") / "config.sqlite3";
     {
         SQLiteStore seeded(path);
-        seeded.set(kSTORE_KEY_WINDOW_WIDTH, "800");
+        seeded.set(kStoreKeyWindowWidth, "800");
         seeded.save();
     }
 
@@ -174,7 +174,7 @@ void test_a_store_that_never_loaded_does_not_clear_the_table() {
 
     SQLiteStore reread(path);
     reread.load();
-    CHECK(reread.get(kSTORE_KEY_WINDOW_WIDTH) == std::optional<std::string>("800"));
+    CHECK(reread.get(kStoreKeyWindowWidth) == std::optional<std::string>("800"));
 }
 
 int main() {

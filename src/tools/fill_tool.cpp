@@ -1,19 +1,19 @@
 #include "tools/fill_tool.hpp"
 
-#include <cmath>
 #include <utility>
 #include <vector>
 
 #include "selection/selection_mask.hpp"
 #include "tools/stroke_recorder.hpp"
 #include "tools/tool_context.hpp"
+#include "utils/math.hpp"
 
 namespace lsp {
 
 void FillTool::on_pointer_down(ToolContext& context, Point2f position, PointerButton button) {
     PixelBuffer& pixels = context.document.active_layer().pixels;
-    const int start_x = static_cast<int>(std::floor(position.x));
-    const int start_y = static_cast<int>(std::floor(position.y));
+    const int start_x = floor_to_int(position.x);
+    const int start_y = floor_to_int(position.y);
     if (!pixels.contains(start_x, start_y)) return;
 
     const SelectionMask& selection = context.document.selection();
@@ -23,6 +23,8 @@ void FillTool::on_pointer_down(ToolContext& context, Point2f position, PointerBu
     const Rgba8 target = pixels.at(start_x, start_y);
     if (target == fill) return;
 
+    const auto fillable = [&](int x, int y) { return pixels.at(x, y) == target && selection.contains(x, y); };
+
     StrokeRecorder recorder(context.document);
     RectI dirty;
     std::vector<std::pair<int, int>> seeds{{start_x, start_y}};
@@ -30,12 +32,12 @@ void FillTool::on_pointer_down(ToolContext& context, Point2f position, PointerBu
     while (!seeds.empty()) {
         const auto [seed_x, y] = seeds.back();
         seeds.pop_back();
-        if (pixels.at(seed_x, y) != target || !selection.contains(seed_x, y)) continue;
+        if (!fillable(seed_x, y)) continue;
 
         int left = seed_x;
         int right = seed_x;
-        while (left > 0 && pixels.at(left - 1, y) == target && selection.contains(left - 1, y)) --left;
-        while (right + 1 < pixels.width() && pixels.at(right + 1, y) == target && selection.contains(right + 1, y)) ++right;
+        while (left > 0 && fillable(left - 1, y)) --left;
+        while (right + 1 < pixels.width() && fillable(right + 1, y)) ++right;
 
         for (int x = left; x <= right; ++x) pixels.at(x, y) = fill;
         dirty = dirty.united({left, y, right - left + 1, 1});
@@ -44,7 +46,7 @@ void FillTool::on_pointer_down(ToolContext& context, Point2f position, PointerBu
             if (next_y < 0 || next_y >= pixels.height()) continue;
             bool in_span = false;
             for (int x = left; x <= right; ++x) {
-                const bool match = pixels.at(x, next_y) == target && selection.contains(x, next_y);
+                const bool match = fillable(x, next_y);
                 if (match && !in_span) seeds.emplace_back(x, next_y);
                 in_span = match;
             }

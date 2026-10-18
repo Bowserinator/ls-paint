@@ -2,15 +2,11 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
-#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <filesystem>
 #include <memory>
-#include <numbers>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,25 +17,55 @@
 #include "io/document_io.hpp"
 #include "store/store_sqlite.hpp"
 #include "text/font_catalog.hpp"
+#include "tools/selection_tool.hpp"
 #include "tools/text_tool.hpp"
+#include "ui/cursor_overlay.hpp"
 #include "ui/file_picker.hpp"
 #include "ui/shortcuts.hpp"
+#include "utils/key_text.hpp"
+#include "utils/math.hpp"
+#include "utils/path_text.hpp"
+#include "utils/text.hpp"
 
 namespace lsp {
 
 namespace {
 
+const slint::Color kWhiteColor = slint::Color::from_rgb_uint8(255, 255, 255);
+
+// The view's backdrop around the paper, which the pointer's marks read against
+// where the paper ends.
+constexpr Rgba8 kCanvasViewColor{0xc5, 0xcf, 0xdf, 255};
+
+slint::Color to_slint(Rgba8 color) {
+    return slint::Color::from_argb_uint8(color.a, color.r, color.g, color.b);
+}
+
+// Ink is always opaque: a color with alpha 0 would make every stroke invisible
+// while the pencil still appears to be drawing.
+Rgba8 to_rgba(slint::Color color) {
+    return {color.red(), color.green(), color.blue(), 255};
+}
+
+// A colour as it is stored: six hex digits, red first.
+std::string color_text(const slint::Color& color) { return to_hex(to_rgba(color)).substr(1); }
+
+// The colour a stored string names, or nothing when it is not six hex digits.
+std::optional<slint::Color> color_from_text(std::string_view text) {
+    if (text.size() != 6) return std::nullopt;
+    const std::optional<Rgba8> parsed = parse_color(text);
+    if (!parsed) return std::nullopt;
+    return to_slint(*parsed);
+}
+
 // The canvas size fields hold digits and nothing else, so anything else is a
 // size the user has not finished typing.
 [[nodiscard]] int parse_canvas_size(const slint::SharedString& text) {
-    const std::string value(text);
-    if (value.empty() || value.size() > 9) return 0;
-    for (const char c : value) {
-        if (c < '0' || c > '9') return 0;
-    }
-    const long long size = std::stoll(value);
-    if (size < 1 || size > kMaxCanvasDimension) return 0;
-    return static_cast<int>(size);
+    const std::string_view value(text);
+    if (!std::ranges::all_of(value, [](char c) { return c >= '0' && c <= '9'; })) return 0;
+    const std::optional<int> size = parse_int(value);
+    if (!size || *size < 1 || *size > kMaxCanvasDimension) return 0;
+    return *size;
 }
 
 // Marching ants: alternating light and dark runs three pixels long, advanced
@@ -49,19 +75,14 @@ constexpr int kAntSegment = 3;
 constexpr int kAntPeriod = kAntSegment * 2;
 constexpr auto kAntTick = std::chrono::milliseconds(80);
 
-// Mirrors SelectionTool's minimum selection span: below this the grips would
-// swallow most of the "drag inside to move it" target.
-constexpr int kMinGripSpan = 8;
-
-// A second press on the same spot within this window counts as a double click.
+// A second press this soon and this close to the first counts as a double click.
 constexpr auto kDoubleClickWindow = std::chrono::milliseconds(400);
 constexpr float kDoubleClickSlop = 4.0f;
 
 // The picker draws every glyph in this box, whatever the size it shows it at.
 constexpr int kGlyphBox = 26;
 
-// Picker order, which the Pickup of the gallery follows: rows of six, starting
-// with the line and the curve and ending with the bolt.
+// The order of the shape picker, in rows of six.
 constexpr std::array<EShapeKind, 23> kShapeGalleryOrder{
     EShapeKind::LINE,          EShapeKind::CURVE,        EShapeKind::OVAL,
     EShapeKind::RECTANGLE,     EShapeKind::ROUNDEDRECTANGLE, EShapeKind::POLYGON,
@@ -121,10 +142,10 @@ void append_path_runs(const std::vector<Point2f>& points, int phase, std::vector
     int last_y = 0;
     bool have_last = false;
     for (std::size_t i = 1; i < points.size(); ++i) {
-        const int x0 = static_cast<int>(std::lround(points[i - 1].x));
-        const int y0 = static_cast<int>(std::lround(points[i - 1].y));
-        const int x1 = static_cast<int>(std::lround(points[i].x));
-        const int y1 = static_cast<int>(std::lround(points[i].y));
+        const int x0 = round_to_int(points[i - 1].x);
+        const int y0 = round_to_int(points[i - 1].y);
+        const int x1 = round_to_int(points[i].x);
+        const int y1 = round_to_int(points[i].y);
         const int steps = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
         // The segment's first cell is the previous segment's last one.
         for (int k = (i == 1 ? 0 : 1); k <= steps; ++k) {
@@ -142,17 +163,13 @@ void append_path_runs(const std::vector<Point2f>& points, int phase, std::vector
     }
 }
 
-// The anchors the grips are centred on, matching SelectionTool's hit test so
-// the box drawn lines up with the pixels the tool accepts a press on.
 std::vector<SelectionGrip> grip_anchors(const RectI& bounds) {
-    const float left = static_cast<float>(bounds.x);
-    const float top = static_cast<float>(bounds.y);
-    const float right = static_cast<float>(bounds.right() - 1);
-    const float bottom = static_cast<float>(bounds.bottom() - 1);
-    const float mid_x = left + (right - left) / 2.0f;
-    const float mid_y = top + (bottom - top) / 2.0f;
-    return {{left, top},    {right, top},     {right, bottom}, {left, bottom},
-            {mid_x, top},   {right, mid_y},   {mid_x, bottom}, {left, mid_y}};
+    std::vector<SelectionGrip> grips;
+    for (const SelectionHandle handle : kSelectionHandles) {
+        const Point2f anchor = handle_anchor(bounds, handle);
+        grips.push_back({anchor.x, anchor.y});
+    }
+    return grips;
 }
 
 CanvasDocument::Rotation rotation_from_slint(ERotation rotation) {
@@ -261,74 +278,6 @@ ShapeTexture texture_from_slint(EShapeTexture texture) {
     return ShapeTexture::None;
 }
 
-// A path as UTF-8, which is what the store and the menus carry.
-std::string path_text(const std::filesystem::path& path) {
-    const std::u8string text = path.u8string();
-    return std::string(text.begin(), text.end());
-}
-
-// The path a stored UTF-8 string names.
-std::filesystem::path path_from_text(std::string_view text) {
-    const std::u8string bytes(reinterpret_cast<const char8_t*>(text.data()), text.size());
-    return std::filesystem::path(bytes);
-}
-
-// A colour as it is stored: six hex digits, red first.
-std::string color_text(const slint::Color& color) {
-    char text[7];
-    std::snprintf(text, sizeof(text), "%02x%02x%02x",
-                  static_cast<unsigned>(color.red()),
-                  static_cast<unsigned>(color.green()),
-                  static_cast<unsigned>(color.blue()));
-    return text;
-}
-
-// The colour a stored string names, or nothing when it is not six hex digits.
-std::optional<slint::Color> color_from_text(std::string_view text) {
-    if (text.size() != 6) return std::nullopt;
-    std::uint32_t parts[3] = {0, 0, 0};
-    for (std::size_t i = 0; i < 3; ++i) {
-        for (std::size_t digit = 0; digit < 2; ++digit) {
-            const char letter = text[i * 2 + digit];
-            std::uint32_t value = 0;
-            if (letter >= '0' && letter <= '9') value = static_cast<std::uint32_t>(letter - '0');
-            else if (letter >= 'a' && letter <= 'f') value = static_cast<std::uint32_t>(letter - 'a' + 10);
-            else if (letter >= 'A' && letter <= 'F') value = static_cast<std::uint32_t>(letter - 'A' + 10);
-            else return std::nullopt;
-            parts[i] = (parts[i] << 4) | value;
-        }
-    }
-    return slint::Color::from_rgb_uint8(static_cast<std::uint8_t>(parts[0]),
-                                        static_cast<std::uint8_t>(parts[1]),
-                                        static_cast<std::uint8_t>(parts[2]));
-}
-
-// A stored decimal, or nothing when the key is missing or its text is not a
-// whole number.
-std::optional<int> stored_int(const Store& store, std::string_view key) {
-    const std::optional<std::string> text = store.get(key);
-    if (!text || text->empty()) return std::nullopt;
-    int value = 0;
-    const char* begin = text->data();
-    const char* end = begin + text->size();
-    const std::from_chars_result parsed = std::from_chars(begin, end, value);
-    if (parsed.ec != std::errc{} || parsed.ptr != end) return std::nullopt;
-    return value;
-}
-
-// A stored flag: a value of zero is false and everything else is true.
-std::optional<bool> stored_bool(const Store& store, std::string_view key) {
-    const std::optional<int> value = stored_int(store, key);
-    if (!value) return std::nullopt;
-    return *value != 0;
-}
-
-Rgba8 to_rgba(slint::Color color) {
-    // Ink is always opaque: an alpha-0 color makes every stroke invisible while
-    // the pencil still appears to be drawing (M0 probe bug).
-    return {color.red(), color.green(), color.blue(), 255};
-}
-
 // The outline of a turned block: the corners of the box its run started from,
 // turned by the angle it has turned since. The mask stays axis aligned, so this
 // is the shape the contents actually cover.
@@ -336,12 +285,8 @@ std::vector<Point2f> turned_corners(const FloatingContents& contents) {
     const RectI box = contents.turn_bounds;
     const float centre_x = box.x + box.width / 2.0f;
     const float centre_y = box.y + box.height / 2.0f;
-    const float radians = contents.rotation * std::numbers::pi_v<float> / 180.0f;
-    const float cos_value = std::cos(radians);
-    const float sin_value = std::sin(radians);
     // Snapped so a right angle lands on exact pixels, as the rotation does.
-    const float straight = std::abs(cos_value) < 1e-4f ? 0.0f : cos_value;
-    const float square = std::abs(sin_value) < 1e-4f ? 0.0f : sin_value;
+    const auto [straight, square] = turn_by(radians_from_degrees(contents.rotation));
     const float left = static_cast<float>(box.x);
     const float top = static_cast<float>(box.y);
     const float right = static_cast<float>(box.x + box.width);
@@ -369,7 +314,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
     for (const Rgba8& color : kDefaultPalette)
         m_palette->push_back(slint::Color::from_rgb_uint8(color.r, color.g, color.b));
     for (int i = 0; i < kCustomColorSlots; ++i)
-        m_palette->push_back(slint::Color::from_rgb_uint8(255, 255, 255));
+        m_palette->push_back(kWhiteColor);
     m_window.global<UserState>().set_color_palette(m_palette);
 
     m_font_families = text_font_families();
@@ -409,8 +354,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
         sync_colors();
         sync_shape_style();
         auto& tool_options = m_window.global<ToolOptions>();
-        m_controller.brush().size =
-            std::max(1, static_cast<int>(std::lround(tool_options.get_brush_size())));
+        m_controller.brush().size = std::max(1, round_to_int(tool_options.get_brush_size()));
         m_controller.brush().shape =
             tool_options.get_brush_square() ? BrushShape::Square : BrushShape::Round;
         m_controller.brush().spacing = tool_options.get_brush_spacing();
@@ -427,7 +371,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
         const auto now = std::chrono::steady_clock::now();
         const bool double_click =
             m_have_last_press && now - m_last_press < kDoubleClickWindow &&
-            std::hypot(x - m_last_press_position.x, y - m_last_press_position.y) <= kDoubleClickSlop;
+            distance({x, y}, m_last_press_position) <= kDoubleClickSlop;
         m_have_last_press = true;
         m_last_press = now;
         m_last_press_position = {x, y};
@@ -439,10 +383,8 @@ UiState::UiState(AppWindow& window, AppController& controller)
         const ColorPair& colors = m_controller.colors();
         const Rgba8 primary_ink = colors.ink(PointerButton::Primary);
         const Rgba8 secondary_ink = colors.ink(PointerButton::Secondary);
-        state.set_primary_color(
-            slint::Color::from_argb_uint8(primary_ink.a, primary_ink.r, primary_ink.g, primary_ink.b));
-        state.set_secondary_color(slint::Color::from_argb_uint8(secondary_ink.a, secondary_ink.r,
-                                                                secondary_ink.g, secondary_ink.b));
+        state.set_primary_color(to_slint(primary_ink));
+        state.set_secondary_color(to_slint(secondary_ink));
         refresh();
     });
 
@@ -465,16 +407,16 @@ UiState::UiState(AppWindow& window, AppController& controller)
     });
 
     m_window.global<UserState>().on_canvas_resize([this](float width, float height) {
-        m_controller.resize_canvas(std::clamp(static_cast<int>(std::lround(width)), 1, kMaxCanvasDimension),
-                                   std::clamp(static_cast<int>(std::lround(height)), 1, kMaxCanvasDimension),
+        m_controller.resize_canvas(std::clamp(round_to_int(width), 1, kMaxCanvasDimension),
+                                   std::clamp(round_to_int(height), 1, kMaxCanvasDimension),
                                    to_rgba(m_window.global<UserState>().get_secondary_color()));
         refresh();
     });
 
-    m_window.global<UserState>().on_key_pressed([this](const slint::SharedString& text, bool ctrl, bool shift) {
+    m_window.global<UserState>().on_key_pressed([this](const slint::SharedString& text, bool ctrl, bool shift, bool alt) {
         if (m_controller.input().active()) {
             // Never act mid-stroke; Escape is the one key that abandons it.
-            if (text == "\x1b" &&
+            if (std::string_view(text) == kKeyEscape &&
                 m_controller.input().cancel(
                     tool_from_slint(m_window.global<UserState>().get_selected_tool()))) {
                 refresh();
@@ -486,7 +428,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
         if (text_open()) return;
         // A block still hovering is a paste or a lift that never landed, so
         // Escape drops it rather than writing it down.
-        if (text == "\x1b" && m_controller.discard_floating()) {
+        if (std::string_view(text) == kKeyEscape && m_controller.discard_floating()) {
             refresh();
             return;
         }
@@ -494,7 +436,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
         // shortcut table below only ever sees what that leaves behind.
         m_controller.input().key(
             tool_from_slint(m_window.global<UserState>().get_selected_tool()), std::string_view(text));
-        const auto action = lookup_shortcut(std::string_view(text), ctrl, shift);
+        const auto action = lookup_shortcut(std::string_view(text), ctrl, shift, alt);
         if (!action) return;
         sync_colors();  // the controller otherwise only sees colors set by a pointer press
         switch (*action) {
@@ -513,8 +455,8 @@ UiState::UiState(AppWindow& window, AppController& controller)
                 break;
             case ShortcutAction::New: do_file_new(); break;
             case ShortcutAction::Open: do_file_open(); break;
-            case ShortcutAction::Save: do_file_save(); break;
-            case ShortcutAction::SaveAs: do_file_save_as(); break;
+            case ShortcutAction::Save: (void)save_document(); break;
+            case ShortcutAction::SaveAs: (void)save_document_as(); break;
             case ShortcutAction::ToggleRulers: {
                 auto& state = m_window.global<UserState>();
                 state.set_show_rulers(!state.get_show_rulers());
@@ -560,8 +502,8 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
     m_window.global<UserState>().on_file_new([this] { do_file_new(); });
     m_window.global<UserState>().on_file_open([this] { do_file_open(); });
-    m_window.global<UserState>().on_file_save([this] { do_file_save(); });
-    m_window.global<UserState>().on_file_save_as([this] { do_file_save_as(); });
+    m_window.global<UserState>().on_file_save([this] { (void)save_document(); });
+    m_window.global<UserState>().on_file_save_as([this] { (void)save_document_as(); });
     m_window.global<UserState>().on_file_exit([this] { do_file_exit(); });
     m_window.global<UserState>().on_file_open_recent([this](int index) { open_recent(index); });
     m_window.global<UserState>().on_paste_from_file([this] { do_paste_from_file(); });
@@ -598,7 +540,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
 void UiState::load_settings() {
     if (!m_settings) return;
 
-    if (const std::optional<std::string> family = m_settings->get(kSTORE_KEY_FONT_FAMILY);
+    if (const std::optional<std::string> family = m_settings->get(kStoreKeyFontFamily);
         family && !family->empty()) {
         m_window.global<FontStyle>().set_family(slint::SharedString(*family));
         // The preview is drawn by Slint, which keeps the font size, while the
@@ -606,21 +548,21 @@ void UiState::load_settings() {
         m_window.global<FontStyle>().set_preview_scale(
             text_preview_scale(std::string_view(*family)));
     }
-    if (const std::optional<bool> stored = stored_bool(*m_settings, kSTORE_KEY_SHOW_RULERS))
+    if (const std::optional<bool> stored = stored_bool(*m_settings, kStoreKeyShowRulers))
         m_window.global<UserState>().set_show_rulers(*stored);
-    if (const std::optional<bool> stored = stored_bool(*m_settings, kSTORE_KEY_SHOW_GRIDLINES))
+    if (const std::optional<bool> stored = stored_bool(*m_settings, kStoreKeyShowGridlines))
         m_window.global<UserState>().set_show_gridlines(*stored);
-    if (const std::optional<bool> stored = stored_bool(*m_settings, kSTORE_KEY_SHOW_STATUS_BAR))
+    if (const std::optional<bool> stored = stored_bool(*m_settings, kStoreKeyShowStatusBar))
         m_window.global<UserState>().set_show_status_bar(*stored);
 
     restore_settings();
 
     // The File menu's recent list, newest entry first.
-    if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_RECENT_FILES)) {
+    if (const std::optional<std::string> stored = m_settings->get(kStoreKeyRecentFiles)) {
         for (const std::string& entry : decode_list(*stored)) {
             if (entry.empty()) continue;
             if (m_recent_files.size() >= kMaxRecentFiles) break;
-            m_recent_files.push_back(path_from_text(entry));
+            m_recent_files.push_back(path_from_utf8(entry));
         }
     }
     publish_recent_files();
@@ -628,7 +570,7 @@ void UiState::load_settings() {
     // The custom colours the user has mixed, in the order the two grids hold
     // them.
     if (m_palette) {
-        if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_PALETTE_CUSTOMS)) {
+        if (const std::optional<std::string> stored = m_settings->get(kStoreKeyPaletteCustoms)) {
             const std::vector<std::string> entries = decode_list(*stored);
             for (std::size_t i = 0; i < entries.size() && i < kCustomColorSlots; ++i) {
                 if (const std::optional<slint::Color> color = color_from_text(entries[i]))
@@ -636,15 +578,15 @@ void UiState::load_settings() {
             }
         }
     }
-    if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_DIALOG_CUSTOMS)) {
+    if (const std::optional<std::string> stored = m_settings->get(kStoreKeyDialogCustoms)) {
         for (const std::string& entry : decode_list(*stored)) {
             if (m_dialog_customs_stored.size() >= kDialogCustomColorSlots) break;
             if (const std::optional<slint::Color> color = color_from_text(entry))
                 m_dialog_customs_stored.push_back(*color);
         }
     }
-    if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_LAST_DIRECTORY))
-        m_last_directory = path_from_text(*stored);
+    if (const std::optional<std::string> stored = m_settings->get(kStoreKeyLastDirectory))
+        m_last_directory = path_from_utf8(*stored);
 
     // The text tool draws with the family the box is set in.
     sync_font_style();
@@ -658,7 +600,7 @@ UiState::SettingsSnapshot UiState::current_settings() const {
     const slint::PhysicalPosition position = window.position();
     const slint::PhysicalSize size = window.size();
     const auto to_logical = [scale](int value) {
-        return static_cast<int>(std::lround(static_cast<float>(value) / scale));
+        return round_to_int(static_cast<float>(value) / scale);
     };
     snapshot.x = to_logical(position.x);
     snapshot.y = to_logical(position.y);
@@ -677,52 +619,52 @@ void UiState::restore_settings() {
     slint::Window& window = m_window.window();
     // The geometry is stored in logical pixels, so the same numbers mean the
     // same window on a screen with a different scale factor.
-    const std::optional<int> width = stored_int(*m_settings, kSTORE_KEY_WINDOW_WIDTH);
-    const std::optional<int> height = stored_int(*m_settings, kSTORE_KEY_WINDOW_HEIGHT);
+    const std::optional<int> width = stored_int(*m_settings, kStoreKeyWindowWidth);
+    const std::optional<int> height = stored_int(*m_settings, kStoreKeyWindowHeight);
     if (width && height && *width > 0 && *height > 0) {
         window.set_size(slint::LogicalSize({static_cast<float>(*width), static_cast<float>(*height)}));
     }
-    const std::optional<int> x = stored_int(*m_settings, kSTORE_KEY_WINDOW_X);
-    const std::optional<int> y = stored_int(*m_settings, kSTORE_KEY_WINDOW_Y);
+    const std::optional<int> x = stored_int(*m_settings, kStoreKeyWindowX);
+    const std::optional<int> y = stored_int(*m_settings, kStoreKeyWindowY);
     if (x && y) window.set_position(slint::LogicalPosition({static_cast<float>(*x), static_cast<float>(*y)}));
 }
 
 void UiState::save_settings() {
     if (!m_settings) return;
     const SettingsSnapshot snapshot = current_settings();
-    m_settings->set(kSTORE_KEY_WINDOW_X, std::to_string(snapshot.x));
-    m_settings->set(kSTORE_KEY_WINDOW_Y, std::to_string(snapshot.y));
-    m_settings->set(kSTORE_KEY_WINDOW_WIDTH, std::to_string(snapshot.width));
-    m_settings->set(kSTORE_KEY_WINDOW_HEIGHT, std::to_string(snapshot.height));
-    m_settings->set(kSTORE_KEY_SHOW_RULERS, snapshot.rulers ? "1" : "0");
-    m_settings->set(kSTORE_KEY_SHOW_GRIDLINES, snapshot.gridlines ? "1" : "0");
-    m_settings->set(kSTORE_KEY_SHOW_STATUS_BAR, snapshot.status_bar ? "1" : "0");
-    m_settings->set(kSTORE_KEY_FONT_FAMILY, snapshot.family);
+    m_settings->set(kStoreKeyWindowX, std::to_string(snapshot.x));
+    m_settings->set(kStoreKeyWindowY, std::to_string(snapshot.y));
+    m_settings->set(kStoreKeyWindowWidth, std::to_string(snapshot.width));
+    m_settings->set(kStoreKeyWindowHeight, std::to_string(snapshot.height));
+    m_settings->set(kStoreKeyShowRulers, snapshot.rulers ? "1" : "0");
+    m_settings->set(kStoreKeyShowGridlines, snapshot.gridlines ? "1" : "0");
+    m_settings->set(kStoreKeyShowStatusBar, snapshot.status_bar ? "1" : "0");
+    m_settings->set(kStoreKeyFontFamily, snapshot.family);
     std::vector<std::string> recent;
     recent.reserve(m_recent_files.size());
-    for (const std::filesystem::path& path : m_recent_files) recent.push_back(path_text(path));
-    m_settings->set(kSTORE_KEY_RECENT_FILES, encode_list(recent));
+    for (const std::filesystem::path& path : m_recent_files) recent.push_back(utf8_from_path(path));
+    m_settings->set(kStoreKeyRecentFiles, encode_list(recent));
     std::vector<std::string> customs;
     if (m_palette) {
         for (std::size_t i = 0; i < kCustomColorSlots; ++i) {
             const std::optional<slint::Color> color = m_palette->row_data(kDefaultPalette.size() + i);
-            customs.push_back(color_text(color.value_or(slint::Color::from_rgb_uint8(255, 255, 255))));
+            customs.push_back(color_text(color.value_or(kWhiteColor)));
         }
     }
-    m_settings->set(kSTORE_KEY_PALETTE_CUSTOMS, encode_list(customs));
+    m_settings->set(kStoreKeyPaletteCustoms, encode_list(customs));
     std::vector<std::string> dialog_customs;
     if (m_dialog_customs) {
         for (int i = 0; i < kDialogCustomColorSlots; ++i) {
             const std::optional<slint::Color> color =
                 m_dialog_customs->row_data(static_cast<std::size_t>(i));
-            dialog_customs.push_back(color_text(color.value_or(slint::Color::from_rgb_uint8(255, 255, 255))));
+            dialog_customs.push_back(color_text(color.value_or(kWhiteColor)));
         }
     } else {
         for (const slint::Color& color : m_dialog_customs_stored)
             dialog_customs.push_back(color_text(color));
     }
-    m_settings->set(kSTORE_KEY_DIALOG_CUSTOMS, encode_list(dialog_customs));
-    m_settings->set(kSTORE_KEY_LAST_DIRECTORY, path_text(m_last_directory));
+    m_settings->set(kStoreKeyDialogCustoms, encode_list(dialog_customs));
+    m_settings->set(kStoreKeyLastDirectory, utf8_from_path(m_last_directory));
     m_settings->save();
     m_stored_settings = snapshot;
     m_colors_dirty = false;
@@ -746,7 +688,7 @@ void UiState::seed_dialog_customs() {
     if (!picker) return;
     m_dialog_customs = std::make_shared<slint::VectorModel<slint::Color>>();
     for (int i = 0; i < kDialogCustomColorSlots; ++i) {
-        slint::Color color = slint::Color::from_rgb_uint8(255, 255, 255);
+        slint::Color color = kWhiteColor;
         if (i < static_cast<int>(m_dialog_customs_stored.size())) {
             color = m_dialog_customs_stored[static_cast<std::size_t>(i)];
         } else if (i < kCustomColorSlots && m_palette) {
@@ -775,7 +717,7 @@ void UiState::rotate_strip(const slint::Color& color) {
     for (int i = 1; i < kCustomColorSlots; ++i) {
         const std::size_t row = kDefaultPalette.size() + static_cast<std::size_t>(i);
         const std::optional<slint::Color> stored = m_palette->row_data(row);
-        kept.push_back(stored.value_or(slint::Color::from_rgb_uint8(255, 255, 255)));
+        kept.push_back(stored.value_or(kWhiteColor));
     }
     set_palette_color(static_cast<int>(kDefaultPalette.size()), color);
     for (std::size_t i = 0; i < kept.size(); ++i) {
@@ -793,7 +735,7 @@ void UiState::ensure_color_window() {
     // seeds.
     seed_dialog_customs();
     window.on_accepted([this] { do_color_accepted(); });
-    window.on_cancelled([this] { do_color_cancelled(); });
+    window.on_cancelled([this] { close_color_window(); });
     window.on_add_custom([this] { do_color_add_custom(); });
     window.on_basic_picked([this](const slint::Color& color) { do_color_basic_picked(color); });
     window.on_custom_picked(
@@ -850,23 +792,16 @@ void UiState::push_color_dialog() {
     picker->set_hue(hsv.hue);
     picker->set_saturation(hsv.saturation);
     picker->set_value(hsv.value);
-    picker->set_current(slint::Color::from_argb_uint8(color.a, color.r, color.g, color.b));
-    picker->set_hue_color(
-        slint::Color::from_argb_uint8(hue_color.a, hue_color.r, hue_color.g, hue_color.b));
+    picker->set_current(to_slint(color));
+    picker->set_hue_color(to_slint(hue_color));
     picker->set_red_text(slint::SharedString(std::to_string(color.r)));
     picker->set_green_text(slint::SharedString(std::to_string(color.g)));
     picker->set_blue_text(slint::SharedString(std::to_string(color.b)));
     // RRGGBB in capitals, with no leading hash: the box is labelled Hex.
-    std::string hex = to_hex(color).substr(1);
-    std::ranges::transform(hex, hex.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    picker->set_hex_text(slint::SharedString(hex));
-    picker->set_hue_text(
-        slint::SharedString(std::to_string(static_cast<int>(std::lround(hsv.hue)))));
-    picker->set_sat_text(slint::SharedString(
-        std::to_string(static_cast<int>(std::lround(hsv.saturation * 100.0f)))));
-    picker->set_lum_text(slint::SharedString(
-        std::to_string(static_cast<int>(std::lround(hsv.value * 100.0f)))));
+    picker->set_hex_text(slint::SharedString(uppered(to_hex(color).substr(1))));
+    picker->set_hue_text(slint::SharedString(std::to_string(round_to_int(hsv.hue))));
+    picker->set_sat_text(slint::SharedString(std::to_string(round_to_int(hsv.saturation * 100.0f))));
+    picker->set_lum_text(slint::SharedString(std::to_string(round_to_int(hsv.value * 100.0f))));
 }
 
 void UiState::do_color_accepted() {
@@ -886,13 +821,12 @@ void UiState::do_color_accepted() {
             m_dialog_customs->row_data(static_cast<std::size_t>(slot));
         if (chosen) rotate_strip(*chosen);
     }
-    (*m_color_window)->hide();
-    m_window.invoke_focus_app();
+    close_color_window();
     sync_colors();
     refresh();
 }
 
-void UiState::do_color_cancelled() {
+void UiState::close_color_window() {
     if (m_color_window) (*m_color_window)->hide();
     m_window.invoke_focus_app();
 }
@@ -917,7 +851,7 @@ void UiState::do_color_basic_picked(const slint::Color& color) {
 }
 
 void UiState::do_color_custom_picked(const slint::Color& color, int index) {
-    color_picker()->set_custom_index(std::clamp(index, 0, kCustomColorSlots - 1));
+    color_picker()->set_custom_index(std::clamp(index, 0, kDialogCustomColorSlots - 1));
     do_color_basic_picked(color);
 }
 
@@ -929,7 +863,7 @@ void UiState::do_color_ring_picked(float x, float y) {
     // how the conic gradient the ring is painted with reads.
     lsp_colors::EditColorsWindow* picker = color_picker();
     if (!picker) return;
-    picker->set_hue(wrap_hue(std::atan2(dx, -dy) * (180.0f / std::numbers::pi_v<float>)));
+    picker->set_hue(wrap_hue(degrees_from_radians(std::atan2(dx, -dy))));
     push_color_dialog();
 }
 
@@ -1052,7 +986,7 @@ void UiState::ensure_resize_window() {
     m_resize_window = lsp_resize::ResizeDialog::create();
     lsp_resize::ResizeDialog& dialog = **m_resize_window;
     dialog.on_accepted([this] { do_resize_ok(); });
-    dialog.on_cancelled([this] { do_resize_cancel(); });
+    dialog.on_cancelled([this] { close_resize_window(); });
     dialog.window().on_close_requested([this] {
         // Closing the question with the window manager is the same as
         // cancelling it.
@@ -1113,8 +1047,8 @@ void UiState::publish_line_widths(std::string_view text) {
 void UiState::publish_hover_color() {
     auto& state = m_window.global<UserState>();
     const PixelBuffer& paper = m_controller.document().flattened();
-    const int x = static_cast<int>(std::floor(state.get_cursor_x()));
-    const int y = static_cast<int>(std::floor(state.get_cursor_y()));
+    const int x = floor_to_int(state.get_cursor_x());
+    const int y = floor_to_int(state.get_cursor_y());
     if (!state.get_cursor_on_canvas() || !paper.contains(x, y)) {
         state.set_hover_color_text(slint::SharedString());
         return;
@@ -1122,13 +1056,57 @@ void UiState::publish_hover_color() {
 
     const Rgba8 pixel = paper.at(x, y);
     // The readout is upper case, the way Paint prints a colour.
-    std::string hex = to_hex(pixel);
-    for (char& digit : hex) {
-        digit = static_cast<char>(std::toupper(static_cast<unsigned char>(digit)));
-    }
     state.set_hover_color_text(
         slint::SharedString("(" + std::to_string(pixel.r) + "," + std::to_string(pixel.g) + "," +
-                            std::to_string(pixel.b) + ") " + hex));
+                            std::to_string(pixel.b) + ") " + uppered(to_hex(pixel))));
+}
+
+void UiState::publish_cursor_overlay() {
+    auto& state = m_window.global<UserState>();
+    if (!state.get_cursor_on_canvas()) {
+        state.set_cursor_overlay(slint::Image());
+        state.set_cursor_overlay_reach(0.0F);
+        return;
+    }
+
+    const auto& options = m_window.global<ToolOptions>();
+    const ETool tool = state.get_selected_tool();
+    // Only the tools that paint a stroke have a tip to show.
+    const bool brush_tool =
+        tool == ETool::BRUSH || tool == ETool::PENCIL || tool == ETool::ERASER;
+    const EBrushKind kind = tool == ETool::BRUSH ? options.get_brush_kind() : EBrushKind::BRUSH;
+    const float zoom = state.get_zoom();
+    const int size = std::max(1, round_to_int(options.get_brush_size()));
+    // The tip is the brush size at the view's zoom, across in screen pixels.
+    const float length = static_cast<float>(size) * zoom;
+    // The engine stamps an odd tip on a pixel and an even one on a pixel corner.
+    const float tip_x = size % 2 == 1 ? std::floor(state.get_cursor_x()) + 0.5F
+                                      : std::round(state.get_cursor_x());
+    const float tip_y = size % 2 == 1 ? std::floor(state.get_cursor_y()) + 0.5F
+                                      : std::round(state.get_cursor_y());
+    const bool nib = kind == EBrushKind::CALLIGRAPHY1 || kind == EBrushKind::CALLIGRAPHY2;
+
+    CursorShape shape;
+    shape.pointer = {state.get_cursor_x(), state.get_cursor_y()};
+    shape.zoom = zoom;
+    shape.tip.shown = brush_tool;
+    shape.tip.square =
+        kind == EBrushKind::MARKER || (kind == EBrushKind::BRUSH && options.get_brush_square());
+    shape.tip.half_width = length / 2.0F;
+    shape.tip.half_height = (nib ? std::max(2.0F, length * 0.3F) : length) / 2.0F;
+    shape.tip.offset_x = (tip_x - shape.pointer.x) * zoom;
+    shape.tip.offset_y = (tip_y - shape.pointer.y) * zoom;
+    shape.tip.rotation_degrees = kind == EBrushKind::CALLIGRAPHY1   ? 45.0F
+                                 : kind == EBrushKind::CALLIGRAPHY2 ? -45.0F
+                                                                    : 0.0F;
+    // Below sixteen screen pixels across, the tip is too small to find by its
+    // outline alone.
+    shape.crosshair = !brush_tool || length < 16.0F;
+
+    const CursorOverlay overlay =
+        render_cursor_overlay(m_controller.document().flattened(), shape, kCanvasViewColor);
+    state.set_cursor_overlay(overlay.reach > 0 ? image_from(overlay.pixels) : slint::Image());
+    state.set_cursor_overlay_reach(static_cast<float>(overlay.reach));
 }
 
 void UiState::sync_font_style() {
@@ -1190,6 +1168,7 @@ void UiState::refresh() {
     state.set_selection_height(bounds.height);
 
     publish_hover_color();
+    publish_cursor_overlay();
 
     // A tool that is left while it holds a gesture has to release it: nothing
     // else tells the shape tool that its polygon will never be finished.
@@ -1208,23 +1187,18 @@ void UiState::refresh() {
     overlay.set_commands(slint::SharedString(preview.commands));
     overlay.set_draw_fill(preview.draw_fill);
     overlay.set_draw_outline(preview.draw_outline);
-    overlay.set_outline_color(slint::Color::from_argb_uint8(
-        preview.outline_color.a, preview.outline_color.r, preview.outline_color.g,
-        preview.outline_color.b));
-    overlay.set_fill_color(slint::Color::from_argb_uint8(
-        preview.fill_color.a, preview.fill_color.r, preview.fill_color.g, preview.fill_color.b));
-
+    overlay.set_outline_color(to_slint(preview.outline_color));
+    overlay.set_fill_color(to_slint(preview.fill_color));
 
     const TextOverlayState& text = m_controller.tool_ui().text;
     auto& text_box = m_window.global<TextOverlay>();
     text_box.set_visible(text.visible);
     // A box that has just opened starts empty; after that the editor owns it.
-    if (text.visible && !m_text_open) text_box.set_content(slint::SharedString());
-    m_text_open = text.visible;
+    if (text.visible && !m_text_was_visible) text_box.set_content(slint::SharedString());
+    m_text_was_visible = text.visible;
     text_box.set_x(text.origin.x);
     text_box.set_y(text.origin.y);
-    text_box.set_color(
-        slint::Color::from_argb_uint8(text.color.a, text.color.r, text.color.g, text.color.b));
+    text_box.set_color(to_slint(text.color));
     // A box that has just opened has no rules to draw yet, and one that has
     // closed must not keep the last box's.
     publish_line_widths(text.visible ? std::string_view(text_box.get_content())
@@ -1278,7 +1252,7 @@ void UiState::update_ants() {
     state.set_ants_light(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(light)));
 
     std::vector<SelectionGrip> grips;
-    if (visible && bounds.width >= kMinGripSpan && bounds.height >= kMinGripSpan &&
+    if (visible && bounds.width >= kMinHandleSpan && bounds.height >= kMinHandleSpan &&
         m_window.global<UserState>().get_selected_tool() == ETool::SELECTION) {
         grips = grip_anchors(bounds);
     }
@@ -1301,11 +1275,11 @@ void UiState::set_title() {
     state.set_title(slint::SharedString(m_controller.display_name()));
     state.set_modified(m_controller.history().is_modified());
 }
+
 void UiState::after_document_change() {
     // A document nobody has moved around yet starts at its own size.
     m_window.global<UserState>().set_zoom(1.0f);
     sync_colors();
-    set_title();
     refresh();
 }
 
@@ -1364,7 +1338,7 @@ void UiState::forget_recent_file(const std::filesystem::path& path) {
 void UiState::publish_recent_files() {
     auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
     for (const std::filesystem::path& path : m_recent_files)
-        model->push_back(slint::SharedString(path_text(path)));
+        model->push_back(slint::SharedString(utf8_from_path(path)));
     m_window.global<UserState>().set_recent_files(model);
 }
 
@@ -1384,6 +1358,11 @@ void UiState::open_recent(int index) {
     }
     m_pending = PendingAction::OpenRecent;
     run_pending();
+}
+
+bool UiState::open_startup_file(const std::filesystem::path& path) {
+    std::error_code error;
+    return open_path(std::filesystem::absolute(path, error));
 }
 
 bool UiState::open_path(const std::filesystem::path& path) {
@@ -1414,10 +1393,6 @@ void UiState::do_file_open() {
     open_document();
 }
 
-void UiState::do_file_save() { (void)save_document(); }
-
-void UiState::do_file_save_as() { (void)save_document_as(); }
-
 bool UiState::save_document() {
     if (!m_controller.has_current_path()) return save_document_as();
     if (const IoResult result = m_controller.save_document(); !result.ok) {
@@ -1442,7 +1417,7 @@ std::filesystem::path UiState::dialog_directory() const {
 
 bool UiState::save_document_as() {
     if (!ensure_file_dialogs()) return false;
-    const std::string stem = m_controller.has_current_path() ? m_controller.current_path().stem().string()
+    const std::string stem = m_controller.has_current_path() ? utf8_from_path(m_controller.current_path().stem())
                                                               : std::string("untitled");
     const std::optional<std::filesystem::path> chosen = pick_image_to_save(
         dialog_directory(), stem + extension_for(ImageFormat::Png));
@@ -1563,10 +1538,6 @@ void UiState::do_resize_ok() {
     m_controller.resize_canvas(width, height,
                                to_rgba(m_window.global<UserState>().get_secondary_color()));
     refresh();
-}
-
-void UiState::do_resize_cancel() {
-    close_resize_window();
 }
 
 }  // namespace lsp

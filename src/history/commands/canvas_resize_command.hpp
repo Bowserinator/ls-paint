@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -10,11 +12,8 @@ namespace lsp {
 
 // Undo entry for a whole-image geometry change (resize, crop, rotate, flip, or
 // a paste that grew the canvas). It keeps the state the document had before
-// the change — pixels, selection and hovering block together — and every undo
-// or redo exchanges that with the document's, so no layer is ever copied and
-// one state is held instead of two. The selection travels with it because
-// CanvasDocument::restore() cannot know what the mask was: geometry changes
-// always end deselected, and undo puts the selection back.
+// the change, and every undo or redo exchanges that with the document's, so no
+// layer is copied and one state is held instead of two.
 class CanvasResizeCommand final : public ICommand {
 public:
     CanvasResizeCommand(std::vector<PixelBuffer> before, SelectionMask selection_before,

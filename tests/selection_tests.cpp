@@ -1,3 +1,4 @@
+#include <array>
 #include <cstdio>
 
 #include "app/app_controller.hpp"
@@ -59,7 +60,7 @@ void test_degenerate_marquee_leaves_canvas_paintable() {
 
 void test_fewer_than_three_polygon_points_leaves_no_selection() {
     Fixture fixture;
-    fixture.doc.selection().fill_polygon({{2, 2}, {6, 6}});
+    fixture.doc.selection().fill_polygon(std::array{Point2f{2, 2}, Point2f{6, 6}});
     CHECK(!fixture.doc.selection().active());
     CHECK(fixture.doc.selection().bounds().empty());
 }

@@ -3,11 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <numbers>
 #include <string_view>
 
 #include "history/commands/selection_edit_command.hpp"
 #include "tools/tool_context.hpp"
+#include "utils/key_text.hpp"
+#include "utils/math.hpp"
 
 namespace lsp {
 
@@ -16,10 +17,8 @@ namespace {
 // A click this close to the polygon's first vertex closes the lasso.
 constexpr float kClosePolygonDistance = 6.0f;
 
-// Resize grips are only offered on selections big enough that the grips would
-// not swallow the "drag inside to move it" target.
+// How close a press has to be to a grip to take it.
 constexpr float kHandleHitRadius = 3.5f;
-constexpr int kMinHandleSpan = 8;
 
 // How far from a corner a press still starts a turn, the steps Shift snaps a
 // turn to, and the turn below which a drag is treated as a click.
@@ -28,46 +27,16 @@ constexpr float kRotateStepDegrees = 45.0f;
 constexpr float kMinRotateDegrees = 1.0f;
 
 RectI rect_from_corners(Point2f a, Point2f b) {
-    const int left = static_cast<int>(std::floor(std::min(a.x, b.x)));
-    const int top = static_cast<int>(std::floor(std::min(a.y, b.y)));
-    const int right = static_cast<int>(std::ceil(std::max(a.x, b.x)));
-    const int bottom = static_cast<int>(std::ceil(std::max(a.y, b.y)));
+    const int left = floor_to_int(std::min(a.x, b.x));
+    const int top = floor_to_int(std::min(a.y, b.y));
+    const int right = ceil_to_int(std::max(a.x, b.x));
+    const int bottom = ceil_to_int(std::max(a.y, b.y));
     return {left, top, right - left, bottom - top};
-}
-
-bool contains_point(RectI rect, Point2f point) {
-    return point.x >= static_cast<float>(rect.x) && point.y >= static_cast<float>(rect.y) &&
-           point.x < static_cast<float>(rect.right()) && point.y < static_cast<float>(rect.bottom());
-}
-
-// The grips sit on the border pixels of the selection, corners first so a small
-// selection prefers them over the edge grips.
-Point2f handle_anchor(RectI bounds, SelectionHandle handle) {
-    const float left = static_cast<float>(bounds.x);
-    const float top = static_cast<float>(bounds.y);
-    const float right = static_cast<float>(bounds.x + bounds.width - 1);
-    const float bottom = static_cast<float>(bounds.y + bounds.height - 1);
-    const float mid_x = left + (right - left) / 2.0f;
-    const float mid_y = top + (bottom - top) / 2.0f;
-    switch (handle) {
-        case SelectionHandle::Nw: return {left, top};
-        case SelectionHandle::N: return {mid_x, top};
-        case SelectionHandle::Ne: return {right, top};
-        case SelectionHandle::E: return {right, mid_y};
-        case SelectionHandle::Se: return {right, bottom};
-        case SelectionHandle::S: return {mid_x, bottom};
-        case SelectionHandle::Sw: return {left, bottom};
-        case SelectionHandle::W: return {left, mid_y};
-    }
-    return {left, top};
 }
 
 std::optional<SelectionHandle> handle_at(RectI bounds, Point2f position) {
     if (bounds.width < kMinHandleSpan || bounds.height < kMinHandleSpan) return std::nullopt;
-    constexpr std::array kHandles{SelectionHandle::Nw, SelectionHandle::Ne, SelectionHandle::Se,
-                                  SelectionHandle::Sw, SelectionHandle::N,  SelectionHandle::E,
-                                  SelectionHandle::S,  SelectionHandle::W};
-    for (const SelectionHandle handle : kHandles)
+    for (const SelectionHandle handle : kSelectionHandles)
         if (distance(handle_anchor(bounds, handle), position) <= kHandleHitRadius) return handle;
     return std::nullopt;
 }
@@ -75,7 +44,7 @@ std::optional<SelectionHandle> handle_at(RectI bounds, Point2f position) {
 // True when a press at `position` would start a turn: near a corner, but not on
 // a resize grip or inside the selection, which take the press first.
 bool in_rotate_zone(RectI bounds, Point2f position) {
-    if (handle_at(bounds, position) || contains_point(bounds, position)) return false;
+    if (handle_at(bounds, position) || bounds.contains(position)) return false;
     constexpr std::array kCorners{SelectionHandle::Nw, SelectionHandle::Ne, SelectionHandle::Se,
                                   SelectionHandle::Sw};
     for (const SelectionHandle corner : kCorners)
@@ -108,8 +77,7 @@ Point2f rotate_pivot(RectI bounds, const std::optional<FloatingContents>& floati
 // growing bearing is a turn to the right, which is the sense the contents turn
 // in as well.
 float bearing_degrees(Point2f centre, Point2f position) {
-    const float radians = std::atan2(position.y - centre.y, position.x - centre.x);
-    return radians * 180.0f / std::numbers::pi_v<float>;
+    return degrees_from_radians(std::atan2(position.y - centre.y, position.x - centre.x));
 }
 
 // The rectangle the drag would produce: the edges opposite the grip stay put,
@@ -120,8 +88,8 @@ RectI resized_bounds(RectI start, SelectionHandle handle, Point2f position, Rect
     int right = start.x + start.width;
     int bottom = start.y + start.height;
 
-    const int px = static_cast<int>(std::lround(position.x));
-    const int py = static_cast<int>(std::lround(position.y));
+    const int px = round_to_int(position.x);
+    const int py = round_to_int(position.y);
 
     const bool west = handle == SelectionHandle::Nw || handle == SelectionHandle::Sw ||
                       handle == SelectionHandle::W;
@@ -148,6 +116,26 @@ RectI resized_bounds(RectI start, SelectionHandle handle, Point2f position, Rect
 }
 
 }  // namespace
+
+Point2f handle_anchor(RectI bounds, SelectionHandle handle) {
+    const float left = static_cast<float>(bounds.x);
+    const float top = static_cast<float>(bounds.y);
+    const float right = static_cast<float>(bounds.x + bounds.width - 1);
+    const float bottom = static_cast<float>(bounds.y + bounds.height - 1);
+    const float mid_x = left + (right - left) / 2.0f;
+    const float mid_y = top + (bottom - top) / 2.0f;
+    switch (handle) {
+        case SelectionHandle::Nw: return {left, top};
+        case SelectionHandle::N: return {mid_x, top};
+        case SelectionHandle::Ne: return {right, top};
+        case SelectionHandle::E: return {right, mid_y};
+        case SelectionHandle::Se: return {right, bottom};
+        case SelectionHandle::S: return {mid_x, bottom};
+        case SelectionHandle::Sw: return {left, bottom};
+        case SelectionHandle::W: return {left, mid_y};
+    }
+    return {left, top};
+}
 
 void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, PointerButton button) {
     // The badge belongs to a free pointer over the rotate zone: any press takes
@@ -187,9 +175,10 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
 
         // Dragging inside an active selection moves its contents; anywhere else
         // starts a new marquee/lasso that replaces it.
-        if (contains_point(bounds, position)) {
+        if (bounds.contains(position)) {
             m_contents_start = position;
-            m_contents_dx = m_contents_dy = 0;
+            m_contents_dx = 0;
+            m_contents_dy = 0;
             m_mask_before = selection;
             m_float_before = context.document.floating();
             m_drag = Drag::Contents;
@@ -238,8 +227,8 @@ void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
         context.ui.rotate.hover = false;
 
     if (m_drag == Drag::Contents) {
-        const int dx = static_cast<int>(std::lround(position.x - m_contents_start.x));
-        const int dy = static_cast<int>(std::lround(position.y - m_contents_start.y));
+        const int dx = round_to_int(position.x - m_contents_start.x);
+        const int dy = round_to_int(position.y - m_contents_start.y);
         if (dx == m_contents_dx && dy == m_contents_dy) return;
 
         // The lift only happens once the contents actually move: a press that
@@ -318,7 +307,7 @@ void SelectionTool::on_pointer_up(ToolContext& context, Point2f position) {
 void SelectionTool::on_key_pressed(ToolContext& context, std::string_view text) {
     // Escape abandons a marquee that is still being drawn, and the view's copy
     // of the path goes with it.
-    if (text != "\x1b") return;
+    if (text != kKeyEscape) return;
     if (m_polygon.empty() && m_drag == Drag::None) return;
     m_polygon.clear();
     m_drag = Drag::None;

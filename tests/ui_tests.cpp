@@ -277,9 +277,11 @@ int run_ui_tests() {
 
     Harness h;
 
-    // 1. A fresh document has no selection and no clipboard content.
+    // 1. A fresh document has no selection and no clipboard content. The
+    //    system clipboard belongs to the host, so only the program's own
+    //    clipboard is checked here.
     CHECK(!h.doc().get_has_selection());
-    CHECK(!h.doc().get_has_clipboard());
+    CHECK(h.controller().clipboard().empty());
     CHECK(h.doc().get_canvas_width() == 800);
     CHECK(h.doc().get_canvas_height() == 600);
 
@@ -1165,10 +1167,10 @@ int run_ui_tests() {
 #endif
         {
             SQLiteStore seeded(default_store_path());
-            seeded.set(kSTORE_KEY_WINDOW_X, "60");
-            seeded.set(kSTORE_KEY_WINDOW_Y, "40");
-            seeded.set(kSTORE_KEY_WINDOW_WIDTH, "744");
-            seeded.set(kSTORE_KEY_WINDOW_HEIGHT, "522");
+            seeded.set(kStoreKeyWindowX, "60");
+            seeded.set(kStoreKeyWindowY, "40");
+            seeded.set(kStoreKeyWindowWidth, "744");
+            seeded.set(kStoreKeyWindowHeight, "522");
             seeded.save();
         }
         auto window = AppWindow::create();
@@ -1216,12 +1218,12 @@ int run_ui_tests() {
         // The settings landed under that directory, and the window size the
         // tests drive was written with them.
         const std::filesystem::path store_path = default_store_path();
-        CHECK(store_path.parent_path() == round_trip_dir / kAPP_ID);
+        CHECK(store_path.parent_path() == round_trip_dir / kAppId);
         SQLiteStore stored(store_path);
-        CHECK(stored.get(kSTORE_KEY_SHOW_RULERS).value_or("") == "1");
-        CHECK(stored.get(kSTORE_KEY_WINDOW_WIDTH).value_or("") == "900");
-        CHECK(stored.get(kSTORE_KEY_WINDOW_HEIGHT).value_or("") == "600");
-        CHECK(stored.get(kSTORE_KEY_FONT_FAMILY).value_or("") == "DejaVu Serif");
+        CHECK(stored.get(kStoreKeyShowRulers).value_or("") == "1");
+        CHECK(stored.get(kStoreKeyWindowWidth).value_or("") == "900");
+        CHECK(stored.get(kStoreKeyWindowHeight).value_or("") == "600");
+        CHECK(stored.get(kStoreKeyFontFamily).value_or("") == "DejaVu Serif");
     }
 
     // 37. The File menu's recent list: the settings store fills it, a click
@@ -1255,7 +1257,7 @@ int run_ui_tests() {
         CHECK(!std::filesystem::exists(gone));
         {
             SQLiteStore seeded(default_store_path());
-            seeded.set(kSTORE_KEY_RECENT_FILES, encode_list({gone.string(), picture.string()}));
+            seeded.set(kStoreKeyRecentFiles, encode_list({gone.string(), picture.string()}));
             seeded.save();
         }
 
@@ -1337,9 +1339,9 @@ int run_ui_tests() {
     }
     {
         SQLiteStore seeding(default_store_path());
-        seeding.set(kSTORE_KEY_PALETTE_CUSTOMS, encode_list({"112233", "445566"}));
-        seeding.set(kSTORE_KEY_DIALOG_CUSTOMS, encode_list({"778899"}));
-        seeding.set(kSTORE_KEY_RECENT_FILES,
+        seeding.set(kStoreKeyPaletteCustoms, encode_list({"112233", "445566"}));
+        seeding.set(kStoreKeyDialogCustoms, encode_list({"778899"}));
+        seeding.set(kStoreKeyRecentFiles,
                     encode_list({custom_picture.string(), "older-1.png", "older-2.png", "older-3.png",
                                  "older-4.png", "older-5.png", "older-6.png", "older-7.png",
                                  "older-8.png", "older-9.png", "older-10.png", "older-11.png"}));
@@ -1368,14 +1370,14 @@ int run_ui_tests() {
         seeded.release(419, 71);
         CHECK(seeded.controller().current_path() == custom_picture);
         SQLiteStore stored_again(default_store_path());
-        CHECK(stored_again.get(kSTORE_KEY_LAST_DIRECTORY) == custom_picture.parent_path().string());
+        CHECK(stored_again.get(kStoreKeyLastDirectory) == custom_picture.parent_path().string());
 
         // Closing writes the settings back, and the colours must come out the
         // way they went in rather than drifting through the hex conversion.
         seeded.window().dispatch_close_requested_event();
         SQLiteStore written(default_store_path());
         const std::optional<std::string> written_customs =
-            written.get(kSTORE_KEY_PALETTE_CUSTOMS);
+            written.get(kStoreKeyPaletteCustoms);
         CHECK(written_customs.has_value());
         const std::vector<std::string> written_entries =
             written_customs ? decode_list(*written_customs) : std::vector<std::string>{};

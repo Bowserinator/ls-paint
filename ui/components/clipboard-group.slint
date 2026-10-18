@@ -15,7 +15,9 @@ export component ClipboardGroup inherits BarItemGroup {
 
     title: "Clipboard";
     show-title: !root.merged;
-    width: root.merged ? Styles.ribbon-merged-width : Styles.ribbon-width-clipboard;
+    // Merged, the group is exactly as wide as its one button, so the button
+    // cannot reach past the divider that ends the group.
+    width: root.merged ? Styles.ribbon-merged-width + 8px : Styles.ribbon-width-clipboard;
 
     clipboard-dropdown := PopupWindow {
         y: Styles.bar-dropdown-y;

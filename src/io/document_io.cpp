@@ -1,7 +1,5 @@
 #include "io/document_io.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +9,9 @@
 
 #include "config.hpp"
 #include "core/canvas_document.hpp"
+#include "utils/math.hpp"
+#include "utils/path_text.hpp"
+#include "utils/text.hpp"
 
 #include <stb_image.h>
 #include <stb_image_write.h>
@@ -23,19 +24,13 @@ constexpr int kJpegQuality = 90;
 // stb reads and writes through fopen, which cannot open a path outside the
 // ANSI code page on Windows, so the file is opened here and handed over as a
 // stream.
-std::FILE* open_read(const std::filesystem::path& path) {
-#ifdef _WIN32
-    return _wfopen(path.wstring().c_str(), L"rb");
-#else
-    return std::fopen(path.string().c_str(), "rb");
-#endif
-}
+enum class FileMode { Read, Write };
 
-std::FILE* open_write(const std::filesystem::path& path) {
+std::FILE* open_file(const std::filesystem::path& path, FileMode mode) {
 #ifdef _WIN32
-    return _wfopen(path.wstring().c_str(), L"wb");
+    return _wfopen(path.wstring().c_str(), mode == FileMode::Read ? L"rb" : L"wb");
 #else
-    return std::fopen(path.string().c_str(), "wb");
+    return std::fopen(utf8_from_path(path).c_str(), mode == FileMode::Read ? "rb" : "wb");
 #endif
 }
 
@@ -43,13 +38,6 @@ std::FILE* open_write(const std::filesystem::path& path) {
 // caught by the fclose check in save() instead of here.
 void write_stream(void* context, void* data, int size) {
     std::fwrite(data, 1, static_cast<std::size_t>(size), static_cast<std::FILE*>(context));
-}
-
-std::string lower_extension(const std::filesystem::path& path) {
-    std::string extension = path.extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return extension;
 }
 
 // stb_image_write takes three bytes per pixel for Bmp and Jpeg.
@@ -75,7 +63,7 @@ LoadResult from_decoded(std::uint8_t* data, int width, int height, const std::st
     }
 
     PixelBuffer pixels(width, height);
-    const std::size_t row_bytes = static_cast<std::size_t>(width) * 4;
+    const std::size_t row_bytes = static_cast<std::size_t>(width) * sizeof(Rgba8);
     for (int y = 0; y < height; ++y) {
         std::memcpy(pixels.row(y).data(), data + static_cast<std::size_t>(y) * row_bytes, row_bytes);
     }
@@ -87,17 +75,17 @@ LoadResult from_decoded(std::uint8_t* data, int width, int height, const std::st
 
 LoadResult load(const std::filesystem::path& path) {
     std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error)) return {false, {}, "Not a file: " + path.string()};
+    if (!std::filesystem::is_regular_file(path, error)) return {false, {}, "Not a file: " + utf8_from_path(path)};
 
-    std::FILE* file = open_read(path);
-    if (file == nullptr) return {false, {}, "Cannot open: " + path.string()};
+    std::FILE* file = open_file(path, FileMode::Read);
+    if (file == nullptr) return {false, {}, "Cannot open: " + utf8_from_path(path)};
     int width = 0;
     int height = 0;
     int channels = 0;
     std::uint8_t* data = stbi_load_from_file(file, &width, &height, &channels, 4);
     std::fclose(file);
     if (data == nullptr) return {false, {}, std::string("Cannot decode image: ") + stbi_failure_reason()};
-    return from_decoded(data, width, height, path.string());
+    return from_decoded(data, width, height, utf8_from_path(path));
 }
 
 LoadResult load_from_memory(const void* data, std::size_t size) {
@@ -121,14 +109,14 @@ bool save(const CanvasDocument& document, const std::filesystem::path& path, Ima
     if (!parent.empty()) {
         std::error_code error_code;
         if (!std::filesystem::is_directory(parent, error_code))
-            return fail("Directory does not exist: " + parent.string());
+            return fail("Directory does not exist: " + utf8_from_path(parent));
     }
 
     const PixelBuffer& source = document.flattened();
-    if (source.width() <= 0 || source.height() <= 0) return fail("Nothing to save: " + path.string());
+    if (source.width() <= 0 || source.height() <= 0) return fail("Nothing to save: " + utf8_from_path(path));
 
-    std::FILE* file = open_write(path);
-    if (file == nullptr) return fail("Cannot write " + path.string());
+    std::FILE* file = open_file(path, FileMode::Write);
+    if (file == nullptr) return fail("Cannot write " + utf8_from_path(path));
 
     int written = 0;
     if (format == ImageFormat::Png) {
@@ -144,12 +132,12 @@ bool save(const CanvasDocument& document, const std::filesystem::path& path, Ima
                                          bytes.data(), kJpegQuality);
     }
     const bool closed = std::fclose(file) == 0;
-    if (written == 0 || !closed) return fail("Failed to write " + path.string());
+    if (written == 0 || !closed) return fail("Failed to write " + utf8_from_path(path));
     return true;
 }
 
 std::optional<ImageFormat> format_from_extension(const std::filesystem::path& path) {
-    const std::string extension = lower_extension(path);
+    const std::string extension = lowered(utf8_from_path(path.extension()));
     if (extension == ".png") return ImageFormat::Png;
     if (extension == ".bmp") return ImageFormat::Bmp;
     if (extension == ".jpg" || extension == ".jpeg") return ImageFormat::Jpeg;
@@ -165,23 +153,6 @@ const char* extension_for(ImageFormat format) {
     return ".png";
 }
 
-ImageFormat format_from_index(int index) {
-    switch (index) {
-        case 1: return ImageFormat::Bmp;
-        case 2: return ImageFormat::Jpeg;
-        default: return ImageFormat::Png;
-    }
-}
-
-int index_from(ImageFormat format) {
-    switch (format) {
-        case ImageFormat::Png: return 0;
-        case ImageFormat::Bmp: return 1;
-        case ImageFormat::Jpeg: return 2;
-    }
-    return 0;
-}
-
 PixelBuffer flatten_to_opaque(const PixelBuffer& source, Rgba8 background) {
     PixelBuffer result(source.width(), source.height());
     for (int y = 0; y < source.height(); ++y) {
@@ -189,10 +160,9 @@ PixelBuffer flatten_to_opaque(const PixelBuffer& source, Rgba8 background) {
         Rgba8* out = result.row(y).data();
         for (int x = 0; x < source.width(); ++x) {
             const Rgba8 pixel = pixels[x];
-            const float alpha = pixel.a / 255.0f;
+            const float alpha = unit_from_byte(pixel.a);
             const auto mix = [alpha](std::uint8_t top, std::uint8_t bottom) {
-                return static_cast<std::uint8_t>(
-                    std::lround(top * alpha + bottom * (1.0f - alpha)));
+                return static_cast<std::uint8_t>(std::lround(top * alpha + bottom * (1.0f - alpha)));
             };
             out[x] = Rgba8{mix(pixel.r, background.r), mix(pixel.g, background.g),
                            mix(pixel.b, background.b), 255};

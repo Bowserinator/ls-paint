@@ -16,6 +16,8 @@
 #include "core/raster.hpp"
 #include "text/font_catalog.hpp"
 #include "tools/tool_context.hpp"
+#include "utils/math.hpp"
+#include "utils/path_text.hpp"
 
 #ifndef LSP_FONT_DIR
 #define LSP_FONT_DIR ""
@@ -25,6 +27,8 @@ namespace lsp {
 namespace {
 
 constexpr float kItalicSlant = 0.21f;  // tan(12 degrees): the shear of a faux italic
+// A bold glyph is widened by one pixel for every this many pixels of size.
+constexpr float kBoldPixelsPerSize = 16.0f;
 // The underline, the strikethrough and the opaque band sit on the line metrics,
 // so they follow the size. The offsets are fractions of it.
 constexpr float kUnderlineDrop = 0.15f;  // below the baseline
@@ -47,7 +51,7 @@ struct LoadedFont {
 
 // Reads and initializes the face in `path`, false when the file is unusable.
 bool read_font(LoadedFont& font, const std::string& path) {
-    std::ifstream stream{path, std::ios::binary};
+    std::ifstream stream{path_from_utf8(path), std::ios::binary};
     if (!stream) return false;
     font.bytes.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
     if (font.bytes.empty()) return false;
@@ -71,7 +75,8 @@ std::string bundled_path_for(std::string_view family) {
 const LoadedFont* load_font(std::string_view family) {
     static std::map<std::string, LoadedFont> cache;
     const std::string key(family);
-    if (const auto found = cache.find(key); found != cache.end()) return found->second.ready ? &found->second : nullptr;
+    if (const auto found = cache.find(key); found != cache.end())
+        return found->second.ready ? &found->second : nullptr;
 
     std::vector<std::string> candidates;
     const auto add = [&candidates](std::string path) {
@@ -91,6 +96,78 @@ const LoadedFont* load_font(std::string_view family) {
 
     auto& stored = cache[key] = std::move(font);
     return stored.ready ? &stored : nullptr;
+}
+
+// Families tried, in this order, for a character the requested family lacks.
+// They cover the scripts the bundled faces do not; anything they miss is looked
+// up among every installed face.
+constexpr std::string_view kFallbackFamilies[]{
+    "Microsoft YaHei", "Microsoft JhengHei", "Yu Gothic",       "Malgun Gothic",
+    "PingFang SC",     "Hiragino Sans",      "Noto Sans CJK SC", "Noto Sans CJK JP",
+    "Noto Sans CJK TC", "Noto Sans CJK KR",  "Noto Sans SC",     "Source Han Sans SC",
+    "WenQuanYi Micro Hei", "WenQuanYi Zen Hei", "Arial Unicode MS", "Segoe UI Symbol",
+};
+
+// The face in `path`, loaded once. Nothing when the file is unusable.
+const LoadedFont* font_at_path(const std::string& path) {
+    static std::map<std::string, LoadedFont> cache;
+    auto found = cache.find(path);
+    if (found == cache.end()) {
+        LoadedFont font;
+        (void)read_font(font, path);
+        found = cache.emplace(path, std::move(font)).first;
+    }
+    return found->second.ready ? &found->second : nullptr;
+}
+
+[[nodiscard]] bool has_glyph(const LoadedFont& font, std::uint32_t codepoint) {
+    return stbtt_FindGlyphIndex(&font.info, static_cast<int>(codepoint)) != 0;
+}
+
+// An installed face that draws `codepoint`, nothing when there is none.
+const LoadedFont* fallback_font(std::uint32_t codepoint) {
+    static const std::vector<const LoadedFont*> preferred = [] {
+        std::vector<const LoadedFont*> fonts;
+        for (const std::string_view family : kFallbackFamilies) {
+            const std::string path = installed_fonts().face_path(family);
+            if (path.empty()) continue;
+            if (const LoadedFont* font = font_at_path(path)) fonts.push_back(font);
+        }
+        return fonts;
+    }();
+    static std::map<std::uint32_t, const LoadedFont*> cache;
+    if (const auto found = cache.find(codepoint); found != cache.end()) return found->second;
+
+    const LoadedFont* result = nullptr;
+    for (const LoadedFont* font : preferred) {
+        if (has_glyph(*font, codepoint)) {
+            result = font;
+            break;
+        }
+    }
+    if (result == nullptr) {
+        const std::string path = installed_fonts().face_path_covering(codepoint);
+        const LoadedFont* font = path.empty() ? nullptr : font_at_path(path);
+        if (font != nullptr && has_glyph(*font, codepoint)) result = font;
+    }
+    cache[codepoint] = result;
+    return result;
+}
+
+// The face a character is drawn with and the scale it is drawn at.
+struct GlyphFace {
+    const LoadedFont* font = nullptr;
+    float scale = 0;
+};
+
+// The requested face when it has the character, otherwise a fallback sized to
+// the same em so mixed text keeps an even height.
+GlyphFace face_for(const LoadedFont& primary, float primary_scale, std::uint32_t codepoint) {
+    if (codepoint < 0x20 || has_glyph(primary, codepoint)) return {&primary, primary_scale};
+    const LoadedFont* fallback = fallback_font(codepoint);
+    if (fallback == nullptr) return {&primary, primary_scale};
+    const float em_pixels = primary_scale / stbtt_ScaleForMappingEmToPixels(&primary.info, 1.0f);
+    return {fallback, em_pixels * stbtt_ScaleForMappingEmToPixels(&fallback->info, 1.0f)};
 }
 
 // Steps past one UTF-8 sequence and returns its codepoint. Malformed bytes
@@ -126,6 +203,27 @@ std::uint32_t next_codepoint(std::string_view text, std::size_t& index) {
     return codepoint;
 }
 
+// How far the pen moves before `codepoint` is drawn when `previous` came
+// before it (0 for none), and how far it moves after, in whole pixels.
+struct PenMove {
+    int kern = 0;
+    int advance = 0;
+};
+
+PenMove pen_move(const stbtt_fontinfo& info, int previous, std::uint32_t codepoint, float scale) {
+    int advance = 0;
+    int left_side_bearing = 0;
+    stbtt_GetCodepointHMetrics(&info, static_cast<int>(codepoint), &advance, &left_side_bearing);
+    PenMove move;
+    if (previous != 0) {
+        move.kern = round_to_int(
+            static_cast<float>(stbtt_GetCodepointKernAdvance(&info, previous, static_cast<int>(codepoint))) *
+            scale);
+    }
+    move.advance = round_to_int(static_cast<float>(advance) * scale);
+    return move;
+}
+
 // One glyph, ready to stamp: the coverage bitmap plus the box it covers
 // relative to the pen and the baseline.
 struct GlyphBitmap {
@@ -137,14 +235,17 @@ struct GlyphBitmap {
 };
 
 // Applies the faux italic shear and bold dilation to a glyph's coverage. The
-// sheer shifts a row further right the higher it sits above the baseline, and
+// shear shifts a row further right the higher it sits above the baseline, and
 // the dilation widens every row to the right, so both grow the bitmap.
 GlyphBitmap shape_glyph(const unsigned char* raw, int width, int height, int x_offset, int y_offset,
                         const TextOptions& options) {
     GlyphBitmap glyph;
-    const int shear =
-        options.italic ? std::max(0, static_cast<int>(std::lround(-y_offset * kItalicSlant))) : 0;
-    const int passes = options.bold ? std::max(1, static_cast<int>(std::lround(options.size / 16.0f))) : 0;
+    const auto shear_at = [&options](int y) {
+        return options.italic ? std::max(0, round_to_int(-y * kItalicSlant)) : 0;
+    };
+    const int shear = shear_at(y_offset);
+    const int passes =
+        options.bold ? std::max(1, round_to_int(options.size / kBoldPixelsPerSize)) : 0;
     glyph.width = width + shear + passes;
     glyph.height = height;
     glyph.x = x_offset;
@@ -156,21 +257,19 @@ GlyphBitmap shape_glyph(const unsigned char* raw, int width, int height, int x_o
 
     glyph.coverage.assign(static_cast<std::size_t>(glyph.width) * height, 0);
     for (int row = 0; row < height; ++row) {
-        const int shift = options.italic
-                              ? std::max(0, static_cast<int>(std::lround(-(y_offset + row) * kItalicSlant)))
-                              : 0;
+        const int shift = shear_at(y_offset + row);
         for (int column = 0; column < width; ++column) {
-            glyph.coverage[static_cast<std::size_t>(row) * glyph.width + column + shift] =
-                raw[static_cast<std::size_t>(row) * width + column];
+            glyph.coverage[grid_index(column + shift, row, glyph.width)] =
+                raw[grid_index(column, row, width)];
         }
     }
     if (passes > 0) {
         const std::vector<std::uint8_t> sheared = glyph.coverage;
         for (int row = 0; row < height; ++row) {
             for (int column = 0; column < width + shear; ++column) {
-                const std::uint8_t value = sheared[static_cast<std::size_t>(row) * glyph.width + column];
+                const std::uint8_t value = sheared[grid_index(column, row, glyph.width)];
                 for (int step = 1; step <= passes; ++step) {
-                    auto& target = glyph.coverage[static_cast<std::size_t>(row) * glyph.width + column + step];
+                    auto& target = glyph.coverage[grid_index(column + step, row, glyph.width)];
                     target = std::max(target, value);
                 }
             }
@@ -213,6 +312,7 @@ std::vector<float> text_line_widths(std::string_view text, const TextOptions& op
     // on the same pixel as the glyphs it decorates.
     int width = 0;
     int previous = 0;
+    const LoadedFont* previous_font = nullptr;
     std::size_t index = 0;
     while (index < text.size()) {
         const std::uint32_t codepoint = next_codepoint(text, index);
@@ -223,18 +323,12 @@ std::vector<float> text_line_widths(std::string_view text, const TextOptions& op
             continue;
         }
 
-        int advance = 0;
-        int left_side_bearing = 0;
-        stbtt_GetCodepointHMetrics(&font->info, static_cast<int>(codepoint), &advance,
-                                   &left_side_bearing);
-        if (previous != 0) {
-            width += static_cast<int>(
-                std::lround(stbtt_GetCodepointKernAdvance(&font->info, previous,
-                                                          static_cast<int>(codepoint)) *
-                            scale));
-        }
-        width += static_cast<int>(std::lround(advance * scale));
+        const GlyphFace face = face_for(*font, scale, codepoint);
+        const PenMove move = pen_move(face.font->info, previous_font == face.font ? previous : 0,
+                                      codepoint, face.scale);
+        width += move.kern + move.advance;
         previous = static_cast<int>(codepoint);
+        previous_font = face.font;
     }
     widths.push_back(static_cast<float>(width));
     return widths;
@@ -250,23 +344,24 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
     int descent = 0;
     int line_gap = 0;
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &line_gap);
-    const int line_height =
-        std::max(1, static_cast<int>(std::lround((ascent - descent + line_gap) * scale)));
+    const int line_height = std::max(1, round_to_int(static_cast<float>(ascent - descent + line_gap) * scale));
 
     // The press marks the top left of the first line box.
-    const int left = static_cast<int>(std::lround(origin.x));
+    const int left = round_to_int(origin.x);
     int pen_x = left;
-    int pen_y = static_cast<int>(std::lround(origin.y + ascent * scale));
+    int pen_y = round_to_int(origin.y + static_cast<float>(ascent) * scale);
     // The top of the line the pen is on, and the marks that decorate it. Both
     // follow the pen down the lines.
-    int line_top = pen_y - static_cast<int>(std::lround(ascent * scale));
-    const int mark_thickness =
-        std::max(1, static_cast<int>(std::lround(options.size * kMarkThickness)));
-    const int underline_drop =
-        std::max(1, static_cast<int>(std::lround(options.size * kUnderlineDrop)));
-    const int strike_rise = static_cast<int>(std::lround(options.size * kStrikeRise));
+    int line_top = pen_y - round_to_int(static_cast<float>(ascent) * scale);
+    const int mark_thickness = std::max(1, round_to_int(options.size * kMarkThickness));
+    const int underline_drop = std::max(1, round_to_int(options.size * kUnderlineDrop));
+    const int strike_rise = round_to_int(options.size * kStrikeRise);
 
     RectI touched;
+    const auto draw_bar = [&](const RectI& bar, Rgba8 bar_color) {
+        raster::draw_rect_fill(target, bar, bar_color);
+        touched = touched.united(bar);
+    };
     std::size_t index = 0;
     // One line at a time, in three passes: the background bands, then the
     // glyphs over them, then the rules. A band drawn between two glyphs would
@@ -275,11 +370,13 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
         std::uint32_t codepoint;
         int pen_x;
         int advance_px;
+        GlyphFace face;
     };
     std::vector<Placed> line;
     while (index < text.size()) {
         line.clear();
         int previous = 0;
+        const LoadedFont* previous_font = nullptr;
         bool wrapped = false;
         while (index < text.size()) {
             const std::uint32_t codepoint = next_codepoint(text, index);
@@ -288,27 +385,20 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
                 break;
             }
 
-            int advance = 0;
-            int left_side_bearing = 0;
-            stbtt_GetCodepointHMetrics(&font->info, static_cast<int>(codepoint), &advance,
-                                       &left_side_bearing);
-            if (previous != 0) {
-                pen_x += static_cast<int>(
-                    std::lround(stbtt_GetCodepointKernAdvance(&font->info, previous,
-                                                              static_cast<int>(codepoint)) *
-                                scale));
-            }
+            const GlyphFace face = face_for(*font, scale, codepoint);
+            const PenMove move = pen_move(face.font->info, previous_font == face.font ? previous : 0,
+                                          codepoint, face.scale);
+            pen_x += move.kern;
 
             const int pen_start = pen_x;
-            const int advance_px = static_cast<int>(std::lround(advance * scale));
+            const int advance_px = move.advance;
             if (options.opaque_background && advance_px > 0) {
-                const RectI band{pen_start, line_top, advance_px, line_height};
-                raster::draw_rect_fill(target, band, options.background);
-                touched = touched.united(band);
+                draw_bar({pen_start, line_top, advance_px, line_height}, options.background);
             }
-            line.push_back({codepoint, pen_start, advance_px});
+            line.push_back({codepoint, pen_start, advance_px, face});
             pen_x += advance_px;
             previous = static_cast<int>(codepoint);
+            previous_font = face.font;
         }
 
         for (const Placed& placed : line) {
@@ -316,7 +406,8 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
             int height = 0;
             int x_offset = 0;
             int y_offset = 0;
-            unsigned char* raw = stbtt_GetCodepointBitmap(&font->info, scale, scale,
+            unsigned char* raw = stbtt_GetCodepointBitmap(&placed.face.font->info, placed.face.scale,
+                                                          placed.face.scale,
                                                           static_cast<int>(placed.codepoint), &width,
                                                           &height, &x_offset, &y_offset);
             if (raw != nullptr) {
@@ -336,18 +427,10 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
         // The marks follow the glyphs, so a descender cannot cut the rule.
         for (const Placed& placed : line) {
             if (placed.advance_px <= 0) continue;
-            if (options.underline) {
-                const RectI bar{placed.pen_x, pen_y + underline_drop, placed.advance_px,
-                                mark_thickness};
-                raster::draw_rect_fill(target, bar, color);
-                touched = touched.united(bar);
-            }
-            if (options.strikethrough) {
-                const RectI bar{placed.pen_x, pen_y - strike_rise, placed.advance_px,
-                                mark_thickness};
-                raster::draw_rect_fill(target, bar, color);
-                touched = touched.united(bar);
-            }
+            if (options.underline)
+                draw_bar({placed.pen_x, pen_y + underline_drop, placed.advance_px, mark_thickness}, color);
+            if (options.strikethrough)
+                draw_bar({placed.pen_x, pen_y - strike_rise, placed.advance_px, mark_thickness}, color);
         }
 
         if (!wrapped) break;

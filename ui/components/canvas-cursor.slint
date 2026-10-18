@@ -1,0 +1,31 @@
+import { UserState } from "../globals.slint";
+
+// What marks the pointer over the paper: the outline of the tip a brush would
+// stamp and a crosshair. The marks arrive as one square image centred on the
+// pointer, each pixel already coloured by the paper under it, so this places it
+// and takes no input.
+export component CanvasCursor inherits Rectangle {
+    // The paper's offset inside the view and the view's zoom.
+    in property <length> origin;
+    in property <float> zoom: 1.0;
+    // The pointer, in document pixels.
+    in property <float> cursor-x;
+    in property <float> cursor-y;
+
+    property <length> pointer-x: root.origin + root.cursor-x * root.zoom * 1px;
+    property <length> pointer-y: root.origin + root.cursor-y * root.zoom * 1px;
+    property <length> reach: UserState.cursor-overlay-reach;
+
+    width: 0px;
+    height: 0px;
+
+    if root.reach > 0px : Image {
+        source: UserState.cursor-overlay;
+        x: root.pointer-x - root.reach;
+        y: root.pointer-y - root.reach;
+        width: root.reach * 2;
+        height: root.reach * 2;
+        // The marks are whole pixels, so they must not be smoothed.
+        image-rendering: ImageRendering.pixelated;
+    }
+}

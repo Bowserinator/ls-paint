@@ -6,8 +6,9 @@ import { CanvasResizeHandle } from "components/canvas-resize-handle.slint";
 import { CanvasMenuItem, CanvasMenuDivider, CanvasMenuFrame } from "components/canvas-menu.slint";
 import { CanvasRuler } from "components/canvas-ruler.slint";
 import { CanvasShadow } from "components/canvas-shadow.slint";
+import { CanvasCursor } from "components/canvas-cursor.slint";
 
-import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay } from "globals.slint";
+import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ToolOptions } from "globals.slint";
 export * from "globals.slint";
 
 // Which quadrant of the rotation centre the pointer is in, as seen on screen.
@@ -71,6 +72,14 @@ export component AppWindow inherits Window {
     in-out property <length> menu-x: 0px;
     in-out property <length> menu-y: 0px;
 
+    // Ctrl+Alt turns a drag into a brush size change: the size and the pointer
+    // at the press, and the document point it landed on.
+    property <bool> size-dragging: false;
+    property <length> size-drag-start: 0px;
+    property <length> size-drag-size: 0px;
+    property <length> size-drag-doc-x: 0px;
+    property <length> size-drag-doc-y: 0px;
+
     property <length> canvas-origin: 4px;
     // Document size: canvas-w/h are what the screen shows at the current
     // zoom, doc-w/h the pixels the document actually owns.
@@ -121,7 +130,7 @@ export component AppWindow inherits Window {
     // document pixel there stays put. The zoom changes first because the new
     // canvas size is what the viewport clamp below has to respect.
     function set-zoom(target: float, px: length, py: length) {
-        let z = clamp(target, 0.125, 7.0);
+        let z = clamp(target, ZoomScale.min-zoom, ZoomScale.max-zoom);
         root.zoom-anchor = 1.0 - z / UserState.zoom;
         UserState.zoom = z;
         scroll.viewport-x = min(0px, max(min(0px, scroll.visible-width - scroll.viewport-width),
@@ -160,7 +169,7 @@ export component AppWindow inherits Window {
     function handle-wheel(event: PointerScrollEvent, px: length, py: length) {
         if (event.modifiers.control || event.modifiers.meta) {
             let d = event.delta-y != 0px ? event.delta-y : event.delta-x;
-            root.apply-zoom(px, py, pow(1.25, clamp(d, -120px, 120px) / 60px));
+            root.apply-zoom(px, py, pow(ZoomScale.step, clamp(d, -120px, 120px) / 60px));
         } else {
             let dx = event.modifiers.shift ? event.delta-y : event.delta-x;
             let dy = event.modifiers.shift ? event.delta-x : event.delta-y;
@@ -170,6 +179,12 @@ export component AppWindow inherits Window {
                                              scroll.viewport-y + dy));
         }
     }
+
+    // Whether the window draws the pointer over the paper instead of the system.
+    // The magnifier keeps the system pointer, and so does the text tool while
+    // its box is open, because the box has a pointer of its own.
+    property <bool> custom-cursor: UserState.selected-tool != ETool.MAGNIFY
+        && !(UserState.selected-tool == ETool.TEXT && TextOverlay.visible);
 
     init => {
         // The chrome this program draws is light, so the stock widgets are held
@@ -184,7 +199,8 @@ export component AppWindow inherits Window {
         height: 100%;
 
         key-pressed(event) => {
-            UserState.key-pressed(event.text, event.modifiers.control || event.modifiers.meta, event.modifiers.shift);
+            UserState.key-pressed(event.text, event.modifiers.control || event.modifiers.meta,
+                                  event.modifiers.shift, event.modifiers.alt);
             accept
         }
 
@@ -360,19 +376,33 @@ export component AppWindow inherits Window {
                             // Over the rotate zone the arrow the window draws at
                             // the pointer takes the cursor's place, so the system
                             // one is turned off while it shows.
-                            mouse-cursor: (RotateOverlay.hover || RotateOverlay.rotating)
-                                ? MouseCursor.none : MouseCursor.default;
+                            mouse-cursor: (RotateOverlay.hover || RotateOverlay.rotating
+                                || root.custom-cursor) ? MouseCursor.none : MouseCursor.default;
 
                             pointer-event(event) => {
                                 // Every hover or press over the paper pins
                                 // the document pixel under the cursor for
                                 // the status bar to read out.
                                 UserState.cursor-on-canvas = true;
-                                UserState.cursor-x = touch.mouse-x / UserState.zoom / 1px;
-                                UserState.cursor-y = touch.mouse-y / UserState.zoom / 1px;
+                                // A size drag holds the cursor on the point it
+                                // started from, so the tip grows in place.
+                                if (!root.size-dragging) {
+                                    UserState.cursor-x = touch.mouse-x / UserState.zoom / 1px;
+                                    UserState.cursor-y = touch.mouse-y / UserState.zoom / 1px;
+                                }
                                 if (event.kind == PointerEventKind.down) {
                                     focus-scope.focus();
-                                    if (UserState.selected-tool == ETool.MAGNIFY) {
+                                    if ((event.modifiers.control || event.modifiers.meta)
+                                        && event.modifiers.alt) {
+                                        // Ctrl+Alt resizes the brush instead of
+                                        // painting, so the press never reaches a
+                                        // tool and never starts a stroke.
+                                        root.size-dragging = true;
+                                        root.size-drag-start = touch.mouse-x;
+                                        root.size-drag-size = ToolOptions.brush-size;
+                                        root.size-drag-doc-x = touch.mouse-x / UserState.zoom;
+                                        root.size-drag-doc-y = touch.mouse-y / UserState.zoom;
+                                    } else if (UserState.selected-tool == ETool.MAGNIFY) {
                                         // A view tool, not a document tool: the press
                                         // zooms around the click point and never reaches
                                         // the C++ registry, so no stroke can start and no
@@ -380,7 +410,7 @@ export component AppWindow inherits Window {
                                         root.apply-zoom(touch.mouse-x + scroll.viewport-x,
                                                         touch.mouse-y + scroll.viewport-y,
                                                         event.button == PointerEventButton.right
-                                                            || event.modifiers.alt ? 0.8 : 1.25);
+                                                            || event.modifiers.alt ? 1 / ZoomScale.step : ZoomScale.step);
                                     } else if (event.button == PointerEventButton.right
                                         && UserState.selected-tool == ETool.SELECTION) {
                                         // The menu takes over input from here on, so the press is
@@ -395,20 +425,39 @@ export component AppWindow inherits Window {
                                                                event.button == PointerEventButton.right);
                                     }
                                 } else if (event.kind == PointerEventKind.up) {
-                                    UserState.pointer-up(touch.mouse-x / UserState.zoom,
-                                                         touch.mouse-y / UserState.zoom,
-                                                         event.button == PointerEventButton.right);
+                                    if (root.size-dragging) {
+                                        root.size-dragging = false;
+                                    } else {
+                                        UserState.pointer-up(touch.mouse-x / UserState.zoom,
+                                                             touch.mouse-y / UserState.zoom,
+                                                             event.button == PointerEventButton.right);
+                                    }
                                 } else if (event.kind == PointerEventKind.cancel) {
                                     // The toolkit took the pointer away: the gesture
                                     // cannot be finished, so it is abandoned.
+                                    root.size-dragging = false;
                                     UserState.pointer-cancel();
                                 } else if (event.kind == PointerEventKind.move) {
-                                    // Every hover as well as every drag: the tools
-                                    // follow the pointer and the status bar reads
-                                    // the colour under it.
-                                    UserState.pointer-move(touch.mouse-x / UserState.zoom,
-                                                           touch.mouse-y / UserState.zoom,
-                                                           event.modifiers.shift);
+                                    if (root.size-dragging) {
+                                        // A screen pixel of travel is a pixel of
+                                        // brush: right grows the tip, left shrinks
+                                        // it, whatever the zoom.
+                                        ToolOptions.brush-size = max(1px, root.size-drag-size
+                                            + touch.mouse-x - root.size-drag-start);
+                                        // The tip grows about the point the drag
+                                        // started on, so the drag changes the size
+                                        // alone and leaves the brush where it was.
+                                        UserState.pointer-move(root.size-drag-doc-x,
+                                                               root.size-drag-doc-y,
+                                                               event.modifiers.shift);
+                                    } else {
+                                        // Every hover as well as every drag: the tools
+                                        // follow the pointer and the status bar reads
+                                        // the colour under it.
+                                        UserState.pointer-move(touch.mouse-x / UserState.zoom,
+                                                               touch.mouse-y / UserState.zoom,
+                                                               event.modifiers.shift);
+                                    }
                                 }
                             }
 
@@ -633,6 +682,19 @@ export component AppWindow inherits Window {
                                 ? ERotateCorner.NW : ERotateCorner.SW)
                             : (UserState.cursor-y < DocumentState.selection-y + DocumentState.selection-height / 2.0
                                 ? ERotateCorner.NE : ERotateCorner.SE);
+                    }
+
+                    // The outline of the tip and the crosshair, over everything on
+                    // the paper except the rotate badge's own pointer.
+                    if UserState.cursor-on-canvas && root.custom-cursor
+                        && !(UserState.selected-tool == ETool.SELECTION
+                            && (RotateOverlay.hover || RotateOverlay.rotating)) : CanvasCursor {
+                        x: 0px;
+                        y: 0px;
+                        origin: root.canvas-origin;
+                        zoom: UserState.zoom;
+                        cursor-x: UserState.cursor-x;
+                        cursor-y: UserState.cursor-y;
                     }
 
                     right-handle := CanvasResizeHandle {

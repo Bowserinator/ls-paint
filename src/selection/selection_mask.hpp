@@ -1,17 +1,17 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "core/types.hpp"
 
 namespace lsp {
 
-// Single-channel 1/0 coverage mask over the canvas.
+// A 1/0 coverage mask over the canvas.
 //
 // A mask with empty bounds means "no selection", and a canvas with no
-// selection is writable everywhere. Every mutation restores that state instead
-// of leaving an allocated, all-zero mask behind.
+// selection is writable everywhere.
 class SelectionMask {
 public:
     SelectionMask() = default;
@@ -25,19 +25,14 @@ public:
 
     [[nodiscard]] bool contains(int x, int y) const noexcept {
         if (m_mask.empty() || m_bounds.empty()) return true;
-        return x >= 0 && y >= 0 && x < m_width && y < m_height &&
-               m_mask[static_cast<std::size_t>(y) * m_width + x] != 0;
+        return x >= 0 && y >= 0 && x < m_width && y < m_height && cell(x, y) != 0;
     }
 
     void clear() { m_mask.clear(); m_bounds = {}; }
 
     void fill_rect(RectI rect);
-    void fill_polygon(const std::vector<Point2f>& points);
+    void fill_polygon(std::span<const Point2f> points);
     void invert();
-
-    // Moves every selected pixel by (dx, dy); pixels leaving the canvas are
-    // dropped. Used while dragging a selection's contents.
-    void translate(int dx, int dy);
 
     // Overwrites the mask inside `region` with `bytes` (laid out for the
     // unclipped region, row-major, 0/1) and recomputes the bounds.
@@ -50,6 +45,8 @@ public:
 private:
     void ensure_allocated();
     void recompute_bounds();
+    [[nodiscard]] std::uint8_t& cell(int x, int y);
+    [[nodiscard]] std::uint8_t cell(int x, int y) const;
 
     int m_width = 0;
     int m_height = 0;

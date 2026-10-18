@@ -19,7 +19,7 @@ Rgba8 premultiply(Rgba8 pixel) {
 
 Rgba8 unpremultiply(Rgba8 pixel) {
     // An empty pixel stays empty: the default Rgba8 is opaque black.
-    if (pixel.a == 0) return Rgba8{0, 0, 0, 0};
+    if (pixel.a == 0) return kTransparent;
     const std::uint32_t alpha = pixel.a;
     const auto restore = [alpha](std::uint8_t value) {
         return static_cast<std::uint8_t>(std::min<std::uint32_t>(255, value * 255 / alpha));
@@ -68,6 +68,13 @@ void box_rows(PixelBuffer& image, int radius) {
     for (int y = 0; y < image.height(); ++y) box_line(image.row(y), radius);
 }
 
+template <typename PixelFn>
+void for_each_pixel(PixelBuffer& image, PixelFn fn) {
+    for (int y = 0; y < image.height(); ++y) {
+        for (Rgba8& pixel : image.row(y)) pixel = fn(pixel);
+    }
+}
+
 void box_columns(PixelBuffer& image, int radius) {
     std::vector<Rgba8> column(static_cast<std::size_t>(image.height()));
     for (int x = 0; x < image.width(); ++x) {
@@ -87,18 +94,14 @@ PixelBuffer blur::box_twice(const PixelBuffer& source, int radius) {
     PixelBuffer image = source;
     if (radius < 1) return image;
 
-    for (int y = 0; y < image.height(); ++y) {
-        for (Rgba8& pixel : image.row(y)) pixel = premultiply(pixel);
-    }
+    for_each_pixel(image, premultiply);
 
     for (int pass = 0; pass < 2; ++pass) {
         box_rows(image, radius);
         box_columns(image, radius);
     }
 
-    for (int y = 0; y < image.height(); ++y) {
-        for (Rgba8& pixel : image.row(y)) pixel = unpremultiply(pixel);
-    }
+    for_each_pixel(image, unpremultiply);
     return image;
 }
 

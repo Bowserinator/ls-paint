@@ -22,6 +22,11 @@ set(SLINT_FEATURE_RENDERER_FEMTOVG OFF CACHE BOOL "" FORCE)
 set(SLINT_FEATURE_RENDERER_SOFTWARE ON CACHE BOOL "" FORCE)
 set(SLINT_FEATURE_RENDERER_SKIA OFF CACHE BOOL "" FORCE)
 
+# Compile @image-url assets into the binary instead of reading them from disk
+# at run time. embed-for-software-renderer pre-decodes them for the renderer
+# this build enables.
+set(DEFAULT_SLINT_EMBED_RESOURCES embed-files CACHE STRING "How the Slint compiler embeds @image-url assets" FORCE)
+
 FetchContent_MakeAvailable(Slint)
 
 # stb: single-header image and font decoding. Only headers are used, so this
@@ -50,6 +55,7 @@ target_include_directories(sqlite3 SYSTEM PUBLIC ${CMAKE_SOURCE_DIR}/third_party
 # Everything that does not touch Slint, so tests can link it without the GUI.
 add_library(lsp_core STATIC
     src/app/app_controller.cpp
+    src/app/command_line.cpp
     src/app/input_router.cpp
     src/brushes/brush.cpp
     src/brushes/brush_engine.cpp
@@ -93,7 +99,7 @@ target_compile_definitions(lsp_core PRIVATE LSP_FONT_DIR="${CMAKE_SOURCE_DIR}/th
 # on Windows.
 if (WIN32)
     target_sources(lsp_core PRIVATE src/text/font_catalog_windows.cpp)
-    target_link_libraries(lsp_core PRIVATE dwrite)
+    target_link_libraries(lsp_core PRIVATE dwrite shell32)
 else()
     find_package(Fontconfig REQUIRED)
     target_sources(lsp_core PRIVATE src/text/font_catalog_linux.cpp)
@@ -103,6 +109,7 @@ endif()
 add_executable(ls_paint
     src/main.cpp
     src/render/slint_bridge.cpp
+    src/ui/cursor_overlay.cpp
     src/ui/file_picker.cpp
     src/ui/ui_state.cpp
 )
@@ -122,7 +129,8 @@ slint_target_sources(ls_paint ui/dialogs/resize-dialog.slint NAMESPACE lsp_resiz
 
 if(MSVC)
     foreach(target lsp_core ls_paint)
-        target_compile_options(${target} PRIVATE /W4)
+        # Source and string literals are UTF-8, which the path conversions assume.
+        target_compile_options(${target} PRIVATE /W4 /utf-8)
     endforeach()
 else()
     foreach(target lsp_core ls_paint)

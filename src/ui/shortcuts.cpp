@@ -1,7 +1,9 @@
 #include "ui/shortcuts.hpp"
 
 #include <array>
-#include <cctype>
+
+#include "utils/key_text.hpp"
+#include "utils/text.hpp"
 
 namespace lsp {
 
@@ -32,21 +34,29 @@ constexpr std::array kShortcuts{
 
 }  // namespace
 
-std::optional<ShortcutAction> lookup_shortcut(std::string_view text, bool ctrl, bool shift) {
-    // Escape arrives as a control character, which the key mapping below would
-    // read as the letter '{'; it is matched before that.
-    if (text == "\x1b" && !ctrl && !shift) return ShortcutAction::Deselect;
-    // Delete arrives the same way, as the DEL control code.
-    if (text == "\x7f" && !ctrl && !shift) return ShortcutAction::Delete;
+std::optional<ShortcutAction> lookup_shortcut(std::string_view text, bool ctrl, bool shift, bool alt) {
+    // Alt belongs to the window's own gestures, such as the brush size drag, so
+    // no entry matches while it is held.
+    if (alt) return std::nullopt;
+
+    // Escape and Delete are control characters, which the key mapping below
+    // would read as other keys, so they are matched first.
+    if (text == kKeyEscape && !ctrl && !shift) return ShortcutAction::Deselect;
+    if (text == kKeyDelete && !ctrl && !shift) return ShortcutAction::Delete;
 
     if (text.size() != 1) return std::nullopt;
 
+    // Ctrl+letter arrives as the letter's control code, 0x60 below the letter.
+    constexpr unsigned char kFirstPrintable = 0x20;
+    constexpr int kControlCodeOffset = 0x60;
     char key = text.front();
-    if (static_cast<unsigned char>(key) < 0x20) key = static_cast<char>(key + 0x60);
-    key = static_cast<char>(std::tolower(static_cast<unsigned char>(key)));
+    if (static_cast<unsigned char>(key) < kFirstPrintable) key = static_cast<char>(key + kControlCodeOffset);
+    key = to_lower(key);
 
-    for (const Shortcut& shortcut : kShortcuts)
-        if (shortcut.key == key && shortcut.ctrl == ctrl && shortcut.shift == shift) return shortcut.action;
+    for (const Shortcut& shortcut : kShortcuts) {
+        if (shortcut.key == key && shortcut.ctrl == ctrl && shortcut.shift == shift)
+            return shortcut.action;
+    }
     return std::nullopt;
 }
 

@@ -17,7 +17,7 @@ component ImageButtonBase inherits Rectangle {
     border-radius: 0;
     border-width: 1px;
     border-color: focused ? #8dbcec : touch.pressed ? #a0c6ed : (force_hover || touch.has-hover) ? #bedbf8 : transparent;
-    background: focused ? #c9e0f7 : touch.pressed ? #d5e6f7 : transparent;
+    background: focused ? Styles.menu-hover : touch.pressed ? #d5e6f7 : transparent;
 
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -86,7 +86,7 @@ export component ImageButtonVertical inherits ImageButtonBase {
     in-out property <bool> boxed-icon: false;
 
     width: Styles.bar-vertical-btn-width;
-    
+
     PaddedLayoutV {
         HorizontalLayout {
             alignment: center;
@@ -136,9 +136,9 @@ export component ImageButtonVerticalDropdown {
 
     callback clicked <=> btn1.clicked;
     callback clicked_dropdown <=> btn2.clicked;
-    
+
     width: Styles.bar-vertical-btn-width;
-    
+
     VerticalLayout {
         alignment: start;
         spacing: -1px;
@@ -161,6 +161,10 @@ export component ImageButtonVerticalDropdown {
                 txt := ButtonText {
                     text: root.text;
                     font-size: root.font-size;
+                    // A caption longer than the button shortens instead of
+                    // pushing past the button's edge. The layout keeps
+                    // Styles.bar-padding * 2 on each side.
+                    max-width: root.width - 4 * Styles.bar-padding;
                 }
                 ButtonText {
                     text: "▼";
@@ -177,7 +181,7 @@ export component ImageButtonHorizontal inherits ImageButtonBase {
     // The color the icon is drawn against. Transparent shows the icon's own
     // artwork only.
     in-out property <color> swatch: transparent;
-    
+
     HorizontalLayout {
         padding: Styles.bar-padding;
         padding-top: Styles.bar-padding / 2;

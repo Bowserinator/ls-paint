@@ -35,8 +35,12 @@ public:
           m_float_before(std::move(float_before)),
           m_float_after(std::move(float_after)) {}
 
-    void undo(CanvasDocument& document) override { apply(document, m_before, m_mask_before, m_float_before); }
-    void redo(CanvasDocument& document) override { apply(document, m_after, m_mask_after, m_float_after); }
+    void undo(CanvasDocument& document) override {
+        apply(document, m_before, m_mask_before, m_float_before);
+    }
+    void redo(CanvasDocument& document) override {
+        apply(document, m_after, m_mask_after, m_float_after);
+    }
 
     [[nodiscard]] std::size_t memory_bytes() const noexcept override {
         std::size_t total = pixel_bytes(m_before) + pixel_bytes(m_after);
@@ -59,12 +63,12 @@ private:
     std::optional<FloatingContents> m_float_after;
 };
 
-[[nodiscard]] inline std::unique_ptr<SelectionEditCommand> make_selection_edit(std::size_t layer_index,
-                                                                               SelectionEdit edit) {
-    return std::make_unique<SelectionEditCommand>(layer_index, edit.region, std::move(edit.before),
-                                                  std::move(edit.after), std::move(edit.mask_before),
-                                                  std::move(edit.mask_after), std::move(edit.float_before),
-                                                  std::move(edit.float_after));
+[[nodiscard]] inline std::unique_ptr<SelectionEditCommand> make_selection_edit(
+    std::size_t layer_index, SelectionEdit edit) {
+    return std::make_unique<SelectionEditCommand>(
+        layer_index, edit.region, std::move(edit.before), std::move(edit.after),
+        std::move(edit.mask_before), std::move(edit.mask_after), std::move(edit.float_before),
+        std::move(edit.float_after));
 }
 
 }  // namespace lsp

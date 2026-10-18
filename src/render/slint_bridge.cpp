@@ -25,4 +25,16 @@ void SlintBridge::upload(const PixelBuffer& source, RectI region) {
     }
 }
 
+slint::Image image_from(const PixelBuffer& source) {
+    slint::SharedPixelBuffer<slint::Rgba8Pixel> pixels(static_cast<std::uint32_t>(source.width()),
+                                                     static_cast<std::uint32_t>(source.height()));
+
+    for (int y = 0; y < source.height(); ++y) {
+        const auto row = source.row(y);
+        std::memcpy(pixels.begin() + static_cast<std::size_t>(y) * pixels.width(), row.data(),
+                    row.size_bytes());
+    }
+    return slint::Image(pixels);
+}
+
 }  // namespace lsp

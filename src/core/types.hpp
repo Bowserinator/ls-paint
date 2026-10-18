@@ -15,13 +15,15 @@ struct Rgba8 {
     friend bool operator==(const Rgba8&, const Rgba8&) = default;
 };
 
+inline constexpr Rgba8 kWhite{255, 255, 255, 255};
+inline constexpr Rgba8 kTransparent{0, 0, 0, 0};
+
 struct Point2f {
     float x = 0;
     float y = 0;
 };
 
-// Distance between two points, used to decide whether a click is close enough
-// to a handle or a vertex.
+// Distance between two points.
 [[nodiscard]] inline float distance(Point2f a, Point2f b) {
     return std::hypot(a.x - b.x, a.y - b.y);
 }
@@ -37,6 +39,15 @@ struct RectI {
     [[nodiscard]] bool empty() const noexcept { return width <= 0 || height <= 0; }
     [[nodiscard]] int right() const noexcept { return x + width; }
     [[nodiscard]] int bottom() const noexcept { return y + height; }
+
+    [[nodiscard]] bool contains(int px, int py) const noexcept {
+        return px >= x && py >= y && px < right() && py < bottom();
+    }
+
+    [[nodiscard]] bool contains(Point2f point) const noexcept {
+        return point.x >= static_cast<float>(x) && point.y >= static_cast<float>(y) &&
+               point.x < static_cast<float>(right()) && point.y < static_cast<float>(bottom());
+    }
 
     [[nodiscard]] RectI united(const RectI& other) const noexcept {
         if (empty()) return other;

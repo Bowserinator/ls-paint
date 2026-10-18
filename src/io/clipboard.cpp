@@ -9,14 +9,14 @@
 
 #include "config.hpp"
 #include "io/document_io.hpp"
+#include "utils/env.hpp"
 
 #include <clip.h>
 
 namespace lsp {
 namespace {
 
-// The Wayland clipboard carries large images the X11 bridge truncates, so it is
-// read first when the session is Wayland.
+// The most bytes read from the clipboard in one go.
 constexpr std::size_t kMaxClipboardBytes = 256u * 1024u * 1024u;
 
 // Runs `command` and returns its standard output, one byte past the limit at
@@ -30,12 +30,12 @@ std::optional<std::string> run_capture(const std::string& command, bool* too_lar
     char buffer[8192];
     std::size_t read = 0;
     while ((read = std::fread(buffer, 1, sizeof buffer, pipe)) > 0) output.append(buffer, read);
-    const bool complete = pclose(pipe) == 0;
+    const bool succeeded = pclose(pipe) == 0;
     if (output.size() > kMaxClipboardBytes) {
         if (too_large != nullptr) *too_large = true;
         return std::nullopt;
     }
-    if (!complete) return std::nullopt;
+    if (!succeeded) return std::nullopt;
     return output;
 }
 
@@ -46,9 +46,12 @@ bool is_safe_type(const std::string& type) {
                std::string::npos;
 }
 
-// What the Wayland clipboard advertises. Empty without a Wayland session.
+bool is_image_type(const std::string& type) { return type.starts_with("image/"); }
+
+// What the Wayland clipboard advertises. Empty without a Wayland session. It is
+// read before the X11 bridge, which truncates large images.
 std::vector<std::string> wayland_types() {
-    if (std::getenv("WAYLAND_DISPLAY") == nullptr) return {};
+    if (!env_value("WAYLAND_DISPLAY")) return {};
     const std::optional<std::string> listed = run_capture("wl-paste --list-types");
     if (!listed) return {};
 
@@ -76,7 +79,7 @@ std::optional<std::string> wayland_bytes(const std::string& type, bool* too_larg
 std::optional<PixelBuffer> wayland_image(std::string* error) {
     bool too_large = false;
     for (const std::string& type : wayland_types()) {
-        if (type.rfind("image/", 0) != 0) continue;
+        if (!is_image_type(type)) continue;
         const std::optional<std::string> bytes = wayland_bytes(type, &too_large);
         if (!bytes) continue;
         LoadResult decoded = load_from_memory(bytes->data(), bytes->size());
@@ -181,7 +184,7 @@ bool Clipboard::get_text(std::string& text) {
 
 bool Clipboard::has_image() {
     for (const std::string& type : wayland_types()) {
-        if (type.rfind("image/", 0) == 0) return true;
+        if (is_image_type(type)) return true;
     }
     return clip::has(clip::image_format());
 }

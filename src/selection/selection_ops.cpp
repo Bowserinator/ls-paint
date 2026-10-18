@@ -2,7 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
+
+#include "utils/math.hpp"
 
 namespace lsp {
 
@@ -10,13 +11,15 @@ namespace {
 
 // A total turn below this is rounding noise, not a turn.
 constexpr float kNoTurnDegrees = 1e-3f;
+// Taken off a turned block's size before it is rounded up, so a size that is
+// a whole number apart from rounding noise stays that number.
+constexpr float kSizeSlack = 1e-3f;
 
 PixelBuffer apply_transform(const PixelBuffer& source, ContentTransform transform) {
     switch (transform) {
         case ContentTransform::RotateCw90: return source.rotated_90_cw();
-        case ContentTransform::RotateCcw90:
-            return source.rotated_90_cw().rotated_90_cw().rotated_90_cw();
-        case ContentTransform::Rotate180: return source.flipped_vertical().flipped_horizontal();
+        case ContentTransform::RotateCcw90: return source.rotated_90_ccw();
+        case ContentTransform::Rotate180: return source.rotated_180();
         case ContentTransform::FlipHorizontal: return source.flipped_horizontal();
         case ContentTransform::FlipVertical: return source.flipped_vertical();
     }
@@ -29,7 +32,7 @@ PixelBuffer bytes_to_pixels(const std::vector<std::uint8_t>& bytes, int width, i
     PixelBuffer pixels(width, height, {0, 0, 0, 255});
     for (int y = 0; y < height; ++y)
         for (int x = 0; x < width; ++x) {
-            const std::uint8_t value = bytes[static_cast<std::size_t>(y) * width + x] ? 255 : 0;
+            const std::uint8_t value = bytes[grid_index(x, y, width)] ? 255 : 0;
             pixels.at(x, y) = {value, value, value, 255};
         }
     return pixels;
@@ -39,7 +42,7 @@ std::vector<std::uint8_t> pixels_to_bytes(const PixelBuffer& pixels) {
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(pixels.width()) * pixels.height(), 0);
     for (int y = 0; y < pixels.height(); ++y)
         for (int x = 0; x < pixels.width(); ++x)
-            bytes[static_cast<std::size_t>(y) * pixels.width() + x] = pixels.at(x, y).r != 0 ? 1 : 0;
+            bytes[grid_index(x, y, pixels.width())] = pixels.at(x, y).r != 0 ? 1 : 0;
     return bytes;
 }
 
@@ -50,7 +53,7 @@ void paste_masked(PixelBuffer& target, const PixelBuffer& source, int x, int y,
         const int target_y = y + j;
         if (target_y < 0 || target_y >= target.height()) continue;
         for (int i = 0; i < source.width(); ++i) {
-            if (mask[static_cast<std::size_t>(j) * source.width() + i] == 0) continue;
+            if (mask[grid_index(i, j, source.width())] == 0) continue;
             const int target_x = x + i;
             if (target_x < 0 || target_x >= target.width()) continue;
             target.at(target_x, target_y) = source.at(i, j);
@@ -75,7 +78,7 @@ void fill_from_bytes(PixelBuffer& pixels, RectI rect, const std::vector<std::uin
     region = region.intersected(pixels.bounds()).intersected(rect);
     for (int y = region.y; y < region.bottom(); ++y)
         for (int x = region.x; x < region.right(); ++x)
-            if (bytes[static_cast<std::size_t>(y - rect.y) * rect.width + (x - rect.x)]) pixels.at(x, y) = fill;
+            if (bytes[grid_index(x - rect.x, y - rect.y, rect.width)]) pixels.at(x, y) = fill;
 }
 
 // Draws a region-local pixel block into `target` where its mask byte is set.
@@ -85,18 +88,23 @@ void stamp_from_bytes(PixelBuffer& target, RectI rect, const PixelBuffer& conten
     region = region.intersected(target.bounds()).intersected(rect);
     for (int y = region.y; y < region.bottom(); ++y)
         for (int x = region.x; x < region.right(); ++x)
-            if (bytes[static_cast<std::size_t>(y - rect.y) * rect.width + (x - rect.x)])
+            if (bytes[grid_index(x - rect.x, y - rect.y, rect.width)])
                 target.at(x, y) = content.at(x - rect.x, y - rect.y);
+}
+
+// The source cell that the cell at `index` of a `size` long axis takes its
+// value from when the axis is stretched or squashed from `source_size`.
+int nearest_source(int index, int source_size, int size) {
+    return std::min(source_size - 1, index * source_size / size);
 }
 
 PixelBuffer resample(const PixelBuffer& source, int width, int height) {
     if (width <= 0 || height <= 0 || source.width() <= 0 || source.height() <= 0) return {};
     PixelBuffer result(width, height);
     for (int y = 0; y < height; ++y) {
-        const int source_y = std::min(source.height() - 1, y * source.height() / height);
+        const int source_y = nearest_source(y, source.height(), height);
         for (int x = 0; x < width; ++x) {
-            const int source_x = std::min(source.width() - 1, x * source.width() / width);
-            result.at(x, y) = source.at(source_x, source_y);
+            result.at(x, y) = source.at(nearest_source(x, source.width(), width), source_y);
         }
     }
     return result;
@@ -107,11 +115,10 @@ std::vector<std::uint8_t> resample(const std::vector<std::uint8_t>& source, int 
     if (width <= 0 || height <= 0 || source_width <= 0 || source_height <= 0 || source.empty()) return {};
     std::vector<std::uint8_t> result(static_cast<std::size_t>(width) * height, 0);
     for (int y = 0; y < height; ++y) {
-        const int source_y = std::min(source_height - 1, y * source_height / height);
+        const int source_y = nearest_source(y, source_height, height);
         for (int x = 0; x < width; ++x) {
-            const int source_x = std::min(source_width - 1, x * source_width / width);
-            result[static_cast<std::size_t>(y) * width + x] =
-                source[static_cast<std::size_t>(source_y) * source_width + source_x];
+            result[grid_index(x, y, width)] =
+                source[grid_index(nearest_source(x, source_width, width), source_y, source_width)];
         }
     }
     return result;
@@ -130,20 +137,16 @@ struct TurnedBlock {
 // block, or from a pixel the mask leaves out, stays unset.
 TurnedBlock turned_block(const PixelBuffer& source, const std::vector<std::uint8_t>& source_mask,
                          float radians) {
-    const float cosine = std::cos(radians);
-    const float sine = std::sin(radians);
     // A quarter turn has to come out exactly as the right-angle transform does,
-    // so a trig value that is merely a rounding crumb away from zero counts as
-    // zero. The sliver below the ceiling keeps a size that should be a whole
-    // number one.
-    const float straight = std::abs(cosine) < 1e-4f ? 0.0f : cosine;
-    const float square = std::abs(sine) < 1e-4f ? 0.0f : sine;
-    const int width = static_cast<int>(
-        std::ceil(std::abs(straight) * source.width() + std::abs(square) * source.height() - 1e-3f));
-    const int height = static_cast<int>(
-        std::ceil(std::abs(square) * source.width() + std::abs(straight) * source.height() - 1e-3f));
+    // which turn_by() takes care of.
+    const auto [straight, square] = turn_by(radians);
+    const int width = ceil_to_int(std::abs(straight) * source.width() +
+                                  std::abs(square) * source.height() - kSizeSlack);
+    const int height = ceil_to_int(std::abs(square) * source.width() +
+                                   std::abs(straight) * source.height() - kSizeSlack);
 
-    TurnedBlock result{PixelBuffer(width, height), std::vector<std::uint8_t>(static_cast<std::size_t>(width) * height, 0)};
+    TurnedBlock result{PixelBuffer(width, height),
+                       std::vector<std::uint8_t>(static_cast<std::size_t>(width) * height, 0)};
     if (source.width() <= 0 || source.height() <= 0) return result;
 
     const float source_centre_x = source.width() / 2.0f;
@@ -156,13 +159,13 @@ TurnedBlock turned_block(const PixelBuffer& source, const std::vector<std::uint8
             // Back from a turned pixel to the pixel its centre came from.
             const float dx = static_cast<float>(x) + 0.5f - centre_x;
             const float dy = static_cast<float>(y) + 0.5f - centre_y;
-            const int source_x = static_cast<int>(std::floor(dx * straight + dy * square + source_centre_x));
-            const int source_y = static_cast<int>(std::floor(-dx * square + dy * straight + source_centre_y));
+            const int source_x = floor_to_int(dx * straight + dy * square + source_centre_x);
+            const int source_y = floor_to_int(-dx * square + dy * straight + source_centre_y);
             if (!source.contains(source_x, source_y)) continue;
-            const std::size_t index = static_cast<std::size_t>(source_y) * source.width() + source_x;
+            const std::size_t index = grid_index(source_x, source_y, source.width());
             if (index >= source_mask.size() || source_mask[index] == 0) continue;
             result.pixels.at(x, y) = source.at(source_x, source_y);
-            result.mask[static_cast<std::size_t>(y) * width + x] = 1;
+            result.mask[grid_index(x, y, width)] = 1;
         }
     }
     return result;
@@ -193,7 +196,7 @@ float wrap_degrees(float degrees) {
 }
 
 void make_transparent(PixelBuffer& pixels, const SelectionMask& mask, RectI region) {
-    fill_selected(pixels, mask, region, {0, 0, 0, 0});
+    fill_selected(pixels, mask, region, kTransparent);
 }
 
 ClipboardContent capture_clipboard(const PixelBuffer& pixels, const SelectionMask& mask) {
@@ -223,8 +226,8 @@ ClipboardContent capture_floating(const FloatingContents& contents, RectI canvas
     clip.mask.resize(static_cast<std::size_t>(clip.width) * clip.height);
     for (int y = 0; y < clip.height; ++y)
         for (int x = 0; x < clip.width; ++x)
-            clip.mask[static_cast<std::size_t>(y) * clip.width + x] =
-                contents.mask[static_cast<std::size_t>(local.y + y) * contents.position.width + (local.x + x)];
+            clip.mask[grid_index(x, y, clip.width)] =
+                contents.mask[grid_index(local.x + x, local.y + y, contents.position.width)];
     return clip;
 }
 
@@ -397,13 +400,12 @@ SelectionEdit rotate_contents(const PixelBuffer& pixels, SelectionMask& mask,
                  : resample(contents.source_mask, contents.source.width(), contents.source.height(),
                             base_width, base_height);
 
-    const float radians = contents.rotation * std::numbers::pi_v<float> / 180.0f;
-    TurnedBlock turned = turned_block(base_pixels, base_mask, radians);
+    TurnedBlock turned = turned_block(base_pixels, base_mask, radians_from_degrees(contents.rotation));
     const float centre_x = contents.turn_bounds.x + base_width / 2.0f;
     const float centre_y = contents.turn_bounds.y + base_height / 2.0f;
-    contents.position = {static_cast<int>(std::lround(centre_x - turned.pixels.width() / 2.0f)),
-                         static_cast<int>(std::lround(centre_y - turned.pixels.height() / 2.0f)),
-                         turned.pixels.width(), turned.pixels.height()};
+    contents.position = {round_to_int(centre_x - turned.pixels.width() / 2.0f),
+                         round_to_int(centre_y - turned.pixels.height() / 2.0f), turned.pixels.width(),
+                         turned.pixels.height()};
     contents.content = std::move(turned.pixels);
     contents.mask = std::move(turned.mask);
     // A run that has turned all the way round is over: the next turn starts a

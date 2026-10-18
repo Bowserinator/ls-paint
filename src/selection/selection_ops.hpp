@@ -11,9 +11,8 @@ namespace lsp {
 
 void make_transparent(PixelBuffer& pixels, const SelectionMask& mask, RectI region);
 
-// In-memory clipboard payload: the pixels under a selection plus the mask that
-// shaped them, kept in region-local coordinates so the same block can be pasted
-// anywhere on the canvas. (Crossing the OS clipboard is M4.)
+// The pixels under a selection plus the mask that shaped them, in region-local
+// coordinates so the same block can be pasted anywhere on the canvas.
 struct ClipboardContent {
     int width = 0;
     int height = 0;

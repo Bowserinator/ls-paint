@@ -1,7 +1,6 @@
 #include "app/app_controller.hpp"
 
 #include <algorithm>
-#include <system_error>
 
 #include "config.hpp"
 #include "history/commands/canvas_resize_command.hpp"
@@ -10,6 +9,7 @@
 #include "io/clipboard.hpp"
 #include "selection/selection_ops.hpp"
 #include "tools/stroke_recorder.hpp"
+#include "utils/path_text.hpp"
 
 namespace lsp {
 
@@ -51,10 +51,9 @@ AppController::AppController()
 
 void AppController::commit_text(Point2f origin, std::string_view text, Rgba8 color) {
     if (text.empty()) return;
-    const std::vector<std::uint8_t> clip = m_context.selection_clip();
-    raster::Target target{m_document.active_layer().pixels, clip.empty() ? nullptr : clip.data()};
+    const LayerTarget layer = m_context.layer_target();
     StrokeRecorder recorder(m_document);
-    const RectI touched = draw_text(target, origin, text, m_text_options, color);
+    const RectI touched = draw_text(layer.target(), origin, text, m_text_options, color);
     if (touched.empty()) return;
     recorder.touch(touched);
     recorder.commit(m_history);
@@ -62,51 +61,29 @@ void AppController::commit_text(Point2f origin, std::string_view text, Rgba8 col
 
 void AppController::resize_canvas(int width, int height, Rgba8 fill) {
     if (width == m_document.width() && height == m_document.height()) return;
-    commit_selection_contents();
-    auto before = m_document.snapshot();
-    SelectionMask selection_before = m_document.selection();
-    m_document.resize(width, height, fill);
-    push_geometry_edit(std::move(before), std::move(selection_before));
+    edit_geometry([&] { m_document.resize(width, height, fill); });
 }
 
 void AppController::crop_to_selection() {
     const RectI region = m_document.selection().bounds();
     if (region.empty()) return;
-    commit_selection_contents();
-    auto before = m_document.snapshot();
-    SelectionMask selection_before = m_document.selection();
-    m_document.crop_to(region);
-    push_geometry_edit(std::move(before), std::move(selection_before));
+    edit_geometry([&] { m_document.crop_to(region); });
 }
 
 void AppController::rotate(CanvasDocument::Rotation rotation) {
-    commit_selection_contents();
-    auto before = m_document.snapshot();
-    SelectionMask selection_before = m_document.selection();
-    m_document.rotate(rotation);
-    push_geometry_edit(std::move(before), std::move(selection_before));
+    edit_geometry([&] { m_document.rotate(rotation); });
 }
 
 void AppController::flip_horizontal() {
-    commit_selection_contents();
-    auto before = m_document.snapshot();
-    SelectionMask selection_before = m_document.selection();
-    m_document.flip_horizontal();
-    push_geometry_edit(std::move(before), std::move(selection_before));
+    edit_geometry([&] { m_document.flip_horizontal(); });
 }
 
 void AppController::flip_vertical() {
-    commit_selection_contents();
-    auto before = m_document.snapshot();
-    SelectionMask selection_before = m_document.selection();
-    m_document.flip_vertical();
-    push_geometry_edit(std::move(before), std::move(selection_before));
+    edit_geometry([&] { m_document.flip_vertical(); });
 }
 
 // Whole-image geometry always ends deselected: the mask belongs to the old
-// geometry, so only undo has anything to put back. The entry keeps that old
-// state alone, and every undo and redo exchanges it with the document's, which
-// is what keeps a layer from being copied on the way in.
+// geometry, so only undo has anything to put back.
 void AppController::push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before) {
     m_history.push(std::make_unique<CanvasResizeCommand>(std::move(before), std::move(selection_before),
                                                          std::nullopt));
@@ -217,20 +194,17 @@ void AppController::transform_selection_contents(ContentTransform transform) {
 }
 
 IoResult AppController::new_document() {
-    m_document.restore({PixelBuffer(kDefaultCanvasWidth, kDefaultCanvasHeight, Rgba8{255, 255, 255, 255})});
+    m_document.restore({PixelBuffer(kDefaultCanvasWidth, kDefaultCanvasHeight, kWhite)});
     m_history.clear();
     m_current_path.clear();
     return IoResult::success();
 }
 
 IoResult AppController::open_document(const std::filesystem::path& path) {
-    std::error_code error;
-    if (std::filesystem::is_directory(path, error)) return IoResult::failure("Not a file: " + path.string());
-
     LoadResult loaded = load(path);
     if (!loaded.ok) return IoResult::failure(loaded.error);
     if (loaded.pixels.width() > kMaxCanvasDimension || loaded.pixels.height() > kMaxCanvasDimension)
-        return IoResult::failure("Image is larger than the canvas limit: " + path.string());
+        return IoResult::failure("Image is larger than the canvas limit: " + utf8_from_path(path));
 
     m_document.restore({std::move(loaded.pixels)});
     m_history.clear();
@@ -241,9 +215,7 @@ IoResult AppController::open_document(const std::filesystem::path& path) {
 IoResult AppController::save_document(const std::filesystem::path& path, ImageFormat format) {
     (void)m_document.flush();
     std::string error;
-    // Qualified: inside a member named save_document the free function is still
-    // found, but naming it makes the intent obvious.
-    if (!lsp::save(m_document, path, format, &error)) return IoResult::failure(error);
+    if (!save(m_document, path, format, &error)) return IoResult::failure(error);
     m_current_path = path;
     m_history.mark_clean();
     return IoResult::success();
@@ -252,12 +224,12 @@ IoResult AppController::save_document(const std::filesystem::path& path, ImageFo
 IoResult AppController::save_document() {
     if (!has_current_path()) return IoResult::failure("No file name yet");
     const std::optional<ImageFormat> format = format_from_extension(m_current_path);
-    if (!format) return IoResult::failure("Unknown file extension: " + m_current_path.string());
+    if (!format) return IoResult::failure("Unknown file extension: " + utf8_from_path(m_current_path));
     return save_document(m_current_path, *format);
 }
 
 std::string AppController::display_name() const {
-    return has_current_path() ? m_current_path.filename().string() : "untitled";
+    return has_current_path() ? utf8_from_path(m_current_path.filename()) : "untitled";
 }
 
 std::filesystem::path AppController::default_directory() const {
@@ -290,38 +262,31 @@ IoResult AppController::paste_from_clipboard() {
         if (!error.empty()) return IoResult::failure(error);
         return IoResult::failure("The clipboard does not contain an image" + clipboard_contents_note());
     }
-    return paste_pixels(std::move(*image));
+    return paste_image(std::move(*image));
 }
-
-IoResult AppController::paste_image(PixelBuffer image) { return paste_pixels(std::move(image)); }
 
 IoResult AppController::paste_from_file(const std::filesystem::path& path) {
     LoadResult loaded = load(path);
     if (!loaded.ok) return IoResult::failure(loaded.error);
-    return paste_pixels(std::move(loaded.pixels));
+    return paste_image(std::move(loaded.pixels));
 }
 
-IoResult AppController::paste_pixels(PixelBuffer image) {
+IoResult AppController::paste_image(PixelBuffer image) {
     if (image.width() <= 0 || image.height() <= 0) return IoResult::failure("There is nothing to paste");
     if (image.width() > kMaxCanvasDimension || image.height() > kMaxCanvasDimension)
         return IoResult::failure("The image is larger than the canvas limit");
 
-    commit_selection_contents();
     const int width = std::max(m_document.width(), image.width());
     const int height = std::max(m_document.height(), image.height());
-    std::vector<PixelBuffer> before = m_document.snapshot();
-    SelectionMask selection_before = m_document.selection();
 
-    // Paint grows the canvas only where the pasted image needs it. The block
-    // itself only hovers on it: nothing is painted over until the paste is
-    // applied, which is what lets it be moved and resized first.
-    if (width != m_document.width() || height != m_document.height())
-        m_document.resize(width, height, Rgba8{255, 255, 255, 255});
-    install_floating(float_block(std::move(image), {}, 0, 0));
-
-    // A whole-layer snapshot is what a canvas change needs: undo has to restore
-    // the pixels, the previous size and the floating block together.
-    push_geometry_edit(std::move(before), std::move(selection_before));
+    // The canvas grows only where the pasted image needs it. The block itself
+    // only hovers on it: nothing is painted over until the paste is applied,
+    // which is what lets it be moved and resized first.
+    edit_geometry([&] {
+        if (width != m_document.width() || height != m_document.height())
+            m_document.resize(width, height, kWhite);
+        install_floating(float_block(std::move(image), {}, 0, 0));
+    });
     return IoResult::success();
 }
 

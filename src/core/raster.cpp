@@ -2,16 +2,19 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "core/blend_modes.hpp"
+#include "utils/math.hpp"
+#include "utils/scanline.hpp"
 
 namespace lsp::raster {
 
 namespace {
 
-// Outline thickness is stamped as a square of this many pixels, so an even
-// thickness leans half a pixel off the mathematical edge — the same trade
-// mspaint makes and the reason `bounds_*` round outward.
+// An outline is stamped as a square of `size` pixels, so an even thickness
+// leans half a pixel off the mathematical edge. That is the same trade mspaint
+// makes, and the reason `bounds_*` round outward.
 struct Stamp {
     int offset;
     int size;
@@ -32,12 +35,9 @@ void paint_pixel(Target target, int x, int y, Rgba8 color) {
     target.pixels.at(x, y) = blend_fn_for(BlendMode::Normal)(target.pixels.at(x, y), color, 1.0f);
 }
 
-void blend_pixel(Target target, int x, int y, Rgba8 color, float coverage) {
-    if (!target.allows(x, y)) return;
-    Rgba8 ink = color;
-    ink.a = static_cast<std::uint8_t>(static_cast<float>(color.a) * coverage + 0.5f);
-    if (ink.a == 0) return;
-    target.pixels.at(x, y) = blend_fn_for(BlendMode::Normal)(target.pixels.at(x, y), ink, 1.0f);
+void paint_pixel_with_coverage(Target target, int x, int y, Rgba8 color, float coverage) {
+    color.a = static_cast<std::uint8_t>(static_cast<float>(color.a) * coverage + 0.5f);
+    paint_pixel(target, x, y, color);
 }
 
 void paint_span(Target target, int y, int x0, int x1, Rgba8 color) {
@@ -51,10 +51,27 @@ void stamp(Target target, int cx, int cy, int thickness, Rgba8 color) {
             paint_pixel(target, cx + stamp_size.offset + dx, cy + stamp_size.offset + dy, color);
 }
 
-bool inside_ellipse(float x, float y, float cx, float cy, float rx, float ry) {
+struct Ellipse {
+    float cx;
+    float cy;
+    float rx;
+    float ry;
+};
+
+Ellipse ellipse_in(RectI box) {
+    const float rx = static_cast<float>(box.width) / 2.0f;
+    const float ry = static_cast<float>(box.height) / 2.0f;
+    return {static_cast<float>(box.x) + rx, static_cast<float>(box.y) + ry, rx, ry};
+}
+
+// Whether the pixel center (x, y) lies inside `ellipse` shrunk by `inset` on
+// every side.
+bool inside_ellipse(const Ellipse& ellipse, float x, float y, float inset) {
+    const float rx = ellipse.rx - inset;
+    const float ry = ellipse.ry - inset;
     if (rx <= 0.0f || ry <= 0.0f) return false;
-    const float dx = (x - cx) / rx;
-    const float dy = (y - cy) / ry;
+    const float dx = (x - ellipse.cx) / rx;
+    const float dy = (y - ellipse.cy) / ry;
     return dx * dx + dy * dy <= 1.0f;
 }
 
@@ -90,14 +107,14 @@ void paint_where(Target target, RectI box, Rgba8 color, InsideFn inside) {
 bool Target::allows(int x, int y) const noexcept {
     if (!pixels.contains(x, y)) return false;
     if (clip_mask == nullptr) return true;
-    return clip_mask[static_cast<std::size_t>(y) * pixels.width() + x] != 0;
+    return clip_mask[grid_index(x, y, pixels.width())] != 0;
 }
 
 void draw_line(Target target, Point2f a, Point2f b, int thickness, Rgba8 color) {
-    int x0 = static_cast<int>(std::lround(a.x));
-    int y0 = static_cast<int>(std::lround(a.y));
-    const int x1 = static_cast<int>(std::lround(b.x));
-    const int y1 = static_cast<int>(std::lround(b.y));
+    int x0 = round_to_int(a.x);
+    int y0 = round_to_int(a.y);
+    const int x1 = round_to_int(b.x);
+    const int y1 = round_to_int(b.y);
 
     const int dx = std::abs(x1 - x0);
     const int dy = -std::abs(y1 - y0);
@@ -165,27 +182,21 @@ void draw_rounded_rect_outline(Target target, RectI rect, int radius, int thickn
 
 void draw_ellipse_fill(Target target, RectI box, Rgba8 color) {
     if (box.empty()) return;
-    const float cx = static_cast<float>(box.x) + static_cast<float>(box.width) / 2.0f;
-    const float cy = static_cast<float>(box.y) + static_cast<float>(box.height) / 2.0f;
-    const float rx = static_cast<float>(box.width) / 2.0f;
-    const float ry = static_cast<float>(box.height) / 2.0f;
+    const Ellipse ellipse = ellipse_in(box);
     paint_where(target, box, color, [&](int x, int y) {
-        return inside_ellipse(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, cx, cy, rx, ry);
+        return inside_ellipse(ellipse, static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, 0.0f);
     });
 }
 
 void draw_ellipse_outline(Target target, RectI box, int thickness, Rgba8 color) {
     if (box.empty()) return;
     const int t = std::max(1, thickness);
-    const float cx = static_cast<float>(box.x) + static_cast<float>(box.width) / 2.0f;
-    const float cy = static_cast<float>(box.y) + static_cast<float>(box.height) / 2.0f;
-    const float rx = static_cast<float>(box.width) / 2.0f;
-    const float ry = static_cast<float>(box.height) / 2.0f;
+    const Ellipse ellipse = ellipse_in(box);
     paint_where(target, bounds_rect(box, t), color, [&](int x, int y) {
         const float px = static_cast<float>(x) + 0.5f;
         const float py = static_cast<float>(y) + 0.5f;
-        return inside_ellipse(px, py, cx, cy, rx, ry) &&
-               !inside_ellipse(px, py, cx, cy, rx - static_cast<float>(t), ry - static_cast<float>(t));
+        return inside_ellipse(ellipse, px, py, 0.0f) &&
+               !inside_ellipse(ellipse, px, py, static_cast<float>(t));
     });
 }
 
@@ -193,8 +204,7 @@ void draw_polyline(Target target, std::span<const Point2f> points, int thickness
                    bool closed) {
     if (points.empty()) return;
     if (points.size() == 1) {
-        stamp(target, static_cast<int>(std::lround(points[0].x)), static_cast<int>(std::lround(points[0].y)),
-              thickness, color);
+        stamp(target, round_to_int(points[0].x), round_to_int(points[0].y), thickness, color);
         return;
     }
     for (std::size_t i = 0; i + 1 < points.size(); ++i)
@@ -208,18 +218,10 @@ void draw_polygon_fill(Target target, std::span<const Point2f> points, Rgba8 col
     std::vector<float> crossings;
     for (int y = box.y; y < box.bottom(); ++y) {
         const float scan = static_cast<float>(y) + 0.5f;
-        crossings.clear();
-        for (std::size_t i = 0; i < points.size(); ++i) {
-            const Point2f& p = points[i];
-            const Point2f& q = points[(i + 1) % points.size()];
-            // Half-open edges, so a vertex on the scanline is counted once.
-            if ((p.y <= scan) == (q.y <= scan)) continue;
-            crossings.push_back(p.x + (scan - p.y) / (q.y - p.y) * (q.x - p.x));
-        }
-        std::sort(crossings.begin(), crossings.end());
+        polygon_crossings(points, scan, crossings);
         for (std::size_t i = 0; i + 1 < crossings.size(); i += 2) {
-            const int x0 = static_cast<int>(std::ceil(crossings[i] - 0.5f));
-            const int x1 = static_cast<int>(std::floor(crossings[i + 1] - 0.5f));
+            const int x0 = ceil_to_int(crossings[i] - 0.5f);
+            const int x1 = floor_to_int(crossings[i + 1] - 0.5f);
             if (x0 <= x1) paint_span(target, y, x0, x1, color);
         }
     }
@@ -228,22 +230,20 @@ void draw_polygon_fill(Target target, std::span<const Point2f> points, Rgba8 col
 void draw_glyph(Target target, int x, int y, int width, int height, int stride,
                 const std::uint8_t* coverage, Rgba8 color) {
     if (coverage == nullptr || width <= 0 || height <= 0) return;
-    const float scale = 1.0f / 255.0f;
     for (int row = 0; row < height; ++row) {
         const std::uint8_t* line = coverage + static_cast<std::size_t>(row) * stride;
         for (int column = 0; column < width; ++column) {
             if (line[column] == 0) continue;
-            blend_pixel(target, x + column, y + row, color,
-                        static_cast<float>(line[column]) * scale);
+            paint_pixel_with_coverage(target, x + column, y + row, color, unit_from_byte(line[column]));
         }
     }
 }
 
 RectI bounds_line(Point2f a, Point2f b, int thickness) {
-    const int x0 = static_cast<int>(std::lround(a.x));
-    const int y0 = static_cast<int>(std::lround(a.y));
-    const int x1 = static_cast<int>(std::lround(b.x));
-    const int y1 = static_cast<int>(std::lround(b.y));
+    const int x0 = round_to_int(a.x);
+    const int y0 = round_to_int(a.y);
+    const int x1 = round_to_int(b.x);
+    const int y1 = round_to_int(b.y);
     return bounds_rect({std::min(x0, x1), std::min(y0, y1), std::abs(x1 - x0) + 1, std::abs(y1 - y0) + 1},
                        thickness);
 }
@@ -266,10 +266,9 @@ RectI bounds_points(std::span<const Point2f> points, int thickness) {
         max_x = std::max(max_x, point.x);
         max_y = std::max(max_y, point.y);
     }
-    return bounds_rect({static_cast<int>(std::floor(min_x)), static_cast<int>(std::floor(min_y)),
-                        static_cast<int>(std::ceil(max_x)) - static_cast<int>(std::floor(min_x)) + 1,
-                        static_cast<int>(std::ceil(max_y)) - static_cast<int>(std::floor(min_y)) + 1},
-                       thickness);
+    const int left = floor_to_int(min_x);
+    const int top = floor_to_int(min_y);
+    return bounds_rect({left, top, ceil_to_int(max_x) - left + 1, ceil_to_int(max_y) - top + 1}, thickness);
 }
 
 }  // namespace lsp::raster

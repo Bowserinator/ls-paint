@@ -64,7 +64,7 @@ export global UserState  {
     // look forward to: what the gesture has done so far is abandoned.
     callback pointer-cancel;
     callback canvas-resize(length, length);
-    callback key-pressed(string, bool, bool);
+    callback key-pressed(string, bool, bool, bool);
 
     callback select-shape(ESelectionType);
     callback select-all();
@@ -136,6 +136,12 @@ export global UserState  {
     // The paper colour under the pointer as "(r,g,b) #RRGGBB", published by the
     // view; blank while the pointer is off the paper.
     in-out property <string> hover-color-text: "";
+
+    // The pointer's marks over the paper, each pixel coloured by the paper under
+    // it, and half the side of that square image in screen pixels. The image is
+    // blank and the reach is zero while the pointer draws nothing.
+    in-out property <image> cursor-overlay;
+    in-out property <length> cursor-overlay-reach: 0px;
 }
 
 // The zoom ladder the status bar walks: 25% steps below 100, 100% steps
@@ -144,6 +150,11 @@ export global UserState  {
 // reads one back; whole numbers land exactly on notches either way, so
 // 100% sits at position 4 rather than in the middle.
 export global ZoomScale {
+    // The zoom limits, and the factor one zoom step multiplies or divides by.
+    out property<float> min-zoom: 0.125;
+    out property<float> max-zoom: 7.0;
+    out property<float> step: 1.25;
+
     public pure function pct-to-pos(pct: float) -> float {
         if (pct <= 25.0) {
             return (pct - 12.5) / 12.5;
@@ -218,7 +229,7 @@ export global DocumentState {
 }
 
 export global ToolOptions {
-    in-out property <length> brush-size: 1px;
+    in-out property <length> brush-size: 8px;
     // The brush type picks the tip and how tightly the stamps are laid down on
     // the next stroke; the plain brush keeps the settings below.
     in-out property <EBrushKind> brush-kind: BRUSH;

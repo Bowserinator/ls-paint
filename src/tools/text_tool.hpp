@@ -26,7 +26,7 @@ struct TextOptions {
     // An opaque block fills the band behind each line with `background` before
     // the glyphs go in.
     bool opaque_background = false;
-    Rgba8 background{255, 255, 255, 255};
+    Rgba8 background = kWhite;
 };
 
 // The text box the overlay is editing: where a press placed it, and the colour

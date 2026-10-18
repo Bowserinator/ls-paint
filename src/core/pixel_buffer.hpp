@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "core/types.hpp"
+#include "utils/math.hpp"
 
 namespace lsp {
 
@@ -12,7 +13,7 @@ class PixelBuffer {
 public:
     PixelBuffer() = default;
 
-    PixelBuffer(int width, int height, Rgba8 fill = {0, 0, 0, 0})
+    PixelBuffer(int width, int height, Rgba8 fill = kTransparent)
         : m_width(width), m_height(height), m_pixels(static_cast<std::size_t>(width) * height, fill) {}
 
     [[nodiscard]] int width() const noexcept { return m_width; }
@@ -24,11 +25,11 @@ public:
     }
 
     [[nodiscard]] std::span<Rgba8> row(int y) {
-        return {m_pixels.data() + static_cast<std::size_t>(y) * m_width, static_cast<std::size_t>(m_width)};
+        return {m_pixels.data() + grid_index(0, y, m_width), static_cast<std::size_t>(m_width)};
     }
 
     [[nodiscard]] std::span<const Rgba8> row(int y) const {
-        return {m_pixels.data() + static_cast<std::size_t>(y) * m_width, static_cast<std::size_t>(m_width)};
+        return {m_pixels.data() + grid_index(0, y, m_width), static_cast<std::size_t>(m_width)};
     }
 
     [[nodiscard]] Rgba8& at(int x, int y) { return row(y)[static_cast<std::size_t>(x)]; }
@@ -40,6 +41,8 @@ public:
     void blit(int x, int y, const PixelBuffer& source);
 
     [[nodiscard]] PixelBuffer rotated_90_cw() const;
+    [[nodiscard]] PixelBuffer rotated_90_ccw() const;
+    [[nodiscard]] PixelBuffer rotated_180() const;
     [[nodiscard]] PixelBuffer flipped_horizontal() const;
     [[nodiscard]] PixelBuffer flipped_vertical() const;
 
@@ -49,8 +52,7 @@ private:
     std::vector<Rgba8> m_pixels;
 };
 
-// Bytes one buffer of this size holds, for callers that budget their own
-// memory: the undo stack measures its entries with this.
+// Bytes one buffer of this size holds.
 [[nodiscard]] inline std::size_t pixel_bytes(const PixelBuffer& pixels) noexcept {
     return static_cast<std::size_t>(pixels.width()) * static_cast<std::size_t>(pixels.height()) *
            sizeof(Rgba8);

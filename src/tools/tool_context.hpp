@@ -1,7 +1,13 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <utility>
+#include <vector>
+
 #include "brushes/brush.hpp"
 #include "core/canvas_document.hpp"
+#include "core/raster.hpp"
 #include "history/commands/selection_edit_command.hpp"
 #include "history/history_stack.hpp"
 #include "tools/shape_tool.hpp"
@@ -60,6 +66,17 @@ struct ToolUiState {
     RotatePreview rotate;
 };
 
+// The active layer as a raster target that the selection holds back. It owns
+// the clip bytes the target points into, so it has to outlive the target.
+struct LayerTarget {
+    std::vector<std::uint8_t> clip;
+    PixelBuffer& pixels;
+
+    [[nodiscard]] raster::Target target() const {
+        return {pixels, clip.empty() ? nullptr : clip.data()};
+    }
+};
+
 // Everything a tool is allowed to reach: the document it edits, the history it
 // records into, the brush/colors it paints with, and the selection shape the
 // ribbon is currently showing.
@@ -95,6 +112,10 @@ struct ToolContext {
     [[nodiscard]] std::vector<std::uint8_t> selection_clip() const {
         if (!document.selection().active()) return {};
         return document.selection().extract_region(document.bounds());
+    }
+
+    [[nodiscard]] LayerTarget layer_target() const {
+        return {selection_clip(), document.active_layer().pixels};
     }
 };
 

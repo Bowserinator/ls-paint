@@ -21,8 +21,8 @@ public:
     [[nodiscard]] LayerStack& layers() noexcept { return m_layers; }
     [[nodiscard]] SelectionMask& selection() noexcept { return m_selection; }
     [[nodiscard]] const SelectionMask& selection() const noexcept { return m_selection; }
-    // Selection contents that are being rotated/moved/resized without having
-    // been written to the layer yet. Empty between commits.
+    // Selection contents that have not been written to the layer yet. Empty
+    // between commits.
     [[nodiscard]] std::optional<FloatingContents>& floating() noexcept { return m_floating; }
     [[nodiscard]] const std::optional<FloatingContents>& floating() const noexcept { return m_floating; }
     [[nodiscard]] Layer& active_layer() { return m_layers.active(); }
@@ -33,9 +33,7 @@ public:
 
     [[nodiscard]] std::vector<PixelBuffer> snapshot() const;
     void restore(std::vector<PixelBuffer> pixels);
-    // Exchanges the layer pixels with another stack, for an undo entry that
-    // hands a whole state back without copying it. The flattened image is
-    // rebuilt from scratch.
+    // Exchanges the layer pixels with `pixels` without copying them.
     void swap_pixels(std::vector<PixelBuffer>& pixels);
     void resize(int width, int height, Rgba8 fill);
     void crop_to(RectI region);
@@ -46,6 +44,10 @@ public:
     void flip_vertical();
 
 private:
+    // Replaces the flattened image with an empty one the size of the layers and
+    // marks all of it dirty.
+    void rebuild_flattened();
+
     LayerStack m_layers;
     PixelBuffer m_flattened;
     RectI m_dirty;

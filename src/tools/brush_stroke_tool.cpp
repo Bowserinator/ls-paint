@@ -20,6 +20,7 @@ void BrushStrokeTool::on_pointer_move(ToolContext& context, Point2f position) {
 void BrushStrokeTool::on_pointer_up(ToolContext& context, Point2f position) {
     if (!m_recorder) return;
     on_pointer_move(context, position);
+    m_recorder->touch(m_engine->finish(context.document.active_layer().pixels));
     m_recorder->commit(context.history);
     m_recorder.reset();
     m_engine.reset();

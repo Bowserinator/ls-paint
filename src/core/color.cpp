@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
-#include <charconv>
 #include <cmath>
 #include <cstdio>
+
+#include "utils/math.hpp"
+#include "utils/text.hpp"
 
 namespace lsp {
 
@@ -13,20 +15,6 @@ float wrap_hue(float hue) noexcept {
 }
 
 namespace {
-
-std::uint8_t to_byte(float value) {
-    return static_cast<std::uint8_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
-}
-
-std::string_view trim(std::string_view text) {
-    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0) {
-        text.remove_prefix(1);
-    }
-    while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0) {
-        text.remove_suffix(1);
-    }
-    return text;
-}
 
 int hex_value(char digit) {
     if (digit >= '0' && digit <= '9') return digit - '0';
@@ -57,13 +45,9 @@ std::optional<Rgba8> parse_tuple(std::string_view text) {
     while (!text.empty()) {
         if (index == 3) return std::nullopt;
         const std::size_t comma = text.find(',');
-        const std::string_view field = trim(text.substr(0, comma));
-        int value = 0;
-        const auto [end, error] = std::from_chars(field.data(), field.data() + field.size(), value);
-        if (error != std::errc{} || end != field.data() + field.size() || value < 0 || value > 255) {
-            return std::nullopt;
-        }
-        *fields[index] = static_cast<std::uint8_t>(value);
+        const std::optional<int> value = parse_int(trimmed(text.substr(0, comma)));
+        if (!value || *value < 0 || *value > 255) return std::nullopt;
+        *fields[index] = static_cast<std::uint8_t>(*value);
         ++index;
         if (comma == std::string_view::npos) {
             text = {};
@@ -78,9 +62,9 @@ std::optional<Rgba8> parse_tuple(std::string_view text) {
 }  // namespace
 
 Hsv hsv_from_rgb(Rgba8 color) noexcept {
-    const float red = static_cast<float>(color.r) / 255.0f;
-    const float green = static_cast<float>(color.g) / 255.0f;
-    const float blue = static_cast<float>(color.b) / 255.0f;
+    const float red = unit_from_byte(color.r);
+    const float green = unit_from_byte(color.g);
+    const float blue = unit_from_byte(color.b);
     const float high = std::max({red, green, blue});
     const float low = std::min({red, green, blue});
     const float span = high - low;
@@ -121,7 +105,8 @@ Rgba8 rgb_from_hsv(const Hsv& color) noexcept {
         default: red = chroma; blue = second; break;
     }
     const float base = value - chroma;
-    return Rgba8{to_byte(red + base), to_byte(green + base), to_byte(blue + base), 255};
+    return Rgba8{byte_from_unit(red + base), byte_from_unit(green + base), byte_from_unit(blue + base),
+                 255};
 }
 
 std::string to_hex(Rgba8 color) {
@@ -131,9 +116,9 @@ std::string to_hex(Rgba8 color) {
 }
 
 std::string clean_hex_entry(std::string_view text) {
-    const std::string_view body = trim(text);
+    const std::string_view body = trimmed(text);
     if (body.empty() || body.front() != '#') return std::string(text);
-    const std::string_view digits = trim(body.substr(1));
+    const std::string_view digits = trimmed(body.substr(1));
     if (digits.size() == 3 && parse_hex(digits)) {
         std::string doubled;
         for (const char digit : digits) {
@@ -146,9 +131,9 @@ std::string clean_hex_entry(std::string_view text) {
 }
 
 std::optional<Rgba8> parse_color(std::string_view text) {
-    text = trim(text);
+    text = trimmed(text);
     if (text.empty()) return std::nullopt;
-    if (text.front() == '#') return parse_hex(trim(text.substr(1)));
+    if (text.front() == '#') return parse_hex(trimmed(text.substr(1)));
     if (text.find(',') != std::string_view::npos) return parse_tuple(text);
     return parse_hex(text);
 }

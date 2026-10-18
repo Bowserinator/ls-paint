@@ -4,15 +4,17 @@
 #include <cmath>
 #include <cstdint>
 
+#include "utils/math.hpp"
+
 namespace lsp::warp {
 
 Rgba8 sample_bilinear(const PixelBuffer& source, float x, float y) noexcept {
-    if (source.width() <= 0 || source.height() <= 0) return Rgba8{0, 0, 0, 0};
+    if (source.width() <= 0 || source.height() <= 0) return kTransparent;
 
     const float fx = std::clamp(x - 0.5f, 0.0f, static_cast<float>(source.width() - 1));
     const float fy = std::clamp(y - 0.5f, 0.0f, static_cast<float>(source.height() - 1));
-    const int x0 = static_cast<int>(std::floor(fx));
-    const int y0 = static_cast<int>(std::floor(fy));
+    const int x0 = floor_to_int(fx);
+    const int y0 = floor_to_int(fy);
     const int x1 = std::min(x0 + 1, source.width() - 1);
     const int y1 = std::min(y0 + 1, source.height() - 1);
     const float tx = fx - static_cast<float>(x0);
@@ -29,13 +31,13 @@ Rgba8 sample_bilinear(const PixelBuffer& source, float x, float y) noexcept {
     float alpha = 0.0f;
     for (int i = 0; i < 4; ++i) {
         const float weight = weights[i];
-        const float tap_alpha = static_cast<float>(taps[i].a) / 255.0f;
+        const float tap_alpha = unit_from_byte(taps[i].a);
         red += weight * static_cast<float>(taps[i].r) * tap_alpha;
         green += weight * static_cast<float>(taps[i].g) * tap_alpha;
         blue += weight * static_cast<float>(taps[i].b) * tap_alpha;
         alpha += weight * tap_alpha;
     }
-    if (alpha <= 0.0f) return Rgba8{0, 0, 0, 0};
+    if (alpha <= 0.0f) return kTransparent;
 
     const auto channel = [alpha](float value) {
         return static_cast<std::uint8_t>(std::clamp(value / alpha + 0.5f, 0.0f, 255.0f));

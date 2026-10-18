@@ -117,9 +117,7 @@ std::vector<FontFace> load_faces(IDWriteFontCollection* collection) {
         faces.push_back({name, font_file(font.get())});
     }
 
-    std::ranges::sort(faces, [](const FontFace& left, const FontFace& right) {
-        return font_family_key(left.family) < font_family_key(right.family);
-    });
+    sort_faces(faces);
     return faces;
 }
 
@@ -131,9 +129,8 @@ public:
                                 reinterpret_cast<IUnknown**>(factory.put())) != S_OK) {
             return;
         }
-        ComRef<IDWriteFontCollection> collection;
-        if (factory->GetSystemFontCollection(collection.put()) != S_OK) return;
-        m_faces = load_faces(collection.get());
+        if (factory->GetSystemFontCollection(m_collection.put()) != S_OK) return;
+        m_faces = load_faces(m_collection.get());
     }
 
     [[nodiscard]] std::vector<FontFace> faces() const override { return m_faces; }
@@ -144,7 +141,27 @@ public:
         return match == m_faces.end() ? std::string{} : match->path;
     }
 
+    [[nodiscard]] std::string face_path_covering(char32_t codepoint) const override {
+        if (m_collection.get() == nullptr) return {};
+        const UINT32 family_count = m_collection->GetFontFamilyCount();
+        for (UINT32 index = 0; index < family_count; ++index) {
+            ComRef<IDWriteFontFamily> family;
+            if (m_collection->GetFontFamily(index, family.put()) != S_OK) continue;
+            ComRef<IDWriteFont> font;
+            if (family->GetFont(0, font.put()) != S_OK) continue;
+            BOOL has_glyph = FALSE;
+            if (font->HasCharacter(static_cast<UINT32>(codepoint), &has_glyph) != S_OK ||
+                has_glyph == FALSE) {
+                continue;
+            }
+            std::string path = font_file(font.get());
+            if (!path.empty()) return path;
+        }
+        return {};
+    }
+
 private:
+    ComRef<IDWriteFontCollection> m_collection;
     std::vector<FontFace> m_faces;
 };
 

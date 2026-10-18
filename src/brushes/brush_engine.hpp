@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "brushes/brush.hpp"
 #include "core/pixel_buffer.hpp"
@@ -16,25 +18,33 @@ public:
           m_color(color),
           m_selection(selection),
           m_source(source),
-          m_profile(effective_profile(brush)) {}
+          m_profile(effective_profile(brush)),
+          m_loaded(color) {}
 
     RectI stroke_to(PixelBuffer& target, Point2f to);
+
+    // Ends the stroke. A stroke that never travelled far enough to show its
+    // direction still leaves a mark.
+    RectI finish(PixelBuffer& target);
 
 private:
     // The nib this stroke lays down. The plain brush takes its tip and its
     // stamp spacing from the tool options; every other type brings its own.
     [[nodiscard]] static BrushProfile effective_profile(const Brush& brush);
 
-    // The types that change the pixels under the tip instead of laying ink on
-    // top of them, so their stamp mixes in what they sampled.
-    [[nodiscard]] static bool is_effect(BrushKind kind) noexcept;
-
     // Prepares whatever the sampled kind reads for the whole stroke.
     void prepare_source();
 
-    // Stamps the tip at `center`, having moved `move` since the last stamp:
-    // the pushing kind displaces what it covers by that much.
-    RectI stamp(PixelBuffer& target, Point2f center, Point2f move) const;
+    // Turns the tip towards the way the stroke is heading.
+    void steer(float dx, float dy);
+
+    // Stamps the tip at `center`, `path` along the stroke and having moved
+    // `move` since the stroke began: the pushing kind displaces what it covers
+    // by that much.
+    RectI stamp(PixelBuffer& target, Point2f center, Point2f move, float path);
+
+    // Mixes the paint on the tip with the colours it is passing over.
+    void pick_up(const PixelBuffer& canvas, float cx, float cy, float radius);
 
     Brush m_brush;
     Rgba8 m_color;
@@ -46,6 +56,14 @@ private:
     std::optional<Point2f> m_last;
     Point2f m_start;
     float m_carry = 0.0f;
+    float m_path = 0.0f;
+    Point2f m_dir{1.0f, 0.0f};
+    bool m_oriented = false;
+    bool m_dab = false;
+    std::uint32_t m_seed = 0;
+    std::uint32_t m_stamps = 0;
+    Rgba8 m_loaded;
+    std::vector<std::uint8_t> m_coverage;
 };
 
 }  // namespace lsp

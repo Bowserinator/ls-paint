@@ -14,9 +14,6 @@ export global Styles {
     // buttons' bottom edge (the row height less its padding) plus that gap.
     out property<length> bar-dropdown-y: bar-button-height - bar-padding + bar-dropdown-gap + 8px;
     out property<length> bar-vertical-btn-width: 54px;
-    // The Outline and Fill buttons beside the shape grid, wide enough for the
-    // longer caption.
-    out property<length> bar-shape-mode-btn-width: 66px;
 
     // Ribbon overflow. A group merges into a single dropdown button once the
     // ribbon is too narrow to hold it expanded; the order they go in (Shapes,
@@ -127,7 +124,7 @@ export global Styles {
     // The Shapes dropdown holds the glyph grid and, beside it, the outline and
     // fill buttons.
     out property<length> bar-shapes-menu-width:
-        2px + 6px + 7 * (bar-small-icon-size + 6px) + 6px + bar-shape-mode-btn-width + 6px;
+        2px + 6px + 7 * (bar-small-icon-size + 6px) + 6px + ribbon-shape-mode-width + 6px;
 
     // Height of the strip a tool can show between the ribbon and the paper.
     out property<length> text-options-height: 28px;

@@ -7,8 +7,21 @@
 
 namespace lsp {
 
+namespace {
+
+// One buffer per layer, each made from the layer's own pixels.
+template <typename MakeFn>
+std::vector<PixelBuffer> map_layers(const LayerStack& layers, MakeFn make) {
+    std::vector<PixelBuffer> result;
+    result.reserve(layers.layers().size());
+    for (const Layer& layer : layers.layers()) result.push_back(make(layer.pixels));
+    return result;
+}
+
+}  // namespace
+
 CanvasDocument::CanvasDocument(int width, int height) : m_flattened(width, height), m_selection(width, height) {
-    m_layers.add({"Background", PixelBuffer(width, height, Rgba8{255, 255, 255, 255})});
+    m_layers.add({"Background", PixelBuffer(width, height, kWhite)});
     mark_dirty(bounds());
 }
 
@@ -28,9 +41,14 @@ std::optional<RectI> CanvasDocument::flush() {
 }
 
 std::vector<PixelBuffer> CanvasDocument::snapshot() const {
-    std::vector<PixelBuffer> result;
-    for (const Layer& layer : m_layers.layers()) result.push_back(layer.pixels);
-    return result;
+    return map_layers(m_layers, [](const PixelBuffer& pixels) { return pixels; });
+}
+
+void CanvasDocument::rebuild_flattened() {
+    const PixelBuffer& base = m_layers.at(0).pixels;
+    m_flattened = PixelBuffer(base.width(), base.height());
+    m_dirty = {};
+    mark_dirty(bounds());
 }
 
 void CanvasDocument::restore(std::vector<PixelBuffer> pixels) {
@@ -39,33 +57,26 @@ void CanvasDocument::restore(std::vector<PixelBuffer> pixels) {
     const std::size_t count = std::min(pixels.size(), m_layers.layers().size());
     if (count == 0) return;
     for (std::size_t i = 0; i < count; ++i) m_layers.at(i).pixels = std::move(pixels[i]);
-    const PixelBuffer& base = m_layers.at(0).pixels;
-    m_flattened = PixelBuffer(base.width(), base.height());
+    rebuild_flattened();
     // Restoring pixels says nothing about the selection: geometry commands
     // hand the mask back themselves, anything else starts deselected.
-    m_selection = SelectionMask(base.width(), base.height());
+    m_selection = SelectionMask(width(), height());
     m_floating.reset();
-    m_dirty = {};
-    mark_dirty(bounds());
 }
 
 void CanvasDocument::swap_pixels(std::vector<PixelBuffer>& pixels) {
-    // One buffer per layer, as in restore(): anything else would leave part of
-    // the stack at the old size. The selection and the floating block are the
-    // caller's business; the geometry entry hands both back itself.
+    // One buffer per layer, as in restore(). The selection and the floating
+    // block are the caller's business.
     const std::size_t count = std::min(pixels.size(), m_layers.layers().size());
     if (count == 0) return;
     for (std::size_t i = 0; i < count; ++i) std::swap(m_layers.at(i).pixels, pixels[i]);
-    const PixelBuffer& base = m_layers.at(0).pixels;
-    m_flattened = PixelBuffer(base.width(), base.height());
-    m_dirty = {};
-    mark_dirty(bounds());
+    rebuild_flattened();
 }
 
 void CanvasDocument::resize(int width, int height, Rgba8 fill) {
     std::vector<PixelBuffer> resized;
     for (const Layer& layer : m_layers.layers()) {
-        PixelBuffer pixels(width, height, resized.empty() ? fill : Rgba8{0, 0, 0, 0});
+        PixelBuffer pixels(width, height, resized.empty() ? fill : kTransparent);
         pixels.blit(0, 0, layer.pixels);
         resized.push_back(std::move(pixels));
     }
@@ -75,32 +86,26 @@ void CanvasDocument::resize(int width, int height, Rgba8 fill) {
 void CanvasDocument::crop_to(RectI region) {
     region = region.intersected(bounds());
     if (region.empty()) return;
-    std::vector<PixelBuffer> cropped;
-    for (const Layer& layer : m_layers.layers()) cropped.push_back(layer.pixels.copy_region(region));
-    restore(std::move(cropped));
+    restore(map_layers(m_layers, [region](const PixelBuffer& pixels) { return pixels.copy_region(region); }));
 }
 
 void CanvasDocument::rotate(Rotation rotation) {
-    std::vector<PixelBuffer> rotated;
-    for (const Layer& layer : m_layers.layers()) {
-        PixelBuffer result = layer.pixels.rotated_90_cw();
-        if (rotation == Rotation::Ccw90) result = result.rotated_90_cw().rotated_90_cw();
-        else if (rotation == Rotation::R180) result = result.rotated_90_cw();
-        rotated.push_back(std::move(result));
-    }
-    restore(std::move(rotated));
+    restore(map_layers(m_layers, [rotation](const PixelBuffer& pixels) {
+        switch (rotation) {
+            case Rotation::Ccw90: return pixels.rotated_90_ccw();
+            case Rotation::R180: return pixels.rotated_180();
+            case Rotation::Cw90: break;
+        }
+        return pixels.rotated_90_cw();
+    }));
 }
 
 void CanvasDocument::flip_horizontal() {
-    std::vector<PixelBuffer> flipped;
-    for (const Layer& layer : m_layers.layers()) flipped.push_back(layer.pixels.flipped_horizontal());
-    restore(std::move(flipped));
+    restore(map_layers(m_layers, [](const PixelBuffer& pixels) { return pixels.flipped_horizontal(); }));
 }
 
 void CanvasDocument::flip_vertical() {
-    std::vector<PixelBuffer> flipped;
-    for (const Layer& layer : m_layers.layers()) flipped.push_back(layer.pixels.flipped_vertical());
-    restore(std::move(flipped));
+    restore(map_layers(m_layers, [](const PixelBuffer& pixels) { return pixels.flipped_vertical(); }));
 }
 
 }  // namespace lsp
