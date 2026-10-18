@@ -63,8 +63,38 @@ in, so a color change needs no regeneration. Run the script after changing it.
 
 | File | Used by | What it shows |
 | --- | --- | --- |
-| `ruler/digits.png` | numbers on the canvas ruler's top strip, `ui/components/canvas-ruler.slint` | the digits 0 to 9, one 8x9 cell each |
-| `ruler/digits-turned.png` | numbers on the canvas ruler's left strip | the same cells turned a quarter turn, 9x8 each |
+| `ruler/digits.png` | numbers on the canvas ruler's top strip, `ui/components/canvas-ruler.slint` | the digits 0 to 9, one 7x7 cell each |
+| `ruler/digits-turned.png` | numbers on the canvas ruler's left strip | the same cells turned a quarter turn, 7x7 each |
+
+## Generated rotate badge
+
+`rotate/generate.sh` draws the quarter-turn arrows the window shows beside the
+pointer when it hovers over a corner ring of a selection or while the contents
+are turning: one file per quadrant of the rotation centre, with a head at each
+end. Each arrow is dark over a white outline, so it stays readable on light and
+on dark canvas pixels. Run the script after changing it.
+
+| File | Used by | What it shows |
+| --- | --- | --- |
+| `rotate/rotate-ne.png`, `rotate-nw.png`, `rotate-se.png`, `rotate-sw.png` | the pointer badge in `ui/appwindow.slint` | a quarter-turn arrow lying in that quadrant, 24x24, dark over a white outline |
+
+## Generated status glyphs
+
+`status/generate.sh` draws the small glyphs the status bar shows beside each of
+its readings: where the pointer is, how big the selection is, how big the paper
+is, the color under the pointer, and the zoom. Each is a dark shape on a
+transparent ground, so the cells keep their light face, and each glyph's ink is
+centred in its canvas so the pictures line up with the text beside them. Run the
+script after changing one; it rewrites the files in place, so each picture stays
+with its generator.
+
+| File | Used by | What it shows |
+| --- | --- | --- |
+| `status/pointer.png` | pointer cell in `ui/statusbar.slint` | an arrow |
+| `status/selection.png` | selection cell in `ui/statusbar.slint` | a dashed box |
+| `status/canvas.png` | paper cell in `ui/statusbar.slint` | a sheet with a turned corner |
+| `status/color.png` | color cell in `ui/statusbar.slint` | three chips, one per color channel |
+| `status/zoom.png` | zoom cell in `ui/statusbar.slint` | a magnifier |
 
 ## Placeholder icons, replace with real artwork
 

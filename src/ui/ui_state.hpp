@@ -10,7 +10,11 @@
 #include "about-window.h"
 #include "app/app_controller.hpp"
 #include "appwindow.h"
+#include "confirm-dialog.h"
 #include "edit-colors-window.h"
+#include "message-dialog.h"
+#include "resize-dialog.h"
+#include "store/store.hpp"
 #include "private/slint_timer.h"
 #include "render/slint_bridge.hpp"
 
@@ -25,6 +29,19 @@ public:
   [[nodiscard]] lsp_colors::EditColorsWindow &color_window();
   // True while the Edit Colors window is on screen.
   [[nodiscard]] bool color_window_open() const noexcept;
+
+  // The unsaved-changes question, made on first use. It is a real window, so
+  // the tests read its message and press its buttons here rather than through
+  // a global.
+  [[nodiscard]] lsp_confirm::ConfirmDialog &confirm_window();
+  // True while that question is on screen.
+  [[nodiscard]] bool confirm_window_open() const noexcept;
+
+  // A plain message, and the canvas size question. Both are real windows too.
+  [[nodiscard]] lsp_message::MessageDialog &message_window();
+  [[nodiscard]] bool message_window_open() const noexcept;
+  [[nodiscard]] lsp_resize::ResizeDialog &resize_window();
+  [[nodiscard]] bool resize_window_open() const noexcept;
 
 private:
   // Pulls the Slint color pickers into the controller. Called before every
@@ -53,6 +70,34 @@ private:
   void do_commit_text(const std::string &text);
   void do_cancel_text();
   void refresh();
+
+  // What the store holds: the window geometry and the settings the app
+  // remembers, as one comparable set.
+  struct SettingsSnapshot {
+      int x = 0;
+      int y = 0;
+      int width = 0;
+      int height = 0;
+      bool rulers = false;
+      bool gridlines = false;
+      bool status_bar = true;
+      std::string family;
+
+      friend bool operator==(const SettingsSnapshot&, const SettingsSnapshot&) = default;
+  };
+
+  // The settings of a previous run, each one taken only when the store holds
+  // it and it parses.
+  void load_settings();
+  // Writes the settings the store does not hold yet.
+  void save_settings();
+  // Compares the window and the settings with the stored ones and saves when
+  // they differ. The window cannot announce a move, so a timer drives this.
+  void watch_settings();
+  [[nodiscard]] SettingsSnapshot current_settings() const;
+  // Where a file dialog opens: the folder the last dialog used, or beside the
+  // document when no dialog has run yet.
+  [[nodiscard]] std::filesystem::path dialog_directory() const;
 
   // Writes one entry of the ribbon's palette.
   void set_palette_color(int index, const slint::Color &color);
@@ -84,8 +129,18 @@ private:
   void ensure_about_window();
   void do_open_about();
 
-  // File actions, each of which may raise one of the modal surfaces first.
-  enum class PendingAction { None, Exit, New, Open };
+  // The unsaved-changes question, made on first use.
+  void ensure_confirm_window();
+  void close_confirm_window();
+
+  // The plain message and the canvas size question, made on first use.
+  void ensure_message_window();
+  void close_message_window();
+  void ensure_resize_window();
+  void close_resize_window();
+
+  // File actions, each of which may ask a question first.
+  enum class PendingAction { None, Exit, New, Open, OpenRecent };
 
   void do_file_new();
   void do_file_open();
@@ -95,19 +150,27 @@ private:
   void do_paste();
   void do_paste_from_file();
 
+  // The File menu's recent list. A path is added when a document is opened or
+  // saved, and the list is kept newest first, without repeats.
+  void note_recent_file(const std::filesystem::path& path);
+  void forget_recent_file(const std::filesystem::path& path);
+  void publish_recent_files();
+  // Opens the entry the menu named, through the same question as File > Open.
+  void open_recent(int index);
+  // Opens a document and records it. False, after saying so, when it fails.
+  bool open_path(const std::filesystem::path& path);
+
   // Work left half-done by a question the user has to answer.
   void ask_unsaved(PendingAction action);
   void run_pending();
 
-  // The picker: which question it is asking, where it is looking, and the
-  // listing it is showing.
-  void show_file_dialog(EFileDialogMode mode);
-  void refresh_file_dialog();
-  void do_file_up();
-  void do_file_navigate(int row);
-  void do_file_filter_changed(int index);
-  void do_file_ok();
-  void do_file_cancel();
+  // Saves under the current name, asking for one first when there is none.
+  // Returns whether the document reached disk.
+  bool save_document();
+  bool save_document_as();
+  void open_document();
+  // False, after saying so, when the system has no file dialog to show.
+  bool ensure_file_dialogs();
 
   // The canvas size dialog: the current size is offered, and only a size
   // inside the canvas limits is applied.
@@ -127,11 +190,23 @@ private:
   AppWindow &m_window;
   AppController &m_controller;
   SlintBridge m_bridge;
-  // The two dialogs are windows of their own, made on first use and kept for
-  // the life of the application.
+  // The dialogs are windows of their own, made on first use and kept for the
+  // life of the application.
   std::optional<slint::ComponentHandle<lsp_colors::EditColorsWindow>>
       m_color_window;
   std::optional<slint::ComponentHandle<lsp_about::AboutWindow>> m_about_window;
+  std::optional<slint::ComponentHandle<lsp_confirm::ConfirmDialog>>
+      m_confirm_window;
+  std::optional<slint::ComponentHandle<lsp_message::MessageDialog>>
+      m_message_window;
+  std::optional<slint::ComponentHandle<lsp_resize::ResizeDialog>>
+      m_resize_window;
+  // The settings the app carries from one run to the next, and the values it
+  // was last given. An unopenable database leaves every setting at its default
+  // and the app otherwise untouched.
+  std::unique_ptr<Store> m_settings;
+  slint::Timer m_settings_timer;
+  SettingsSnapshot m_stored_settings;
   // Kept so the colour picker can write into the palette's custom slots.
   std::shared_ptr<slint::VectorModel<slint::Color>> m_palette;
   // Every family the text tool can draw with, before the filter box narrows it.
@@ -142,6 +217,8 @@ private:
   slint::Timer m_ants_timer;
   int m_ant_phase = 0;
   bool m_ants_visible = false;
+  bool m_rotate_hover = false;
+  bool m_rotate_active = false;
   bool m_text_open = false;
   // Timed here because Slint's pointer events carry no click count.
   std::chrono::steady_clock::time_point m_last_press;
@@ -151,8 +228,16 @@ private:
   ToolId m_last_tool = ToolId::Pencil;
 
   PendingAction m_pending = PendingAction::None;
-  std::filesystem::path m_file_dir;
-  std::vector<std::filesystem::path> m_listing;
+  // The list behind the File menu's recent column, newest first.
+  std::vector<std::filesystem::path> m_recent_files;
+  // The path a pending open is waiting for, while a question is on screen.
+  std::filesystem::path m_pending_path;
+  // The folder the last file dialog used, and the custom colours the two grids
+  // held when the app last wrote them.
+  std::filesystem::path m_last_directory;
+  std::vector<slint::Color> m_dialog_customs_stored;
+  // Set when a custom colour changes, so the next timer tick writes it.
+  bool m_colors_dirty = false;
 };
 
 } // namespace lsp

@@ -1,52 +1,49 @@
-import { Button } from "std-widgets.slint";
-import { DialogState } from "../globals.slint";
-import { Styles } from "../styles.slint";
+import { Win10, WinButton } from "../win10.slint";
 
-// A plain message with one way out. It covers the whole window so nothing
-// behind it can be reached while it is up.
-export component MessageDialog inherits Rectangle {
-    width: 100%;
-    height: 100%;
-    background: #00000040;
+// A plain message with one way out. A real window, so the window manager draws
+// the title bar and its close button; the face, the text and the button wear the
+// Windows 10 colors and controls the other dialogs use. The heading is the
+// window's own title, the way a message box reports its subject.
+export component MessageDialog inherits Window {
+    title: root.heading;
+    width: 380px;
+    height: 150px;
+    always-on-top: true;
 
-    TouchArea {}
+    in property <string> heading: "";
+    in property <string> text: "";
+
+    callback accepted();
 
     Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        width: 400px;
-        height: 160px;
-        background: white;
-        border-width: 1px;
-        border-color: Styles.bar-border-light;
+        width: parent.width;
+        height: parent.height;
+        background: Win10.face-color;
+        border-width: Win10.frame-width;
+        border-color: Win10.frame-color;
 
         VerticalLayout {
-            padding: 10px;
-            spacing: 8px;
+            padding: 14px;
+            spacing: 12px;
 
             Text {
-                text: DialogState.message-title;
-                font-size: Styles.bar-font-size + 2px;
-                font-weight: 700;
-                color: Styles.bar-text-color;
-                horizontal-stretch: 1;
-            }
-
-            Text {
-                text: DialogState.message-text;
+                text: root.text;
                 wrap: word-wrap;
                 vertical-stretch: 1;
                 horizontal-stretch: 1;
-                color: Styles.bar-text-color;
+                font-size: Win10.font-size;
+                color: Win10.text-color;
             }
 
             HorizontalLayout {
                 alignment: end;
+                spacing: 8px;
                 horizontal-stretch: 1;
-                Button {
+
+                WinButton {
                     text: "OK";
-                    primary: true;
-                    clicked => { DialogState.message-ok(); }
+                    is-default: true;
+                    clicked => { root.accepted(); }
                 }
             }
         }

@@ -6,13 +6,29 @@ import { CanvasResizeHandle } from "components/canvas-resize-handle.slint";
 import { CanvasMenuItem, CanvasMenuDivider, CanvasMenuFrame } from "components/canvas-menu.slint";
 import { CanvasRuler } from "components/canvas-ruler.slint";
 import { CanvasShadow } from "components/canvas-shadow.slint";
-import { FileDialog } from "dialogs/file-dialog.slint";
-import { ConfirmDialog } from "dialogs/confirm-dialog.slint";
-import { MessageDialog } from "dialogs/message-dialog.slint";
-import { ResizeDialog } from "dialogs/resize-dialog.slint";
 
-import { UserState, DocumentState, DialogState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay } from "globals.slint";
+import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay } from "globals.slint";
 export * from "globals.slint";
+
+// Which quadrant of the rotation centre the pointer is in, as seen on screen.
+enum ERotateCorner { NE, NW, SE, SW }
+
+// The badge shown at the pointer over the rotate zone: a curved arrow lying in
+// the corner the pointer is in.
+component RotateBadge inherits Rectangle {
+    in property <ERotateCorner> corner: ERotateCorner.NE;
+    width: 24px;
+    height: 24px;
+
+    Image {
+        width: 24px;
+        height: 24px;
+        source: root.corner == ERotateCorner.NW ? @image-url("../icons/rotate/rotate-nw.png")
+              : root.corner == ERotateCorner.SE ? @image-url("../icons/rotate/rotate-se.png")
+              : root.corner == ERotateCorner.SW ? @image-url("../icons/rotate/rotate-sw.png")
+              : @image-url("../icons/rotate/rotate-ne.png");
+    }
+}
 
 // The frame the open text box wears: the run pattern the selection outline is
 // made of, held still instead of crawling. Each run is one screen pixel, so the
@@ -77,10 +93,6 @@ export component AppWindow inherits Window {
     // Scratch for set-zoom: how far the viewport slides per pixel of cursor
     // distance, i.e. 1 - new zoom / old zoom.
     property <float> zoom-anchor;
-    // Ctrl+wheel travel waiting to become a notch: a normal wheel notch is
-    // 60px and steps at once, a trackpad's flood of small deltas banks up
-    // here until it too has earned one step.
-    property <length> zoom-acc: 0px;
 
     // Window sizes
     min-height: 240px;
@@ -118,9 +130,10 @@ export component AppWindow inherits Window {
                                          scroll.viewport-y + py * root.zoom-anchor));
     }
 
-    // Ctrl+wheel zooms the view around the point under the cursor; over the
-    // gray around the paper that point is the canvas' top-left (0, 0), so
-    // the viewport only gets clamped, never slid.
+    // Ctrl+wheel zooms the view around the point under the cursor, whether the
+    // pointer is on the paper or on the gray around it. The point handed in is
+    // the cursor's place in the visible view, so it is the content coordinate
+    // plus the scroll the viewport has taken.
     function apply-zoom(px: length, py: length, factor: float) {
         root.set-zoom(UserState.zoom * factor, px, py);
     }
@@ -137,27 +150,18 @@ export component AppWindow inherits Window {
     }
 
     // Shared by the paper and the gray around it. With a zoom modifier held
-    // the wheel becomes one notch per 60px of travel: a lone notch counts
-    // immediately, a trackpad's stream of small deltas banks up before it
-    // steps (so a flick can never slam the zoom to its ends), and a
-    // horizontal swipe steps too. Without the modifier the wheel pans the
-    // view directly: handing it to the ScrollView's Flickable instead would
-    // arm that Flickable's 800ms scroll filter, which then swallows every
-    // wheel near the same spot — so ctrl+wheel went dead right after a
-    // plain scroll, which is what made zooming feel unreliable.
+    // the wheel zooms around (px, py), the point under the cursor, by an amount
+    // that follows the travel: a wheel notch is 60px and scales the view by a
+    // quarter, and a trackpad's small deltas add up to the same, smoothly. A
+    // horizontal swipe zooms too. Without the modifier the wheel pans the view
+    // directly: handing it to the ScrollView's Flickable instead would arm that
+    // Flickable's 800ms scroll filter, which then swallows every wheel near the
+    // same spot, so ctrl+wheel went dead right after a plain scroll.
     function handle-wheel(event: PointerScrollEvent, px: length, py: length) {
         if (event.modifiers.control || event.modifiers.meta) {
             let d = event.delta-y != 0px ? event.delta-y : event.delta-x;
-            root.zoom-acc = clamp(root.zoom-acc + d, -60px, 60px);
-            if (root.zoom-acc >= 60px) {
-                root.zoom-acc = 0px;
-                root.apply-zoom(px, py, 1.25);
-            } else if (root.zoom-acc <= -60px) {
-                root.zoom-acc = 0px;
-                root.apply-zoom(px, py, 0.8);
-            }
+            root.apply-zoom(px, py, pow(1.25, clamp(d, -120px, 120px) / 60px));
         } else {
-            root.zoom-acc = 0px;
             let dx = event.modifiers.shift ? event.delta-y : event.delta-x;
             let dy = event.modifiers.shift ? event.delta-x : event.delta-y;
             scroll.viewport-x = min(0px, max(min(0px, scroll.visible-width - scroll.viewport-width),
@@ -249,12 +253,10 @@ export component AppWindow inherits Window {
                         drop: 1.5 * layer * 1px;
                     }
 
-                    // Ctrl+wheel over the gray around the paper zooms too,
-                    // with no point under the wheel to hold in place, so the
-                    // viewport only gets clamped, never slid. Plain wheel
-                    // is rejected so the Flickable keeps panning. Hovering
-                    // here means the cursor is off the paper, which the
-                    // status bar's readout reflects.
+                    // Ctrl+wheel over the gray around the paper zooms too, around
+                    // the cursor like it does over the paper. Hovering here
+                    // means the cursor is off the paper, which the status
+                    // bar's readout reflects.
                     workspace-touch := TouchArea {
                         x: 0px;
                         y: 0px;
@@ -266,7 +268,8 @@ export component AppWindow inherits Window {
                         }
 
                         scroll-event(event) => {
-                            root.handle-wheel(event, 0px, 0px);
+                            root.handle-wheel(event, workspace-touch.mouse-x + scroll.viewport-x,
+                                              workspace-touch.mouse-y + scroll.viewport-y);
                             accept
                         }
                     }
@@ -354,6 +357,11 @@ export component AppWindow inherits Window {
                         touch := TouchArea {
                             width: 100%;
                             height: 100%;
+                            // Over the rotate zone the arrow the window draws at
+                            // the pointer takes the cursor's place, so the system
+                            // one is turned off while it shows.
+                            mouse-cursor: (RotateOverlay.hover || RotateOverlay.rotating)
+                                ? MouseCursor.none : MouseCursor.default;
 
                             pointer-event(event) => {
                                 // Every hover or press over the paper pins
@@ -369,7 +377,8 @@ export component AppWindow inherits Window {
                                         // zooms around the click point and never reaches
                                         // the C++ registry, so no stroke can start and no
                                         // floating selection gets baked.
-                                        root.apply-zoom(touch.mouse-x, touch.mouse-y,
+                                        root.apply-zoom(touch.mouse-x + scroll.viewport-x,
+                                                        touch.mouse-y + scroll.viewport-y,
                                                         event.button == PointerEventButton.right
                                                             || event.modifiers.alt ? 0.8 : 1.25);
                                     } else if (event.button == PointerEventButton.right
@@ -392,7 +401,8 @@ export component AppWindow inherits Window {
                                     // follow the pointer and the status bar reads
                                     // the colour under it.
                                     UserState.pointer-move(touch.mouse-x / UserState.zoom,
-                                                           touch.mouse-y / UserState.zoom);
+                                                           touch.mouse-y / UserState.zoom,
+                                                           event.modifiers.shift);
                                 }
                             }
 
@@ -400,7 +410,8 @@ export component AppWindow inherits Window {
                             // modifier, pan without, never left to the
                             // Flickable's scroll filter.
                             scroll-event(event) => {
-                                root.handle-wheel(event, touch.mouse-x, touch.mouse-y);
+                                root.handle-wheel(event, touch.mouse-x + scroll.viewport-x,
+                                                  touch.mouse-y + scroll.viewport-y);
                                 accept
                             }
 
@@ -605,6 +616,19 @@ export component AppWindow inherits Window {
                         border-color: black;
                     }
 
+                    // The badge at the pointer, while it is over the rotate zone
+                    // or turning the contents.
+                    if UserState.selected-tool == ETool.SELECTION && UserState.cursor-on-canvas
+                        && (RotateOverlay.hover || RotateOverlay.rotating) : RotateBadge {
+                        x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12px;
+                        y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12px;
+                        corner: UserState.cursor-x < DocumentState.selection-x + DocumentState.selection-width / 2.0
+                            ? (UserState.cursor-y < DocumentState.selection-y + DocumentState.selection-height / 2.0
+                                ? ERotateCorner.NW : ERotateCorner.SW)
+                            : (UserState.cursor-y < DocumentState.selection-y + DocumentState.selection-height / 2.0
+                                ? ERotateCorner.NE : ERotateCorner.SE);
+                    }
+
                     right-handle := CanvasResizeHandle {
                         x: root.canvas-origin + root.canvas-w + 2px;
                         y: root.canvas-origin + (root.canvas-h - self.height) / 2;
@@ -653,12 +677,5 @@ export component AppWindow inherits Window {
                 zoom-step(dir) => { root.step-zoom(dir); }
             }
         }
-
-        // Modal surfaces, declared last so they cover the whole window.
-        if DialogState.file-visible : FileDialog {}
-        if DialogState.confirm-visible : ConfirmDialog {}
-        if DialogState.resize-visible : ResizeDialog {}
-        // Last, so a report is never hidden by the surface that raised it.
-        if DialogState.message-visible : MessageDialog {}
     }
 }

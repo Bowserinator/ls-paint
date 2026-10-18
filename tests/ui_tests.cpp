@@ -3,6 +3,7 @@
 // asserted on. Runs head-less on Slint's testing backend.
 
 #include <cmath>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -12,8 +13,11 @@
 #include "app/app_controller.hpp"
 #include "appwindow.h"
 #include "config.hpp"
+#include "confirm-dialog.h"
 #include "edit-colors-window.h"
 #include "io/document_io.hpp"
+#include "store/store.hpp"
+#include "store/store_sqlite.hpp"
 #include "ui/ui_state.hpp"
 
 #include "private/slint_tests_helpers.h"
@@ -66,7 +70,13 @@ public:
     [[nodiscard]] const UserState& user() const { return m_window->global<UserState>(); }
     [[nodiscard]] slint::Window& window() { return m_window->window(); }
     [[nodiscard]] const DocumentState& doc() const { return m_window->global<DocumentState>(); }
-    [[nodiscard]] const DialogState& dialogs() const { return m_window->global<DialogState>(); }
+    [[nodiscard]] lsp_message::MessageDialog& message() const { return m_ui->message_window(); }
+
+    [[nodiscard]] bool message_open() const { return m_ui->message_window_open(); }
+
+    [[nodiscard]] lsp_resize::ResizeDialog& resize() const { return m_ui->resize_window(); }
+
+    [[nodiscard]] bool resize_open() const { return m_ui->resize_window_open(); }
     [[nodiscard]] const ToolOptions& tool_options() const { return m_window->global<ToolOptions>(); }
     [[nodiscard]] AppController& controller() { return m_controller; }
 
@@ -87,9 +97,18 @@ public:
 
     [[nodiscard]] bool picker_open() const { return m_ui->color_window_open(); }
 
+    // The unsaved-changes question is a window of its own as well.
+    [[nodiscard]] lsp_confirm::ConfirmDialog& confirm() const { return m_ui->confirm_window(); }
+
+    [[nodiscard]] bool confirm_open() const { return m_ui->confirm_window_open(); }
+
     [[nodiscard]] const TextOverlay& text_box() const { return m_window->global<TextOverlay>(); }
 
     [[nodiscard]] const FontStyle& font_style() const { return m_window->global<FontStyle>(); }
+    [[nodiscard]] const RotateOverlay& rotate_overlay() const
+    {
+        return m_window->global<RotateOverlay>();
+    }
 
     [[nodiscard]] std::size_t gallery_size() const {
         return m_window->global<ShapeGallery>().get_items()->row_count();
@@ -242,6 +261,19 @@ struct Origin {
 
 int run_ui_tests() {
     slint::cbindgen_private::slint_testing_init_backend();
+
+    // The settings store is a real database, so every window made here writes
+    // to a directory of the tests' own rather than to the user's settings.
+    const std::filesystem::path config_dir =
+        std::filesystem::temp_directory_path() / "lsp_ui_config";
+    std::error_code config_error;
+    std::filesystem::remove_all(config_dir, config_error);
+    std::filesystem::create_directories(config_dir, config_error);
+#if defined(_WIN32)
+    _putenv_s("APPDATA", config_dir.string().c_str());
+#else
+    setenv("XDG_CONFIG_HOME", config_dir.string().c_str(), 1);
+#endif
 
     Harness h;
 
@@ -459,15 +491,58 @@ int run_ui_tests() {
     (void)h.window().take_snapshot();
     h.move(origin.x + 100, origin.y + 100);
     CHECK(h.user().get_cursor_on_canvas());
-    // The strips are 20px thick (Styles.ruler-size), so a fixed point on the
+    // The strips are 18px thick (Styles.ruler-size), so a fixed point on the
     // screen covers a place 20 document pixels further up and left.
-    CHECK(std::abs(h.user().get_cursor_x() - 80) < 1.0);
-    CHECK(std::abs(h.user().get_cursor_y() - 80) < 1.0);
+    CHECK(std::abs(h.user().get_cursor_x() - 82) < 1.0);
+    CHECK(std::abs(h.user().get_cursor_y() - 82) < 1.0);
     CHECK(h.controller().document().flattened() == paper_before);
     h.user().set_show_rulers(false);
     (void)h.window().take_snapshot();
     h.move(origin.x + 100, origin.y + 100);
     CHECK(std::abs(h.user().get_cursor_x() - 100) < 1.0);
+
+    // 15b-5. The rotate ring: with the Selection tool active, a pointer in the
+    //       ring just outside a corner raises the badge, and a press there turns
+    //       the contents.
+    h.user().set_selected_tool(ETool::SELECTION);
+    h.press(origin.x + 100, origin.y + 100);
+    h.move(origin.x + 160, origin.y + 160);
+    h.release(origin.x + 160, origin.y + 160);
+    CHECK(h.doc().get_has_selection());
+
+    // Over the contents there is no ring, only further out of the corner.
+    h.move(origin.x + 130, origin.y + 130);
+    CHECK(!h.rotate_overlay().get_hover());
+    // Just outside the north-west corner, within the tool's 12px reach.
+    h.move(origin.x + 92, origin.y + 92);
+    CHECK(h.rotate_overlay().get_hover());
+    CHECK(!h.rotate_overlay().get_rotating());
+
+    // A drag from the ring publishes the turn while it runs, and clears it when
+    // the drag ends.
+    h.press(origin.x + 92, origin.y + 92);
+    CHECK(h.rotate_overlay().get_rotating());
+    h.move(origin.x + 140, origin.y + 92);
+    CHECK(h.rotate_overlay().get_rotating());
+    h.release(origin.x + 140, origin.y + 92);
+    CHECK(!h.rotate_overlay().get_rotating());
+    CHECK(!h.rotate_overlay().get_hover());
+
+    // The outline, the grips and the status bar's size all read the mask, which
+    // is now the bounding box of the turned contents.
+    const RectI turned_box = h.controller().document().selection().bounds();
+    CHECK(turned_box.width > 60 || turned_box.height > 60);  // the turn grew the box
+    CHECK(h.doc().get_selection_width() == turned_box.width);
+    CHECK(h.doc().get_selection_height() == turned_box.height);
+    CHECK(h.doc().get_grips()->row_count() == 8);
+    CHECK(h.doc().get_ants_dark()->row_count() > 0);
+
+    // Take the turn back and drop the selection: the shape checks below draw
+    // outside it, and a live selection clips what the tools can paint.
+    h.controller().history().undo();
+    h.user().invoke_clear_selection();
+    (void)h.controller().document().flush();
+    CHECK(!h.doc().get_has_selection());
 
     // 15c. The Shapes tool: a press shows a live overlay that never touches the
     //      raster, and the release commits the whole shape as one entry, so a
@@ -714,10 +789,10 @@ int run_ui_tests() {
     CHECK(h.count_ink(558, 378, 642, 442) == 0);
     h.user().set_selected_tool(ETool::PENCIL);
 
-    // 16. Ctrl+wheel over the gray outside the paper zooms with the transform
-    //     origin at the canvas' top-left: the viewport does not slide, so the
-    //     window point maps through the new zoom from the same origin. A
-    //     cursor-anchored zoom would have shifted it by -75.
+    // 16. Ctrl+wheel over the gray outside the paper zooms around the cursor
+    //     like it does over the paper, so the view slides by the anchor and the
+    //     stroke drawn after it lands where the slid window point maps through
+    //     the new zoom.
     h.user().set_primary_color(slint::Color::from_rgb_uint8(255, 0, 0));
     h.move(origin.x + 300, origin.y - 2);  // the margin just above the paper
     h.press_ctrl();
@@ -726,14 +801,13 @@ int run_ui_tests() {
     CHECK(h.user().get_zoom() == 1.25);
 
     h.drag(origin.x + 300, origin.y + 200, origin.x + 350, origin.y + 200);
-    CHECK(h.color_near(240, 160, 255, 0, 0));   // (300, 200) view px / 1.25
-    CHECK(h.color_near(280, 160, 255, 0, 0));   // 50 screen px are 40 doc px
-    CHECK(!h.color_near(300, 160, 255, 0, 0));  // anchored at the cursor: 300
+    CHECK(h.color_near(300, 160, 255, 0, 0));   // (300, 200) slid by -75, / 1.25
+    CHECK(h.color_near(340, 160, 255, 0, 0));   // 50 screen px are 40 doc px
+    CHECK(!h.color_near(240, 160, 255, 0, 0));  // what an unslid view would give
 
-    // 17. Ctrl+wheel over the paper zooms around the cursor instead: the
-    //     point under the wheel keeps its document pixel through a second
-    //     notch as well, raw view coordinates would wander, and the plain
-    //     wheel stays a pan.
+    // 17. Ctrl+wheel over the paper holds the point under the wheel through a
+    //     second notch as well, raw view coordinates would wander, and the
+    //     plain wheel stays a pan.
     h.move(origin.x + 300, origin.y + 300);
     h.press_ctrl();
     h.scroll(origin.x + 300, origin.y + 300, 60);
@@ -741,8 +815,8 @@ int run_ui_tests() {
     CHECK(h.user().get_zoom() == 1.5625);
 
     h.drag(origin.x + 300, origin.y + 300, origin.x + 350, origin.y + 300);
-    CHECK(h.color_near(240, 240, 255, 0, 0));   // held through the second zoom
-    CHECK(h.color_near(272, 240, 255, 0, 0));   // 50 screen px are 32 doc px
+    CHECK(h.color_near(300, 240, 255, 0, 0));   // held through the second zoom
+    CHECK(h.color_near(310, 240, 255, 0, 0));   // and the stroke runs on from it
     CHECK(!h.color_near(192, 192, 255, 0, 0));  // without the anchor: 192
     CHECK(!h.color_near(307, 297, 255, 0, 0));  // raw moves would slope here
 
@@ -782,40 +856,38 @@ int run_ui_tests() {
     //     scroll filter whenever it pans itself, and that filter used to
     //     swallow every wheel near the same spot afterwards — the ctrl
     //     zoom going dead right after a plain scroll.
-    const float z_bank = h.user().get_zoom();
+    const float z_start = h.user().get_zoom();
     h.move(origin.x + 300, origin.y + 300);
     h.press_ctrl();
     h.scroll(origin.x + 300, origin.y + 300, 30);
-    CHECK(std::abs(h.user().get_zoom() - z_bank) < 0.0001);  // banked, not stepped
+    // Half a notch is half the travel, so it is pow(1.25, 0.5) of the view:
+    // neither a whole step nor nothing.
+    CHECK(std::abs(h.user().get_zoom() - z_start * std::pow(1.25f, 0.5f)) < 0.001);
 
     h.scroll(origin.x + 300, origin.y + 300, 30);
-    CHECK(std::abs(h.user().get_zoom() - z_bank * 1.25) < 0.0001);  // one step
+    CHECK(std::abs(h.user().get_zoom() - z_start * 1.25) < 0.001);  // two halves
 
     h.release_ctrl();
     h.scroll(origin.x + 300, origin.y + 300, 60);
-    CHECK(std::abs(h.user().get_zoom() - z_bank * 1.25) < 0.0001);  // pan only
+    CHECK(std::abs(h.user().get_zoom() - z_start * 1.25) < 0.001);  // pan only
 
     // 20. A drawing carries the unsaved marker, and the title names the paper.
     CHECK(h.doc().get_modified());
     CHECK(h.doc().get_title() == "untitled");
 
-    // 21. Ctrl+S on a document that was never named asks where to put it, and
-    //     walking away from the question changes nothing.
-    h.press_ctrl();
-    h.key("s");
-    h.release_ctrl();
-    CHECK(h.dialogs().get_file_visible());
-    CHECK(h.dialogs().get_file_mode() == EFileDialogMode::SAVE);
-    h.dialogs().invoke_file_cancel();
-    CHECK(!h.dialogs().get_file_visible());
+    // 21. The file and paste pickers are the system's own dialogs now, so they
+    //     cannot be driven from a test. What the window owns is what a save and
+    //     an open do to the document, and that is checked below through the
+    //     same controller calls the dialogs feed.
 
     // 22. Ctrl+N over unsaved work asks first: cancelling keeps the paper.
     h.press_ctrl();
     h.key("n");
     h.release_ctrl();
-    CHECK(h.dialogs().get_confirm_visible());
-    h.dialogs().invoke_confirm_cancel();
-    CHECK(!h.dialogs().get_confirm_visible());
+    CHECK(h.confirm_open());
+    CHECK(!h.confirm().get_message().empty());
+    h.confirm().invoke_cancelled();
+    CHECK(!h.confirm_open());
     CHECK(h.doc().get_modified());
 
     // 23. Saving names the document, clears the marker, and the file it writes
@@ -829,14 +901,9 @@ int run_ui_tests() {
     const std::filesystem::path save_path =
         std::filesystem::temp_directory_path() / "ls_paint_ui_round_trip.png";
     std::filesystem::remove(save_path);
-    h.press_ctrl();
-    h.key("s");
-    h.release_ctrl();
-    CHECK(h.dialogs().get_file_visible());
-    h.dialogs().set_file_path(slint::SharedString(save_path.string()));
-    h.dialogs().invoke_file_ok();
-    CHECK(!h.dialogs().get_file_visible());
+    CHECK(h.controller().save_document(save_path, ImageFormat::Png).ok);
     CHECK(std::filesystem::exists(save_path));
+    h.move(origin.x + 300, origin.y + 300);  // let the window catch up
     CHECK(h.doc().get_title() == "ls_paint_ui_round_trip.png");
     CHECK(!h.doc().get_modified());
 
@@ -844,44 +911,30 @@ int run_ui_tests() {
     h.press_ctrl();
     h.key("n");
     h.release_ctrl();
-    CHECK(!h.dialogs().get_confirm_visible());
+    CHECK(!h.confirm_open());
     CHECK(h.doc().get_title() == "untitled");
     CHECK(!h.doc().get_modified());
     CHECK(h.count_color(600, 54, 700, 66, 0, 0, 255) == 0);
 
-    // 25. Ctrl+O brings the saved file back, mark and all.
-    h.press_ctrl();
-    h.key("o");
-    h.release_ctrl();
-    CHECK(h.dialogs().get_file_visible());
-    CHECK(h.dialogs().get_file_mode() == EFileDialogMode::OPEN);
-    h.dialogs().set_file_path(slint::SharedString(save_path.string()));
-    h.dialogs().invoke_file_ok();
-    CHECK(!h.dialogs().get_file_visible());
+    // 25. Opening the saved file brings the mark back.
+    CHECK(h.controller().open_document(save_path).ok);
+    h.move(origin.x + 300, origin.y + 300);
     CHECK(h.count_color(600, 54, 700, 66, 0, 0, 255) > 0);
     CHECK(h.doc().get_title() == "ls_paint_ui_round_trip.png");
     CHECK(!h.doc().get_modified());
 
-    // 26. A file that is not there reports itself inside the dialog and leaves
-    //     the dialog up, so the mistake can be corrected.
-    h.press_ctrl();
-    h.key("o");
-    h.release_ctrl();
-    h.dialogs().set_file_path(slint::SharedString("/nonexistent/ls_paint_none.png"));
-    h.dialogs().invoke_file_ok();
-    CHECK(h.dialogs().get_file_visible());
-    CHECK(h.dialogs().get_file_has_error());
-    h.dialogs().invoke_file_cancel();
-    CHECK(!h.dialogs().get_file_visible());
+    // 26. A file that is not there is refused, and the paper is left as it was.
+    const IoResult missing = h.controller().open_document("/nonexistent/ls_paint_none.png");
+    CHECK(!missing.ok);
+    CHECK(!missing.error.empty());
+    h.move(origin.x + 300, origin.y + 300);
+    CHECK(h.doc().get_title() == "ls_paint_ui_round_trip.png");
 
-    // 27. Paste from file adds the picture to the paper as an edit.
-    h.user().invoke_paste_from_file();
-    CHECK(h.dialogs().get_file_visible());
-    CHECK(h.dialogs().get_file_mode() == EFileDialogMode::PASTE);
-    h.dialogs().set_file_path(slint::SharedString(save_path.string()));
-    h.dialogs().invoke_file_ok();
-    CHECK(!h.dialogs().get_file_visible());
-    CHECK(!h.dialogs().get_file_has_error());
+    // 27. Paste from file adds the picture to the paper as an edit, and hands
+    //     it to the selection tool the way the window does.
+    CHECK(h.controller().paste_from_file(save_path).ok);
+    h.user().set_selected_tool(ETool::SELECTION);
+    h.move(origin.x + 300, origin.y + 300);
     CHECK(h.doc().get_modified());
 
     // 29. A brush preset reaches the next stroke: the square tip covers the
@@ -927,11 +980,11 @@ int run_ui_tests() {
     const int before_w = h.controller().document().width();
     const int before_h = h.controller().document().height();
     h.user().invoke_resize_dialog();
-    CHECK(h.dialogs().get_resize_visible());
-    h.dialogs().set_resize_width(slint::SharedString("1200"));
-    h.dialogs().set_resize_height(slint::SharedString("900"));
-    h.dialogs().invoke_resize_ok();
-    CHECK(!h.dialogs().get_resize_visible());
+    CHECK(h.resize_open());
+    h.resize().set_width_text(slint::SharedString("1200"));
+    h.resize().set_height_text(slint::SharedString("900"));
+    h.resize().invoke_accepted();
+    CHECK(!h.resize_open());
     CHECK(h.controller().document().width() == 1200);
     CHECK(h.controller().document().height() == 900);
     h.controller().history().undo();
@@ -942,13 +995,13 @@ int run_ui_tests() {
     // ... and a size the canvas cannot take is refused with a reason, leaving
     // the dialog up so it can be corrected.
     h.user().invoke_resize_dialog();
-    h.dialogs().set_resize_width(slint::SharedString(""));
-    h.dialogs().invoke_resize_ok();
-    CHECK(h.dialogs().get_resize_visible());
-    CHECK(h.dialogs().get_message_visible());
-    h.dialogs().invoke_message_ok();
-    h.dialogs().invoke_resize_cancel();
-    CHECK(!h.dialogs().get_resize_visible());
+    h.resize().set_width_text(slint::SharedString(""));
+    h.resize().invoke_accepted();
+    CHECK(h.resize_open());
+    CHECK(h.message_open());
+    h.message().invoke_accepted();
+    h.resize().invoke_cancelled();
+    CHECK(!h.resize_open());
 
     // 30. Pasting a picture larger than the canvas grows the canvas to fit,
     //     and one undo restores both the pixels and the size.
@@ -963,14 +1016,17 @@ int run_ui_tests() {
     const int small_w = h.controller().document().width();
     const int small_h = h.controller().document().height();
     CHECK(small_w < 1200);
-    h.user().invoke_paste_from_file();
-    CHECK(h.dialogs().get_file_visible());
-    h.dialogs().set_file_path(slint::SharedString(big_path.string()));
-    h.dialogs().invoke_file_ok();
-    CHECK(!h.dialogs().get_file_visible());
+    CHECK(h.controller().paste_from_file(big_path).ok);
     CHECK(h.controller().document().width() == 1200);
     CHECK(h.controller().document().height() == 900);
-    CHECK(h.color_near(1190, 890, 255, 0, 0));
+    // The pasted block hovers on the paper until it is applied, so the red
+    // corner lives in the block and not yet in the flattened pixels.
+    const auto& pasted_block = h.controller().document().floating();
+    CHECK(pasted_block.has_value());
+    CHECK(pasted_block->position.x == 0 && pasted_block->position.y == 0);
+    const Rgba8 red{255, 0, 0, 255};
+    CHECK(pasted_block->content.at(1190, 890) == red);
+    CHECK(!h.color_near(1190, 890, 255, 0, 0));
     h.controller().history().undo();
     (void)h.controller().document().flush();
     CHECK(h.controller().document().width() == small_w);
@@ -986,9 +1042,9 @@ int run_ui_tests() {
     h.release(origin.x + 560, origin.y + 300);
     CHECK(h.doc().get_modified());
     h.window().dispatch_close_requested_event();
-    CHECK(h.dialogs().get_confirm_visible());
-    h.dialogs().invoke_confirm_cancel();
-    CHECK(!h.dialogs().get_confirm_visible());
+    CHECK(h.confirm_open());
+    h.confirm().invoke_cancelled();
+    CHECK(!h.confirm_open());
 
     // 32. The Edit Colors dialog opens from the ribbon's button, starts on the
     //     active color, and Cancel changes nothing.
@@ -1073,6 +1129,260 @@ int run_ui_tests() {
     const auto first_family = families->row_data(0);
     CHECK(first_family.has_value());
     CHECK(!first_family->empty());
+
+    // 36. The ruler and grid shortcuts turn their layers on and off.
+    h.user().set_show_rulers(false);
+    h.press_ctrl();
+    h.key("r");
+    h.release_ctrl();
+    CHECK(h.user().get_show_rulers());
+    h.press_ctrl();
+    h.key("r");
+    h.release_ctrl();
+    CHECK(!h.user().get_show_rulers());
+    h.user().set_show_gridlines(false);
+    h.press_ctrl();
+    h.key("g");
+    h.release_ctrl();
+    CHECK(h.user().get_show_gridlines());
+    h.press_ctrl();
+    h.key("g");
+    h.release_ctrl();
+    CHECK(!h.user().get_show_gridlines());
+
+    // The stored window geometry is applied while the window is made, before
+    // anything shows it. A window is built here directly, because the harness
+    // resizes every window it makes.
+    {
+        const std::filesystem::path geometry_dir =
+            std::filesystem::temp_directory_path() / "lsp_ui_geometry";
+        std::error_code geometry_error;
+        std::filesystem::remove_all(geometry_dir, geometry_error);
+#if defined(_WIN32)
+        _putenv_s("APPDATA", geometry_dir.string().c_str());
+#else
+        setenv("XDG_CONFIG_HOME", geometry_dir.string().c_str(), 1);
+#endif
+        {
+            SQLiteStore seeded(default_store_path());
+            seeded.set(kSTORE_KEY_WINDOW_X, "60");
+            seeded.set(kSTORE_KEY_WINDOW_Y, "40");
+            seeded.set(kSTORE_KEY_WINDOW_WIDTH, "744");
+            seeded.set(kSTORE_KEY_WINDOW_HEIGHT, "522");
+            seeded.save();
+        }
+        auto window = AppWindow::create();
+        AppController controller;
+        UiState ui(*window, controller);
+        const slint::PhysicalSize size = window->window().size();
+        CHECK(size.width == 744);
+        CHECK(size.height == 522);
+        // The stored position is applied the same way, but the testing backend
+        // is off-screen and reports no window position, so it cannot be read
+        // back here.
+    }
+
+    // The settings store: one run writes the window size, the three toggles
+    // and the font, and the next run reads them back. It runs against a config
+    // directory of its own, so this is the last thing the suite does.
+    {
+        const std::filesystem::path round_trip_dir =
+            std::filesystem::temp_directory_path() / "lsp_ui_config_round_trip";
+        std::error_code round_trip_error;
+        std::filesystem::remove_all(round_trip_dir, round_trip_error);
+#if defined(_WIN32)
+        _putenv_s("APPDATA", round_trip_dir.string().c_str());
+#else
+        setenv("XDG_CONFIG_HOME", round_trip_dir.string().c_str(), 1);
+#endif
+        {
+            Harness first;
+            first.user().set_show_rulers(true);
+            first.user().set_show_gridlines(true);
+            first.user().set_show_status_bar(false);
+            first.font_style().set_family("DejaVu Serif");
+            // Closing the window is what writes the settings out.
+            first.window().dispatch_close_requested_event();
+        }
+        {
+            Harness second;
+            // Rulers are the harness's own business: it turns them off for
+            // every window it makes so the drawing checks measure the view.
+            // That toggle is checked through the store below instead.
+            CHECK(second.user().get_show_gridlines());
+            CHECK(!second.user().get_show_status_bar());
+            CHECK(std::string(second.font_style().get_family()) == "DejaVu Serif");
+        }
+        // The settings landed under that directory, and the window size the
+        // tests drive was written with them.
+        const std::filesystem::path store_path = default_store_path();
+        CHECK(store_path.parent_path() == round_trip_dir / kAPP_ID);
+        SQLiteStore stored(store_path);
+        CHECK(stored.get(kSTORE_KEY_SHOW_RULERS).value_or("") == "1");
+        CHECK(stored.get(kSTORE_KEY_WINDOW_WIDTH).value_or("") == "900");
+        CHECK(stored.get(kSTORE_KEY_WINDOW_HEIGHT).value_or("") == "600");
+        CHECK(stored.get(kSTORE_KEY_FONT_FAMILY).value_or("") == "DejaVu Serif");
+    }
+
+    // 37. The File menu's recent list: the settings store fills it, a click
+    //     opens that file, an entry whose file is gone leaves the list without
+    //     a word, and opening over unsaved work asks the same question File >
+    //     Open asks.
+    {
+        const std::filesystem::path recent_dir =
+            std::filesystem::temp_directory_path() / "lsp_ui_recent";
+        std::filesystem::remove_all(recent_dir);
+        std::filesystem::create_directories(recent_dir);
+#ifdef _WIN32
+        _putenv_s("APPDATA", recent_dir.string().c_str());
+#else
+        setenv("XDG_CONFIG_HOME", recent_dir.string().c_str(), 1);
+#endif
+
+        const std::filesystem::path picture = recent_dir / "recent.png";
+        {
+            Harness writer;
+            writer.user().set_selected_tool(ETool::PENCIL);
+            writer.press(300, 300);
+            writer.drag(300, 300, 340, 340);
+            writer.release(340, 340);
+            CHECK(writer.controller().save_document(picture, ImageFormat::Png).ok);
+            CHECK(std::filesystem::exists(picture));
+        }
+
+        // The entry for a file that is no longer there sits first.
+        const std::filesystem::path gone = recent_dir / "gone.png";
+        CHECK(!std::filesystem::exists(gone));
+        {
+            SQLiteStore seeded(default_store_path());
+            seeded.set(kSTORE_KEY_RECENT_FILES, encode_list({gone.string(), picture.string()}));
+            seeded.save();
+        }
+
+        Harness h;
+        CHECK(h.user().get_recent_files()->row_count() == 2);
+        const std::optional<slint::SharedString> first = h.user().get_recent_files()->row_data(0);
+        CHECK(first.has_value() && std::string(*first) == gone.string());
+
+        // The File tab opens the panel; its first entry is that missing file.
+        h.press(25, 14);
+        h.release(25, 14);
+        CHECK(h.popups() == 1);
+        h.press(419, 71);
+        h.release(419, 71);
+        CHECK(h.popups() == 0);
+        CHECK(h.user().get_recent_files()->row_count() == 1);
+        CHECK(!h.message_open());
+        CHECK(!h.controller().has_current_path());
+
+        // The entry left behind opens its picture.
+        h.press(25, 14);
+        h.release(25, 14);
+        CHECK(h.popups() == 1);
+        h.press(419, 71);
+        h.release(419, 71);
+        CHECK(h.popups() == 0);
+        CHECK(h.controller().has_current_path());
+        CHECK(h.controller().current_path() == picture);
+        CHECK(h.doc().get_title() == "recent.png");
+        CHECK(!h.controller().history().is_modified());
+
+        // Opening over unsaved work asks first, and Don't Save goes through.
+        h.user().set_selected_tool(ETool::PENCIL);
+        // A point on the paper, found rather than assumed: the view's own
+        // scroll decides where the document's top left lands.
+        float canvas_x = 0;
+        float canvas_y = 0;
+        for (float probe = 20; probe < 400; probe += 20) {
+            h.move(probe, probe);
+            if (!h.user().get_cursor_on_canvas()) continue;
+            canvas_x = probe;
+            canvas_y = probe;
+            break;
+        }
+        CHECK(h.user().get_cursor_on_canvas());
+        h.user().set_primary_color(slint::Color::from_rgb_uint8(0, 0, 255));
+        h.press(canvas_x, canvas_y);
+        h.drag(canvas_x, canvas_y, canvas_x + 40, canvas_y + 40);
+        h.release(canvas_x + 40, canvas_y + 40);
+        CHECK(h.count_color(0, 0, h.doc().get_canvas_width(), h.doc().get_canvas_height(), 0, 0, 255) > 0);
+        CHECK(h.doc().get_modified());
+        h.press(25, 14);
+        h.release(25, 14);
+        h.press(419, 71);
+        h.release(419, 71);
+        CHECK(h.confirm_open());
+        CHECK(!h.confirm().get_message().empty());
+        h.confirm().invoke_discarded();
+        CHECK(h.controller().has_current_path());
+        CHECK(h.controller().current_path() == picture);
+        CHECK(!h.controller().history().is_modified());
+    }
+
+    // 38. The custom colours and the last folder the dialogs used survive a
+    // restart.
+    const std::filesystem::path customs_dir =
+        std::filesystem::temp_directory_path() / "lsp_ui_customs";
+    std::filesystem::remove_all(customs_dir);
+    std::filesystem::create_directories(customs_dir);
+#if defined(_WIN32)
+    _putenv_s("APPDATA", customs_dir.string().c_str());
+#else
+    setenv("XDG_CONFIG_HOME", customs_dir.string().c_str(), 1);
+#endif
+    const std::filesystem::path custom_picture = customs_dir / "custom.png";
+    {
+        Harness writer;
+        CHECK(writer.controller().save_document(custom_picture, ImageFormat::Png).ok);
+    }
+    {
+        SQLiteStore seeding(default_store_path());
+        seeding.set(kSTORE_KEY_PALETTE_CUSTOMS, encode_list({"112233", "445566"}));
+        seeding.set(kSTORE_KEY_DIALOG_CUSTOMS, encode_list({"778899"}));
+        seeding.set(kSTORE_KEY_RECENT_FILES,
+                    encode_list({custom_picture.string(), "older-1.png", "older-2.png", "older-3.png",
+                                 "older-4.png", "older-5.png", "older-6.png", "older-7.png",
+                                 "older-8.png", "older-9.png", "older-10.png", "older-11.png"}));
+        seeding.save();
+    }
+    {
+        Harness seeded;
+        const auto palette = seeded.user().get_color_palette();
+        // The list behind the File menu keeps the ten newest entries.
+        CHECK(seeded.user().get_recent_files()->row_count() ==
+              static_cast<std::size_t>(kMaxRecentFiles));
+        CHECK(palette->row_data(static_cast<std::size_t>(kDefaultPalette.size())) ==
+              slint::Color::from_rgb_uint8(0x11, 0x22, 0x33));
+        CHECK(palette->row_data(static_cast<std::size_t>(kDefaultPalette.size()) + 1) ==
+              slint::Color::from_rgb_uint8(0x44, 0x55, 0x66));
+        // The Edit Colors grid keeps its own slots, seeded from the store.
+        seeded.user().invoke_edit_colors();
+        const auto customs = seeded.picker().get_custom_colors();
+        CHECK(customs->row_data(0) == slint::Color::from_rgb_uint8(0x77, 0x88, 0x99));
+        seeded.picker().invoke_cancelled();
+
+        // Opening a picture records the folder the dialogs should start in.
+        seeded.press(25, 14);
+        seeded.release(25, 14);
+        seeded.press(419, 71);
+        seeded.release(419, 71);
+        CHECK(seeded.controller().current_path() == custom_picture);
+        SQLiteStore stored_again(default_store_path());
+        CHECK(stored_again.get(kSTORE_KEY_LAST_DIRECTORY) == custom_picture.parent_path().string());
+
+        // Closing writes the settings back, and the colours must come out the
+        // way they went in rather than drifting through the hex conversion.
+        seeded.window().dispatch_close_requested_event();
+        SQLiteStore written(default_store_path());
+        const std::optional<std::string> written_customs =
+            written.get(kSTORE_KEY_PALETTE_CUSTOMS);
+        CHECK(written_customs.has_value());
+        const std::vector<std::string> written_entries =
+            written_customs ? decode_list(*written_customs) : std::vector<std::string>{};
+        CHECK(written_entries.size() == static_cast<std::size_t>(kCustomColorSlots));
+        CHECK(!written_entries.empty() && written_entries[0] == "112233");
+        CHECK(written_entries.size() > 1 && written_entries[1] == "445566");
+    }
 
     std::filesystem::remove(save_path);
 

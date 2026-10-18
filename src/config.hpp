@@ -13,10 +13,16 @@ inline constexpr int kDefaultCanvasHeight = 600;
 inline constexpr int kMaxCanvasDimension = 4096;
 // Images larger than this are refused on load and never produced by growth.
 inline constexpr int kMaxImageDimension = 16384;
+
+// The application's own name: the folder under the user's config directory that
+// the settings database lives in.
+inline constexpr std::string_view kAPP_ID = "ls_paint";
 inline constexpr std::size_t kMaxHistoryEntries = 200;
 // The custom half of the palette. The ribbon shows the whole palette ten to a
 // row, so the default colors and these together fill three rows.
 inline constexpr int kCustomColorSlots = 10;
+// The File menu's recent list: the openings and savings it remembers.
+inline constexpr std::size_t kMaxRecentFiles = 10;
 // The grid of custom colors the Edit Colors dialog edits, two rows of eight.
 // OK moves the slot the dialog points at into the ribbon's strip.
 inline constexpr int kDialogCustomColorSlots = 16;

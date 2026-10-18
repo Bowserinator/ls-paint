@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -17,8 +18,10 @@
 #include "config.hpp"
 #include "core/color.hpp"
 #include "io/document_io.hpp"
+#include "store/store_sqlite.hpp"
 #include "text/font_catalog.hpp"
 #include "tools/text_tool.hpp"
+#include "ui/file_picker.hpp"
 #include "ui/shortcuts.hpp"
 
 namespace lsp {
@@ -255,10 +258,102 @@ ShapeTexture texture_from_slint(EShapeTexture texture) {
     return ShapeTexture::None;
 }
 
+// A path as UTF-8, which is what the store and the menus carry.
+std::string path_text(const std::filesystem::path& path) {
+    const std::u8string text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+// The path a stored UTF-8 string names.
+std::filesystem::path path_from_text(std::string_view text) {
+    const std::u8string bytes(reinterpret_cast<const char8_t*>(text.data()), text.size());
+    return std::filesystem::path(bytes);
+}
+
+// A colour as it is stored: six hex digits, red first.
+std::string color_text(const slint::Color& color) {
+    char text[7];
+    std::snprintf(text, sizeof(text), "%02x%02x%02x",
+                  static_cast<unsigned>(color.red()),
+                  static_cast<unsigned>(color.green()),
+                  static_cast<unsigned>(color.blue()));
+    return text;
+}
+
+// The colour a stored string names, or nothing when it is not six hex digits.
+std::optional<slint::Color> color_from_text(std::string_view text) {
+    if (text.size() != 6) return std::nullopt;
+    std::uint32_t parts[3] = {0, 0, 0};
+    for (std::size_t i = 0; i < 3; ++i) {
+        for (std::size_t digit = 0; digit < 2; ++digit) {
+            const char letter = text[i * 2 + digit];
+            std::uint32_t value = 0;
+            if (letter >= '0' && letter <= '9') value = static_cast<std::uint32_t>(letter - '0');
+            else if (letter >= 'a' && letter <= 'f') value = static_cast<std::uint32_t>(letter - 'a' + 10);
+            else if (letter >= 'A' && letter <= 'F') value = static_cast<std::uint32_t>(letter - 'A' + 10);
+            else return std::nullopt;
+            parts[i] = (parts[i] << 4) | value;
+        }
+    }
+    return slint::Color::from_rgb_uint8(static_cast<std::uint8_t>(parts[0]),
+                                        static_cast<std::uint8_t>(parts[1]),
+                                        static_cast<std::uint8_t>(parts[2]));
+}
+
+// A stored decimal, or nothing when the key is missing or its text is not a
+// whole number.
+std::optional<int> stored_int(const Store& store, std::string_view key) {
+    const std::optional<std::string> text = store.get(key);
+    if (!text || text->empty()) return std::nullopt;
+    int value = 0;
+    const char* begin = text->data();
+    const char* end = begin + text->size();
+    const std::from_chars_result parsed = std::from_chars(begin, end, value);
+    if (parsed.ec != std::errc{} || parsed.ptr != end) return std::nullopt;
+    return value;
+}
+
+// A stored flag: a value of zero is false and everything else is true.
+std::optional<bool> stored_bool(const Store& store, std::string_view key) {
+    const std::optional<int> value = stored_int(store, key);
+    if (!value) return std::nullopt;
+    return *value != 0;
+}
+
 Rgba8 to_rgba(slint::Color color) {
     // Ink is always opaque: an alpha-0 color makes every stroke invisible while
     // the pencil still appears to be drawing (M0 probe bug).
     return {color.red(), color.green(), color.blue(), 255};
+}
+
+// The outline of a turned block: the corners of the box its run started from,
+// turned by the angle it has turned since. The mask stays axis aligned, so this
+// is the shape the contents actually cover.
+std::vector<Point2f> turned_corners(const FloatingContents& contents) {
+    const RectI box = contents.turn_bounds;
+    const float centre_x = box.x + box.width / 2.0f;
+    const float centre_y = box.y + box.height / 2.0f;
+    const float radians = contents.rotation * std::numbers::pi_v<float> / 180.0f;
+    const float cos_value = std::cos(radians);
+    const float sin_value = std::sin(radians);
+    // Snapped so a right angle lands on exact pixels, as the rotation does.
+    const float straight = std::abs(cos_value) < 1e-4f ? 0.0f : cos_value;
+    const float square = std::abs(sin_value) < 1e-4f ? 0.0f : sin_value;
+    const float left = static_cast<float>(box.x);
+    const float top = static_cast<float>(box.y);
+    const float right = static_cast<float>(box.x + box.width);
+    const float bottom = static_cast<float>(box.y + box.height);
+    const float corners[4][2] = {{left, top}, {right, top}, {right, bottom}, {left, bottom}};
+    std::vector<Point2f> points;
+    points.reserve(5);
+    for (const auto& corner : corners) {
+        const float dx = corner[0] - centre_x;
+        const float dy = corner[1] - centre_y;
+        points.push_back(
+            {centre_x + dx * straight - dy * square, centre_y + dx * square + dy * straight});
+    }
+    points.push_back(points.front());  // closed, so the last edge is drawn too
+    return points;
 }
 
 }  // namespace
@@ -348,9 +443,9 @@ UiState::UiState(AppWindow& window, AppController& controller)
         refresh();
     });
 
-    m_window.global<UserState>().on_pointer_move([this](float x, float y) {
+    m_window.global<UserState>().on_pointer_move([this](float x, float y, bool shift) {
         m_controller.input().pointer_move(
-            tool_from_slint(m_window.global<UserState>().get_selected_tool()), {x, y});
+            tool_from_slint(m_window.global<UserState>().get_selected_tool()), {x, y}, shift);
         refresh();
     });
 
@@ -367,7 +462,11 @@ UiState::UiState(AppWindow& window, AppController& controller)
     });
 
     m_window.global<UserState>().on_key_pressed([this](const slint::SharedString& text, bool ctrl, bool shift) {
-        if (m_controller.input().active()) return;  // never act mid-stroke
+        if (m_controller.input().active()) {
+            // Never act mid-stroke; Escape is the one key that abandons it.
+            if (text == "\x1b" && m_controller.input().cancel()) refresh();
+            return;
+        }
         // While a text box is open every key belongs to it, including the ones
         // that would otherwise be shortcuts.
         if (text_open()) return;
@@ -390,6 +489,16 @@ UiState::UiState(AppWindow& window, AppController& controller)
             case ShortcutAction::Open: do_file_open(); break;
             case ShortcutAction::Save: do_file_save(); break;
             case ShortcutAction::SaveAs: do_file_save_as(); break;
+            case ShortcutAction::ToggleRulers: {
+                auto& state = m_window.global<UserState>();
+                state.set_show_rulers(!state.get_show_rulers());
+                break;
+            }
+            case ShortcutAction::ToggleGrid: {
+                auto& state = m_window.global<UserState>();
+                state.set_show_gridlines(!state.get_show_gridlines());
+                break;
+            }
         }
         refresh();
     });
@@ -427,52 +536,16 @@ UiState::UiState(AppWindow& window, AppController& controller)
     m_window.global<UserState>().on_file_save([this] { do_file_save(); });
     m_window.global<UserState>().on_file_save_as([this] { do_file_save_as(); });
     m_window.global<UserState>().on_file_exit([this] { do_file_exit(); });
+    m_window.global<UserState>().on_file_open_recent([this](int index) { open_recent(index); });
     m_window.global<UserState>().on_paste_from_file([this] { do_paste_from_file(); });
 
-    auto& dialog = m_window.global<DialogState>();
-    dialog.on_file_up([this] { do_file_up(); });
-    dialog.on_file_navigate([this](int row) { do_file_navigate(row); });
-    dialog.on_file_filter_changed([this](int index) { do_file_filter_changed(index); });
-    dialog.on_file_ok([this] { do_file_ok(); });
-    dialog.on_file_cancel([this] { do_file_cancel(); });
-    dialog.on_resize_ok([this] { do_resize_ok(); });
-    dialog.on_resize_cancel([this] { do_resize_cancel(); });
     m_window.global<UserState>().on_resize_dialog([this] { do_open_resize_dialog(); });
     m_window.global<UserState>().on_edit_colors([this] { do_open_color_dialog(); });
     m_window.global<UserState>().on_about([this] { do_open_about(); });
 
-    dialog.on_confirm_save([this, &dialog] {
-        dialog.set_confirm_visible(false);
-        m_window.invoke_focus_app();
-        if (!m_controller.has_current_path()) {
-            // The pending action waits while the picker asks where to put it.
-            show_file_dialog(EFileDialogMode::SAVE);
-            return;
-        }
-        if (const IoResult result = m_controller.save_document(); !result.ok) {
-            show_message("Save failed", result.error);
-            return;
-        }
-        set_title();
-        run_pending();
-    });
-    dialog.on_confirm_discard([this, &dialog] {
-        dialog.set_confirm_visible(false);
-        m_window.invoke_focus_app();
-        run_pending();
-    });
-    dialog.on_confirm_cancel([this, &dialog] {
-        dialog.set_confirm_visible(false);
-        m_window.invoke_focus_app();
-        m_pending = PendingAction::None;
-    });
-    dialog.on_message_ok([this, &dialog] {
-        dialog.set_message_visible(false);
-        m_window.invoke_focus_app();
-    });
-
     // The window's close button asks the same question as File > Exit.
     m_window.window().on_close_requested([this] {
+        save_settings();
         if (!m_controller.history().is_modified()) return slint::CloseRequestResponse::HideWindow;
         do_file_exit();
         return slint::CloseRequestResponse::KeepWindowShown;
@@ -485,11 +558,152 @@ UiState::UiState(AppWindow& window, AppController& controller)
         m_ant_phase = (m_ant_phase + 1) % kAntPeriod;
         update_ants();
     });
+
+    // The settings of the previous run, and the timer that notices a move or
+    // a resize of the window, which Slint never reports.
+    m_settings = std::make_unique<SQLiteStore>(default_store_path());
+    load_settings();
+    m_settings_timer.start(slint::TimerMode::Repeated, std::chrono::seconds(1),
+                           [this] { watch_settings(); });
+}
+
+void UiState::load_settings() {
+    if (!m_settings) return;
+    slint::Window& window = m_window.window();
+
+    if (const std::optional<std::string> family = m_settings->get(kSTORE_KEY_FONT_FAMILY);
+        family && !family->empty()) {
+        m_window.global<FontStyle>().set_family(slint::SharedString(*family));
+        // The preview is drawn by Slint, which keeps the font size, while the
+        // commit is rasterized to the metrics of the face.
+        m_window.global<FontStyle>().set_preview_scale(
+            text_preview_scale(std::string_view(*family)));
+    }
+    if (const std::optional<bool> stored = stored_bool(*m_settings, kSTORE_KEY_SHOW_RULERS))
+        m_window.global<UserState>().set_show_rulers(*stored);
+    if (const std::optional<bool> stored = stored_bool(*m_settings, kSTORE_KEY_SHOW_GRIDLINES))
+        m_window.global<UserState>().set_show_gridlines(*stored);
+    if (const std::optional<bool> stored = stored_bool(*m_settings, kSTORE_KEY_SHOW_STATUS_BAR))
+        m_window.global<UserState>().set_show_status_bar(*stored);
+
+    // The geometry is stored in logical pixels, so the same numbers mean the
+    // same window on a screen with a different scale factor.
+    const std::optional<int> width = stored_int(*m_settings, kSTORE_KEY_WINDOW_WIDTH);
+    const std::optional<int> height = stored_int(*m_settings, kSTORE_KEY_WINDOW_HEIGHT);
+    if (width && height && *width > 0 && *height > 0) {
+        window.set_size(slint::LogicalSize({static_cast<float>(*width), static_cast<float>(*height)}));
+    }
+    const std::optional<int> x = stored_int(*m_settings, kSTORE_KEY_WINDOW_X);
+    const std::optional<int> y = stored_int(*m_settings, kSTORE_KEY_WINDOW_Y);
+    if (x && y) window.set_position(slint::LogicalPosition({static_cast<float>(*x), static_cast<float>(*y)}));
+
+    // The File menu's recent list, newest entry first.
+    if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_RECENT_FILES)) {
+        for (const std::string& entry : decode_list(*stored)) {
+            if (entry.empty()) continue;
+            if (m_recent_files.size() >= kMaxRecentFiles) break;
+            m_recent_files.push_back(path_from_text(entry));
+        }
+    }
+    publish_recent_files();
+
+    // The custom colours the user has mixed, in the order the two grids hold
+    // them.
+    if (m_palette) {
+        if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_PALETTE_CUSTOMS)) {
+            const std::vector<std::string> entries = decode_list(*stored);
+            for (std::size_t i = 0; i < entries.size() && i < kCustomColorSlots; ++i) {
+                if (const std::optional<slint::Color> color = color_from_text(entries[i]))
+                    m_palette->set_row_data(kDefaultPalette.size() + i, *color);
+            }
+        }
+    }
+    if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_DIALOG_CUSTOMS)) {
+        for (const std::string& entry : decode_list(*stored)) {
+            if (m_dialog_customs_stored.size() >= kDialogCustomColorSlots) break;
+            if (const std::optional<slint::Color> color = color_from_text(entry))
+                m_dialog_customs_stored.push_back(*color);
+        }
+    }
+    if (const std::optional<std::string> stored = m_settings->get(kSTORE_KEY_LAST_DIRECTORY))
+        m_last_directory = path_from_text(*stored);
+
+    // The text tool draws with the family the box is set in.
+    sync_font_style();
+    m_stored_settings = current_settings();
+}
+
+UiState::SettingsSnapshot UiState::current_settings() const {
+    SettingsSnapshot snapshot;
+    const slint::Window& window = m_window.window();
+    const float scale = window.scale_factor() > 0.0f ? window.scale_factor() : 1.0f;
+    const slint::PhysicalPosition position = window.position();
+    const slint::PhysicalSize size = window.size();
+    const auto to_logical = [scale](int value) {
+        return static_cast<int>(std::lround(static_cast<float>(value) / scale));
+    };
+    snapshot.x = to_logical(position.x);
+    snapshot.y = to_logical(position.y);
+    snapshot.width = to_logical(size.width);
+    snapshot.height = to_logical(size.height);
+    const UserState& user = m_window.global<UserState>();
+    snapshot.rulers = user.get_show_rulers();
+    snapshot.gridlines = user.get_show_gridlines();
+    snapshot.status_bar = user.get_show_status_bar();
+    snapshot.family = std::string(m_window.global<FontStyle>().get_family());
+    return snapshot;
+}
+
+void UiState::save_settings() {
+    if (!m_settings) return;
+    const SettingsSnapshot snapshot = current_settings();
+    m_settings->set(kSTORE_KEY_WINDOW_X, std::to_string(snapshot.x));
+    m_settings->set(kSTORE_KEY_WINDOW_Y, std::to_string(snapshot.y));
+    m_settings->set(kSTORE_KEY_WINDOW_WIDTH, std::to_string(snapshot.width));
+    m_settings->set(kSTORE_KEY_WINDOW_HEIGHT, std::to_string(snapshot.height));
+    m_settings->set(kSTORE_KEY_SHOW_RULERS, snapshot.rulers ? "1" : "0");
+    m_settings->set(kSTORE_KEY_SHOW_GRIDLINES, snapshot.gridlines ? "1" : "0");
+    m_settings->set(kSTORE_KEY_SHOW_STATUS_BAR, snapshot.status_bar ? "1" : "0");
+    m_settings->set(kSTORE_KEY_FONT_FAMILY, snapshot.family);
+    std::vector<std::string> recent;
+    recent.reserve(m_recent_files.size());
+    for (const std::filesystem::path& path : m_recent_files) recent.push_back(path_text(path));
+    m_settings->set(kSTORE_KEY_RECENT_FILES, encode_list(recent));
+    std::vector<std::string> customs;
+    if (m_palette) {
+        for (std::size_t i = 0; i < kCustomColorSlots; ++i) {
+            const std::optional<slint::Color> color = m_palette->row_data(kDefaultPalette.size() + i);
+            customs.push_back(color_text(color.value_or(slint::Color::from_rgb_uint8(255, 255, 255))));
+        }
+    }
+    m_settings->set(kSTORE_KEY_PALETTE_CUSTOMS, encode_list(customs));
+    std::vector<std::string> dialog_customs;
+    if (m_dialog_customs) {
+        for (int i = 0; i < kDialogCustomColorSlots; ++i) {
+            const std::optional<slint::Color> color =
+                m_dialog_customs->row_data(static_cast<std::size_t>(i));
+            dialog_customs.push_back(color_text(color.value_or(slint::Color::from_rgb_uint8(255, 255, 255))));
+        }
+    } else {
+        for (const slint::Color& color : m_dialog_customs_stored)
+            dialog_customs.push_back(color_text(color));
+    }
+    m_settings->set(kSTORE_KEY_DIALOG_CUSTOMS, encode_list(dialog_customs));
+    m_settings->set(kSTORE_KEY_LAST_DIRECTORY, path_text(m_last_directory));
+    m_settings->save();
+    m_stored_settings = snapshot;
+    m_colors_dirty = false;
+}
+
+void UiState::watch_settings() {
+    if (!m_settings) return;
+    if (current_settings() != m_stored_settings || m_colors_dirty) save_settings();
 }
 
 void UiState::set_palette_color(int index, const slint::Color& color) {
     if (!m_palette || index < 0 || index >= static_cast<int>(m_palette->row_count())) return;
     m_palette->set_row_data(static_cast<std::size_t>(index), color);
+    if (index >= static_cast<int>(kDefaultPalette.size())) m_colors_dirty = true;
 }
 
 // The dialog starts with the ribbon's strip in its grid and empty slots after
@@ -500,7 +714,9 @@ void UiState::seed_dialog_customs() {
     m_dialog_customs = std::make_shared<slint::VectorModel<slint::Color>>();
     for (int i = 0; i < kDialogCustomColorSlots; ++i) {
         slint::Color color = slint::Color::from_rgb_uint8(255, 255, 255);
-        if (i < kCustomColorSlots && m_palette) {
+        if (i < static_cast<int>(m_dialog_customs_stored.size())) {
+            color = m_dialog_customs_stored[static_cast<std::size_t>(i)];
+        } else if (i < kCustomColorSlots && m_palette) {
             const std::size_t row = kDefaultPalette.size() + static_cast<std::size_t>(i);
             if (const std::optional<slint::Color> stored = m_palette->row_data(row)) color = *stored;
         }
@@ -512,6 +728,9 @@ void UiState::seed_dialog_customs() {
 void UiState::write_dialog_custom(int index, const slint::Color& color) {
     if (!m_dialog_customs || index < 0 || index >= kDialogCustomColorSlots) return;
     m_dialog_customs->set_row_data(static_cast<std::size_t>(index), color);
+    if (static_cast<std::size_t>(index) < m_dialog_customs_stored.size())
+        m_dialog_customs_stored[static_cast<std::size_t>(index)] = color;
+    m_colors_dirty = true;
 }
 
 // The strip keeps the last ten colors, so a new one enters at its head and the
@@ -730,6 +949,99 @@ void UiState::do_open_about() {
     (*m_about_window)->show();
 }
 
+void UiState::ensure_confirm_window() {
+    if (m_confirm_window) return;
+    m_confirm_window = lsp_confirm::ConfirmDialog::create();
+    lsp_confirm::ConfirmDialog& dialog = **m_confirm_window;
+    dialog.on_accepted([this] {
+        close_confirm_window();
+        // The pending action waits for the save, and is dropped when the user
+        // backs out of it or it fails.
+        if (!save_document()) {
+            m_pending = PendingAction::None;
+            return;
+        }
+        run_pending();
+    });
+    dialog.on_discarded([this] {
+        close_confirm_window();
+        run_pending();
+    });
+    dialog.on_cancelled([this] {
+        close_confirm_window();
+        m_pending = PendingAction::None;
+    });
+    dialog.window().on_close_requested([this] {
+        // Closing the question with the window manager drops whatever waited on
+        // the answer.
+        m_pending = PendingAction::None;
+        m_window.invoke_focus_app();
+        return slint::CloseRequestResponse::HideWindow;
+    });
+}
+
+void UiState::close_confirm_window() {
+    if (m_confirm_window) (*m_confirm_window)->hide();
+    m_window.invoke_focus_app();
+}
+
+lsp_confirm::ConfirmDialog& UiState::confirm_window() {
+    ensure_confirm_window();
+    return **m_confirm_window;
+}
+
+bool UiState::confirm_window_open() const noexcept {
+    return m_confirm_window && (*m_confirm_window)->window().is_visible();
+}
+
+void UiState::ensure_message_window() {
+    if (m_message_window) return;
+    m_message_window = lsp_message::MessageDialog::create();
+    (*m_message_window)->on_accepted([this] { close_message_window(); });
+}
+
+void UiState::close_message_window() {
+    if (m_message_window) (*m_message_window)->hide();
+    m_window.invoke_focus_app();
+}
+
+lsp_message::MessageDialog& UiState::message_window() {
+    ensure_message_window();
+    return **m_message_window;
+}
+
+bool UiState::message_window_open() const noexcept {
+    return m_message_window && (*m_message_window)->window().is_visible();
+}
+
+void UiState::ensure_resize_window() {
+    if (m_resize_window) return;
+    m_resize_window = lsp_resize::ResizeDialog::create();
+    lsp_resize::ResizeDialog& dialog = **m_resize_window;
+    dialog.on_accepted([this] { do_resize_ok(); });
+    dialog.on_cancelled([this] { do_resize_cancel(); });
+    dialog.window().on_close_requested([this] {
+        // Closing the question with the window manager is the same as
+        // cancelling it.
+        close_resize_window();
+        return slint::CloseRequestResponse::HideWindow;
+    });
+}
+
+void UiState::close_resize_window() {
+    if (m_resize_window) (*m_resize_window)->hide();
+    m_window.invoke_focus_app();
+}
+
+lsp_resize::ResizeDialog& UiState::resize_window() {
+    ensure_resize_window();
+    return **m_resize_window;
+}
+
+bool UiState::resize_window_open() const noexcept {
+    return m_resize_window && (*m_resize_window)->window().is_visible();
+}
+
 void UiState::sync_colors() {
     const auto& state = m_window.global<UserState>();
     m_controller.colors() = {to_rgba(state.get_primary_color()), to_rgba(state.get_secondary_color())};
@@ -918,7 +1230,16 @@ void UiState::update_ants() {
 
     std::vector<SelectionDash> dark;
     std::vector<SelectionDash> light;
-    if (visible) append_border_runs(bounds, m_ant_phase, dark, light);
+    if (visible) {
+        // A turned float is not the box its mask holds, so its outline follows
+        // the shape its contents cover.
+        const std::optional<FloatingContents>& floating = document.floating();
+        if (floating.has_value() && floating->rotation != 0.0f) {
+            append_path_runs(turned_corners(*floating), m_ant_phase, dark, light);
+        } else {
+            append_border_runs(bounds, m_ant_phase, dark, light);
+        }
+    }
     if (drawing) append_path_runs(preview.points, m_ant_phase, dark, light);
     state.set_ants_dark(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(dark)));
     state.set_ants_light(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(light)));
@@ -929,6 +1250,17 @@ void UiState::update_ants() {
         grips = grip_anchors(bounds);
     }
     state.set_grips(std::make_shared<slint::VectorModel<SelectionGrip>>(std::move(grips)));
+
+    // The rotate badge. Written only when it changes: this runs on a timer, and
+    // fresh values every tick would repaint the window forever.
+    const RotatePreview& rotate = m_controller.tool_ui().rotate;
+    if (rotate.hover != m_rotate_hover || rotate.rotating != m_rotate_active) {
+        m_rotate_hover = rotate.hover;
+        m_rotate_active = rotate.rotating;
+        auto& zone = m_window.global<RotateOverlay>();
+        zone.set_hover(rotate.hover);
+        zone.set_rotating(rotate.rotating);
+    }
 }
 
 void UiState::set_title() {
@@ -946,10 +1278,11 @@ void UiState::after_document_change() {
 
 void UiState::ask_unsaved(PendingAction action) {
     m_pending = action;
-    auto& dialog = m_window.global<DialogState>();
-    dialog.set_confirm_message(slint::SharedString("Do you want to save changes to " +
-                                                  m_controller.display_name() + "?"));
-    dialog.set_confirm_visible(true);
+    ensure_confirm_window();
+    (*m_confirm_window)
+        ->set_message(slint::SharedString("Do you want to save changes to " +
+                                          m_controller.display_name() + "?"));
+    (*m_confirm_window)->show();
 }
 
 void UiState::run_pending() {
@@ -961,9 +1294,73 @@ void UiState::run_pending() {
             (void)m_controller.new_document();
             after_document_change();
             break;
-        case PendingAction::Open: show_file_dialog(EFileDialogMode::OPEN); break;
-        case PendingAction::Exit: m_window.hide(); break;
+        case PendingAction::Open: open_document(); break;
+        case PendingAction::OpenRecent: {
+            const std::filesystem::path path = m_pending_path;
+            m_pending_path.clear();
+            (void)open_path(path);
+            break;
+        }
+        case PendingAction::Exit:
+            save_settings();
+            m_window.hide();
+            break;
     }
+}
+
+// Adds a path to the File menu's recent list: newest first, each path once,
+// and never more than the list holds.
+void UiState::note_recent_file(const std::filesystem::path& path) {
+    if (path.empty()) return;
+    const std::filesystem::path ready = std::filesystem::absolute(path).lexically_normal();
+    std::erase(m_recent_files, ready);
+    m_recent_files.insert(m_recent_files.begin(), ready);
+    if (m_recent_files.size() > kMaxRecentFiles) m_recent_files.resize(kMaxRecentFiles);
+    const std::filesystem::path folder = ready.parent_path();
+    if (!folder.empty()) m_last_directory = folder;
+    publish_recent_files();
+    save_settings();
+}
+
+void UiState::forget_recent_file(const std::filesystem::path& path) {
+    if (std::erase(m_recent_files, path) == 0) return;
+    publish_recent_files();
+    save_settings();
+}
+
+void UiState::publish_recent_files() {
+    auto model = std::make_shared<slint::VectorModel<slint::SharedString>>();
+    for (const std::filesystem::path& path : m_recent_files)
+        model->push_back(slint::SharedString(path_text(path)));
+    m_window.global<UserState>().set_recent_files(model);
+}
+
+void UiState::open_recent(int index) {
+    if (index < 0 || index >= static_cast<int>(m_recent_files.size())) return;
+    m_pending_path = m_recent_files[static_cast<std::size_t>(index)];
+    if (!std::filesystem::exists(m_pending_path)) {
+        // A file that is no longer there leaves the list without a word.
+        const std::filesystem::path missing = m_pending_path;
+        m_pending_path.clear();
+        forget_recent_file(missing);
+        return;
+    }
+    if (m_controller.history().is_modified()) {
+        ask_unsaved(PendingAction::OpenRecent);
+        return;
+    }
+    m_pending = PendingAction::OpenRecent;
+    run_pending();
+}
+
+bool UiState::open_path(const std::filesystem::path& path) {
+    if (const IoResult result = m_controller.open_document(path); !result.ok) {
+        show_message("Open failed", result.error);
+        return false;
+    }
+    after_document_change();
+    note_recent_file(path);
+    return true;
 }
 
 void UiState::do_file_new() {
@@ -981,28 +1378,79 @@ void UiState::do_file_open() {
         ask_unsaved(PendingAction::Open);
         return;
     }
-    show_file_dialog(EFileDialogMode::OPEN);
+    open_document();
 }
 
-void UiState::do_file_save() {
-    if (!m_controller.has_current_path()) {
-        show_file_dialog(EFileDialogMode::SAVE);
-        return;
-    }
+void UiState::do_file_save() { (void)save_document(); }
+
+void UiState::do_file_save_as() { (void)save_document_as(); }
+
+bool UiState::save_document() {
+    if (!m_controller.has_current_path()) return save_document_as();
     if (const IoResult result = m_controller.save_document(); !result.ok) {
         show_message("Save failed", result.error);
-        return;
+        return false;
     }
     set_title();
+    note_recent_file(m_controller.current_path());
+    return true;
 }
 
-void UiState::do_file_save_as() { show_file_dialog(EFileDialogMode::SAVE); }
+// Where a file dialog opens: the folder the last dialog used, or beside the
+// document when no dialog has run yet.
+std::filesystem::path UiState::dialog_directory() const {
+    if (!m_last_directory.empty()) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(m_last_directory, ec))
+            return m_last_directory;
+    }
+    return m_controller.default_directory();
+}
+
+bool UiState::save_document_as() {
+    if (!ensure_file_dialogs()) return false;
+    const std::string stem = m_controller.has_current_path() ? m_controller.current_path().stem().string()
+                                                              : std::string("untitled");
+    const std::optional<std::filesystem::path> chosen = pick_image_to_save(
+        dialog_directory(), stem + extension_for(ImageFormat::Png));
+    if (!chosen) return false;
+
+    // A name without a known extension is written as a PNG.
+    std::filesystem::path path = *chosen;
+    std::optional<ImageFormat> format = format_from_extension(path);
+    if (!format) {
+        format = ImageFormat::Png;
+        path += extension_for(*format);
+    }
+    if (const IoResult result = m_controller.save_document(path, *format); !result.ok) {
+        show_message("Save failed", result.error);
+        return false;
+    }
+    set_title();
+    note_recent_file(path);
+    return true;
+}
+
+void UiState::open_document() {
+    if (!ensure_file_dialogs()) return;
+    const std::optional<std::filesystem::path> path =
+        pick_image_to_open("Open", dialog_directory());
+    if (!path) return;
+    (void)open_path(*path);
+}
+
+bool UiState::ensure_file_dialogs() {
+    if (file_dialogs_available()) return true;
+    show_message("No file dialog", "This system has no file dialog to show. Install zenity or kdialog.");
+    return false;
+}
 
 void UiState::do_file_exit() {
     if (m_controller.history().is_modified()) {
         ask_unsaved(PendingAction::Exit);
         return;
     }
+    save_settings();
     m_window.hide();
 }
 
@@ -1024,191 +1472,52 @@ void UiState::do_paste() {
     refresh();
 }
 
-void UiState::do_paste_from_file() { show_file_dialog(EFileDialogMode::PASTE); }
+void UiState::do_paste_from_file() {
+    if (!ensure_file_dialogs()) return;
+    const std::optional<std::filesystem::path> path =
+        pick_image_to_open("Paste from file", dialog_directory());
+    if (!path) return;
+    if (const IoResult result = m_controller.paste_from_file(*path); !result.ok) {
+        show_message("Paste failed", result.error);
+        return;
+    }
+    m_window.global<UserState>().set_selected_tool(ETool::SELECTION);
+    refresh();
+}
 
 void UiState::show_message(const std::string& title, const std::string& text) {
-    auto& dialog = m_window.global<DialogState>();
-    dialog.set_message_title(slint::SharedString(title));
-    dialog.set_message_text(slint::SharedString(text));
-    dialog.set_message_visible(true);
-}
-
-void UiState::show_file_dialog(EFileDialogMode mode) {
-    auto& dialog = m_window.global<DialogState>();
-    dialog.set_file_mode(mode);
-    dialog.set_file_has_error(false);
-    dialog.set_file_error(slint::SharedString());
-    dialog.set_file_filter(0);
-
-    switch (mode) {
-        case EFileDialogMode::OPEN:
-            dialog.set_file_title(slint::SharedString("Open"));
-            dialog.set_file_accept_text(slint::SharedString("Open"));
-            dialog.set_file_path(slint::SharedString());
-            m_file_dir = m_controller.default_directory();
-            break;
-        case EFileDialogMode::SAVE: {
-            dialog.set_file_title(slint::SharedString("Save As"));
-            dialog.set_file_accept_text(slint::SharedString("Save"));
-            const ImageFormat format = format_from_index(dialog.get_file_format());
-            const std::string stem = m_controller.has_current_path()
-                                         ? m_controller.current_path().stem().string()
-                                         : std::string("untitled");
-            dialog.set_file_path(slint::SharedString(stem + extension_for(format)));
-            m_file_dir = m_controller.default_directory();
-            break;
-        }
-        case EFileDialogMode::PASTE:
-            dialog.set_file_title(slint::SharedString("Paste from file"));
-            dialog.set_file_accept_text(slint::SharedString("Paste"));
-            dialog.set_file_path(slint::SharedString());
-            m_file_dir = m_controller.default_directory();
-            break;
-    }
-
-    dialog.set_file_visible(true);
-    refresh_file_dialog();
-}
-
-void UiState::refresh_file_dialog() {
-    auto& dialog = m_window.global<DialogState>();
-    dialog.set_file_directory(slint::SharedString(m_file_dir.string()));
-
-    const bool images_only = dialog.get_file_filter() == 0;
-    m_listing = m_controller.list_directory(m_file_dir, images_only);
-
-    auto labels = std::make_shared<slint::VectorModel<slint::SharedString>>();
-    auto paths = std::make_shared<slint::VectorModel<slint::SharedString>>();
-    for (const std::filesystem::path& entry : m_listing) {
-        std::string name = entry.filename().string();
-        if (std::filesystem::is_directory(entry)) name += "/";
-        labels->push_back(slint::SharedString(name));
-        paths->push_back(slint::SharedString(entry.string()));
-    }
-    dialog.set_file_labels(labels);
-    dialog.set_file_paths(paths);
-}
-
-void UiState::do_file_up() {
-    if (!m_file_dir.has_parent_path()) return;
-    m_file_dir = m_file_dir.parent_path();
-    refresh_file_dialog();
-}
-
-void UiState::do_file_navigate(int row) {
-    if (row < 0 || static_cast<std::size_t>(row) >= m_listing.size()) return;
-
-    const std::filesystem::path& entry = m_listing[static_cast<std::size_t>(row)];
-    if (std::filesystem::is_directory(entry)) {
-        m_file_dir = entry;
-        refresh_file_dialog();
-        return;
-    }
-    // A file click only names it: the accept button does the opening, so a
-    // misclick cannot replace the document.
-    m_window.global<DialogState>().set_file_path(slint::SharedString(entry.filename().string()));
-}
-
-void UiState::do_file_filter_changed(int index) {
-    auto& dialog = m_window.global<DialogState>();
-    if (dialog.get_file_mode() == EFileDialogMode::SAVE) {
-        dialog.set_file_format(index);
-        std::filesystem::path path(std::string(dialog.get_file_path()));
-        if (!path.empty()) {
-            path.replace_extension(extension_for(format_from_index(index)));
-            dialog.set_file_path(slint::SharedString(path.string()));
-        }
-    } else {
-        dialog.set_file_filter(index);
-    }
-    refresh_file_dialog();
-}
-
-void UiState::do_file_ok() {
-    auto& dialog = m_window.global<DialogState>();
-    std::filesystem::path path(std::string(dialog.get_file_path()));
-    if (path.empty()) return;
-    if (path.is_relative()) path = m_file_dir / path;
-
-    const auto report = [&dialog](const std::string& error) {
-        dialog.set_file_error(slint::SharedString(error));
-        dialog.set_file_has_error(true);
-    };
-
-    if (dialog.get_file_mode() == EFileDialogMode::SAVE) {
-        const ImageFormat format = format_from_index(dialog.get_file_format());
-        if (!path.has_extension()) path += extension_for(format);
-        const IoResult result = m_controller.save_document(path, format);
-        if (!result.ok) {
-            report(result.error);
-            return;
-        }
-        dialog.set_file_visible(false);
-        dialog.set_file_has_error(false);
-        set_title();
-        m_window.invoke_focus_app();
-        // A save that was asked for by the unsaved-changes question finishes
-        // whatever the user was doing when it appeared.
-        run_pending();
-        return;
-    }
-
-    if (dialog.get_file_mode() == EFileDialogMode::PASTE) {
-        const IoResult result = m_controller.paste_from_file(path);
-        if (!result.ok) {
-            report(result.error);
-            return;
-        }
-        dialog.set_file_visible(false);
-        m_window.invoke_focus_app();
-        m_window.global<UserState>().set_selected_tool(ETool::SELECTION);
-        refresh();
-        return;
-    }
-
-    const IoResult result = m_controller.open_document(path);
-    if (!result.ok) {
-        report(result.error);
-        return;
-    }
-    dialog.set_file_visible(false);
-    dialog.set_file_has_error(false);
-    m_window.invoke_focus_app();
-    after_document_change();
-}
-
-void UiState::do_file_cancel() {
-    m_window.global<DialogState>().set_file_visible(false);
-    m_window.invoke_focus_app();
-    m_pending = PendingAction::None;
+    ensure_message_window();
+    (*m_message_window)->set_heading(slint::SharedString(title));
+    (*m_message_window)->set_text(slint::SharedString(text));
+    (*m_message_window)->show();
 }
 
 void UiState::do_open_resize_dialog() {
-    auto& dialog = m_window.global<DialogState>();
-    dialog.set_resize_width(slint::SharedString(std::to_string(m_controller.document().width())));
-    dialog.set_resize_height(slint::SharedString(std::to_string(m_controller.document().height())));
-    dialog.set_resize_visible(true);
+    ensure_resize_window();
+    (*m_resize_window)->set_width_text(
+        slint::SharedString(std::to_string(m_controller.document().width())));
+    (*m_resize_window)->set_height_text(
+        slint::SharedString(std::to_string(m_controller.document().height())));
+    (*m_resize_window)->show();
 }
 
 void UiState::do_resize_ok() {
-    auto& dialog = m_window.global<DialogState>();
-    const int width = parse_canvas_size(dialog.get_resize_width());
-    const int height = parse_canvas_size(dialog.get_resize_height());
+    lsp_resize::ResizeDialog& dialog = resize_window();
+    const int width = parse_canvas_size(dialog.get_width_text());
+    const int height = parse_canvas_size(dialog.get_height_text());
     if (width == 0 || height == 0) {
         show_message("Resize image", "Enter a whole number of pixels between 1 and " +
                                           std::to_string(kMaxCanvasDimension) + ".");
         return;
     }
-    dialog.set_resize_visible(false);
-    m_window.invoke_focus_app();
+    close_resize_window();
     m_controller.resize_canvas(width, height,
                                to_rgba(m_window.global<UserState>().get_secondary_color()));
     refresh();
 }
 
 void UiState::do_resize_cancel() {
-    m_window.global<DialogState>().set_resize_visible(false);
-    m_window.invoke_focus_app();
+    close_resize_window();
 }
 
 }  // namespace lsp

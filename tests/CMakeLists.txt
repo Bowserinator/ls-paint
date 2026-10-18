@@ -32,17 +32,28 @@ target_link_libraries(lsp_shape_tests PRIVATE lsp_core)
 target_include_directories(lsp_shape_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME lsp_shape_tests COMMAND lsp_shape_tests)
 
+add_executable(lsp_store_tests store_test.cpp)
+target_link_libraries(lsp_store_tests PRIVATE lsp_core)
+target_include_directories(lsp_store_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME lsp_store_tests COMMAND lsp_store_tests)
+
 add_executable(lsp_ui_tests
     ui_tests.cpp
     ${CMAKE_SOURCE_DIR}/src/render/slint_bridge.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ui_state.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/file_picker.cpp
 )
 target_link_libraries(lsp_ui_tests PRIVATE lsp_core Slint::Slint)
 target_include_directories(lsp_ui_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# The window links the pickers in, so the test binary has to as well.
+target_include_directories(lsp_ui_tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/portable-file-dialogs)
 slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/appwindow.slint)
 # The dialog windows, in the same namespaces as the application's copies.
 slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/dialogs/edit-colors-window.slint NAMESPACE lsp_colors)
 slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/dialogs/about-window.slint NAMESPACE lsp_about)
+slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/dialogs/confirm-dialog.slint NAMESPACE lsp_confirm)
+slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/dialogs/message-dialog.slint NAMESPACE lsp_message)
+slint_target_sources(lsp_ui_tests ${CMAKE_SOURCE_DIR}/ui/dialogs/resize-dialog.slint NAMESPACE lsp_resize)
 add_test(NAME lsp_ui_tests COMMAND lsp_ui_tests)
 
 # Screenshot tool: renders the app at a matrix of window sizes and writes one

@@ -26,6 +26,8 @@ constexpr std::array kShortcuts{
     Shortcut{'o', true, false, ShortcutAction::Open},
     Shortcut{'s', true, false, ShortcutAction::Save},
     Shortcut{'s', true, true, ShortcutAction::SaveAs},
+    Shortcut{'r', true, false, ShortcutAction::ToggleRulers},
+    Shortcut{'g', true, false, ShortcutAction::ToggleGrid},
 };
 
 }  // namespace

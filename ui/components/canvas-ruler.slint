@@ -10,8 +10,8 @@ component RulerNumber inherits Rectangle {
     in property <bool> turned: false;
     // One cell of digits.png. ruler/generate.sh writes these two figures out
     // when it draws the sheets, and they change with the digit size.
-    private property <int> cell-width: 8;
-    private property <int> cell-height: 9;
+    private property <int> cell-width: 7;
+    private property <int> cell-height: 7;
 
     width: root.turned ? root.cell-height * 1px : 4 * root.cell-width * 1px;
     height: root.turned ? 4 * root.cell-width * 1px : root.cell-height * 1px;

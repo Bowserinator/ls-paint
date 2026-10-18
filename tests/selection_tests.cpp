@@ -703,6 +703,229 @@ void test_polygon_gesture_previews_and_escape_abandons_it() {
     CHECK(!fixture.doc.selection().active());
 }
 
+// A turn of a quarter circle is the same op as the right-angle transform: the
+// same box, the same pixels and the same mask.
+// The two paths differ in what they keep for resampling afterwards and in how
+// they record a run of turns; where they place the contents, what they draw and
+// which pixels they cover must be the same.
+bool same_contents(const FloatingContents& left, const FloatingContents& right) {
+    return left.position == right.position && left.content == right.content &&
+           left.mask == right.mask && left.origin == right.origin &&
+           left.origin_mask == right.origin_mask && left.fill == right.fill;
+}
+
+// A run of turns revolves about the box it started from, so two turns land where
+// one turn of their total angle would and the box cannot walk away.
+void test_turning_twenty_then_thirty_matches_fifty() {
+    Fixture split;
+    Fixture once;
+    for (Fixture* fixture : {&split, &once}) {
+        fixture->doc.active_layer().pixels.at(4, 4) = {1, 2, 3, 255};
+        fixture->doc.active_layer().pixels.at(7, 4) = {7, 7, 7, 255};
+        fixture->doc.selection().fill_rect({4, 4, 4, 2});
+    }
+
+    (void)rotate_contents(split.doc.active_layer().pixels, split.doc.selection(),
+                          split.doc.floating(), 20.0f, split.colors.ink(PointerButton::Secondary));
+    (void)rotate_contents(split.doc.active_layer().pixels, split.doc.selection(),
+                          split.doc.floating(), 30.0f, split.colors.ink(PointerButton::Secondary));
+    (void)rotate_contents(once.doc.active_layer().pixels, once.doc.selection(),
+                          once.doc.floating(), 50.0f, once.colors.ink(PointerButton::Secondary));
+
+    CHECK(split.doc.floating().has_value());
+    CHECK(once.doc.floating().has_value());
+    CHECK((split.doc.selection() == once.doc.selection()));
+    CHECK(*split.doc.floating() == *once.doc.floating());
+}
+
+// Every turn of a run samples the lifted originals laid out at the run's box,
+// never the copy the previous turn made, so the source stays the original size.
+void test_a_run_of_turns_keeps_the_source_at_the_run_box() {
+    Fixture fixture;
+    for (int y = 4; y < 10; ++y)
+        for (int x = 4; x < 10; ++x) fixture.doc.active_layer().pixels.at(x, y) = {9, 9, 9, 255};
+    fixture.doc.selection().fill_rect({4, 4, 6, 6});
+
+    (void)rotate_contents(fixture.doc.active_layer().pixels, fixture.doc.selection(),
+                          fixture.doc.floating(), 45.0f, fixture.colors.ink(PointerButton::Secondary));
+
+    CHECK(fixture.doc.floating().has_value());
+    CHECK(fixture.doc.floating()->source.width() == 6);
+    CHECK(fixture.doc.floating()->source.height() == 6);
+    CHECK(fixture.doc.floating()->rotation == 45.0f);
+}
+
+void test_rotating_ninety_degrees_matches_the_right_angle_transform() {
+    Fixture quarter_turn;
+    Fixture right_angle;
+    for (Fixture* fixture : {&quarter_turn, &right_angle}) {
+        fixture->doc.active_layer().pixels.at(4, 4) = {1, 2, 3, 255};
+        fixture->doc.active_layer().pixels.at(7, 4) = {7, 7, 7, 255};
+        fixture->doc.selection().fill_rect({4, 4, 4, 2});
+    }
+
+    (void)rotate_contents(quarter_turn.doc.active_layer().pixels, quarter_turn.doc.selection(),
+                          quarter_turn.doc.floating(), 90.0f,
+                          quarter_turn.colors.ink(PointerButton::Secondary));
+    (void)transform_contents(right_angle.doc.active_layer().pixels, right_angle.doc.selection(),
+                             right_angle.doc.floating(), ContentTransform::RotateCw90,
+                             right_angle.colors.ink(PointerButton::Secondary));
+
+    CHECK(quarter_turn.doc.floating().has_value());
+    CHECK(right_angle.doc.floating().has_value());
+    CHECK((quarter_turn.doc.selection() == right_angle.doc.selection()));
+    CHECK(same_contents(*quarter_turn.doc.floating(), *right_angle.doc.floating()));
+}
+
+// Forty-five degrees needs a box big enough for the turned corners, and the
+// pixels left outside the turned block are not part of the selection.
+void test_rotating_forty_five_degrees_grows_the_box() {
+    Fixture fixture;
+    for (int y = 4; y < 12; ++y)
+        for (int x = 4; x < 12; ++x) fixture.doc.active_layer().pixels.at(x, y) = {9, 9, 9, 255};
+    fixture.doc.selection().fill_rect({4, 4, 8, 8});
+
+    (void)rotate_contents(fixture.doc.active_layer().pixels, fixture.doc.selection(),
+                          fixture.doc.floating(), 45.0f, fixture.colors.ink(PointerButton::Secondary));
+
+    CHECK(fixture.doc.floating().has_value());
+    // 8 * cos45 + 8 * sin45 = 11.31, so the box rounds up to 12, and the centre
+    // is kept: the corner moves back by (12 - 8) / 2. The selection itself is
+    // the turned block, which is smaller than the box its corners need.
+    const FloatingContents& contents = *fixture.doc.floating();
+    CHECK((contents.position == RectI{2, 2, 12, 12}));
+    CHECK(contents.mask[0] == 0);  // the turned corner is empty
+    CHECK(contents.mask[6 * contents.position.width + 6] != 0);  // the middle is not
+    CHECK((fixture.doc.active_layer().pixels.at(4, 4) == Rgba8{9, 9, 9, 255}));  // layer untouched
+}
+
+// Four quarter turns come back to where they started, pixel for pixel, and the
+// layer is never written to along the way.
+void test_rotating_a_full_turn_restores_the_pixels() {
+    Fixture fixture;
+    for (int y = 4; y < 12; ++y)
+        for (int x = 4; x < 12; ++x) fixture.doc.active_layer().pixels.at(x, y) = {9, 9, 9, 255};
+    fixture.doc.active_layer().pixels.at(5, 5) = {1, 2, 3, 255};
+    fixture.doc.selection().fill_rect({4, 4, 8, 8});
+    const PixelBuffer untouched = fixture.doc.active_layer().pixels;
+
+    for (int turn = 0; turn < 4; ++turn)
+        (void)rotate_contents(fixture.doc.active_layer().pixels, fixture.doc.selection(),
+                              fixture.doc.floating(), 90.0f, fixture.colors.ink(PointerButton::Secondary));
+
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 8, 8}));
+    CHECK((fixture.doc.active_layer().pixels == untouched));
+    (void)fixture.doc.flush();
+    CHECK((fixture.doc.flattened().at(5, 5) == Rgba8{1, 2, 3, 255}));
+    CHECK((fixture.doc.flattened().at(4, 4) == Rgba8{9, 9, 9, 255}));
+    CHECK((fixture.doc.flattened().at(11, 11) == Rgba8{9, 9, 9, 255}));
+}
+
+void test_rotating_without_a_selection_is_a_no_op() {
+    Fixture fixture;
+
+    (void)rotate_contents(fixture.doc.active_layer().pixels, fixture.doc.selection(),
+                          fixture.doc.floating(), 45.0f, fixture.colors.ink(PointerButton::Secondary));
+
+    CHECK(!fixture.doc.floating().has_value());
+}
+
+// A press in the ring just outside a corner turns the contents with the
+// pointer: a quarter turn to the right carries the top-left marker to the
+// top-right corner, and the layer keeps its pixels until the selection lands.
+void test_dragging_outside_a_corner_turns_the_contents() {
+    Fixture fixture;
+    fixture.doc.active_layer().pixels.at(4, 4) = {1, 2, 3, 255};
+    fixture.doc.selection().fill_rect({4, 4, 8, 8});
+    const PixelBuffer layer_before = fixture.doc.active_layer().pixels;
+
+    SelectionTool tool;
+    tool.on_pointer_down(fixture.ctx, {14, 1}, PointerButton::Primary);
+    tool.on_pointer_move(fixture.ctx, {15, 14});  // a quarter turn to the right
+    tool.on_pointer_up(fixture.ctx, {15, 14});
+
+    CHECK(fixture.doc.floating().has_value());
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 8, 8}));
+    (void)fixture.doc.flush();
+    CHECK((fixture.doc.flattened().at(11, 4) == Rgba8{1, 2, 3, 255}));
+    CHECK((fixture.doc.flattened().at(4, 4) != Rgba8{1, 2, 3, 255}));
+    CHECK((fixture.doc.active_layer().pixels.at(4, 4) == Rgba8{1, 2, 3, 255}));  // layer untouched
+    CHECK(fixture.doc.active_layer().pixels == layer_before);  // and byte for byte at that
+
+    fixture.history.undo();
+    (void)fixture.doc.flush();
+    CHECK(!fixture.doc.floating().has_value());
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 8, 8}));
+    CHECK((fixture.doc.flattened().at(4, 4) == Rgba8{1, 2, 3, 255}));
+}
+
+// Shift snaps the turn to the nearest 45 degrees, so the drag leaves exactly
+// what a 45-degree turn of the same contents leaves.
+void test_a_rotate_drag_holding_shift_snaps_to_45_degrees() {
+    Fixture dragged;
+    Fixture turned;
+    for (Fixture* fixture : {&dragged, &turned}) {
+        for (int y = 4; y < 12; ++y)
+            for (int x = 4; x < 12; ++x) fixture->doc.active_layer().pixels.at(x, y) = {9, 9, 9, 255};
+        fixture->doc.selection().fill_rect({4, 4, 8, 8});
+    }
+
+    SelectionTool tool;
+    dragged.ctx.shift = true;
+    tool.on_pointer_down(dragged.ctx, {14, 1}, PointerButton::Primary);
+    tool.on_pointer_move(dragged.ctx, {20, 8});  // about 49 degrees: snaps back to 45
+    tool.on_pointer_up(dragged.ctx, {20, 8});
+
+    (void)rotate_contents(turned.doc.active_layer().pixels, turned.doc.selection(),
+                          turned.doc.floating(), 45.0f, turned.colors.ink(PointerButton::Secondary));
+
+    CHECK(dragged.doc.floating().has_value());
+    CHECK(turned.doc.floating().has_value());
+    CHECK(*dragged.doc.floating() == *turned.doc.floating());
+    CHECK((dragged.doc.selection() == turned.doc.selection()));
+}
+
+// However many frames the drag takes, it is one edit: a single undo hands back
+// the selection the drag started with.
+void test_a_rotate_drag_is_one_undo_step() {
+    Fixture fixture;
+    fixture.doc.active_layer().pixels.at(5, 5) = {1, 2, 3, 255};
+    fixture.doc.selection().fill_rect({4, 4, 8, 8});
+    const SelectionMask before = fixture.doc.selection();
+
+    SelectionTool tool;
+    tool.on_pointer_down(fixture.ctx, {14, 1}, PointerButton::Primary);
+    tool.on_pointer_move(fixture.ctx, {12, -1});
+    tool.on_pointer_move(fixture.ctx, {16, 2});
+    tool.on_pointer_move(fixture.ctx, {15, 14});
+    tool.on_pointer_up(fixture.ctx, {15, 14});
+
+    fixture.history.undo();
+    CHECK((fixture.doc.selection() == before));
+    CHECK(!fixture.doc.floating().has_value());
+    (void)fixture.doc.flush();
+    CHECK((fixture.doc.flattened().at(5, 5) == Rgba8{1, 2, 3, 255}));
+}
+
+// A press in the ring that never turns leaves the layer, the contents and the
+// history alone.
+void test_a_rotate_drag_that_never_moves_is_a_no_op() {
+    Fixture fixture;
+    fixture.doc.active_layer().pixels.at(4, 4) = {1, 2, 3, 255};
+    fixture.doc.selection().fill_rect({4, 4, 8, 8});
+    const PixelBuffer untouched = fixture.doc.active_layer().pixels;
+
+    SelectionTool tool;
+    tool.on_pointer_down(fixture.ctx, {14, 1}, PointerButton::Primary);
+    tool.on_pointer_move(fixture.ctx, {14.05f, 1.05f});  // under a degree of jitter
+    tool.on_pointer_up(fixture.ctx, {14.05f, 1.05f});
+
+    CHECK(!fixture.doc.floating().has_value());
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 8, 8}));
+    fixture.history.undo();  // nothing was pushed
+    CHECK((fixture.doc.active_layer().pixels == untouched));
+}
+
 int main() {
     test_degenerate_marquee_leaves_canvas_paintable();
     test_fewer_than_three_polygon_points_leaves_no_selection();
@@ -731,6 +954,16 @@ int main() {
     test_a_fully_clipped_stroke_leaves_no_undo_entry();
     test_resize_undo_restores_the_selection();
     test_select_all_and_clear_selection();
+    test_rotating_ninety_degrees_matches_the_right_angle_transform();
+    test_rotating_forty_five_degrees_grows_the_box();
+    test_rotating_a_full_turn_restores_the_pixels();
+    test_rotating_without_a_selection_is_a_no_op();
+    test_turning_twenty_then_thirty_matches_fifty();
+    test_a_run_of_turns_keeps_the_source_at_the_run_box();
+    test_dragging_outside_a_corner_turns_the_contents();
+    test_a_rotate_drag_holding_shift_snaps_to_45_degrees();
+    test_a_rotate_drag_is_one_undo_step();
+    test_a_rotate_drag_that_never_moves_is_a_no_op();
     test_freehand_gesture_publishes_its_path();
     test_polygon_gesture_previews_and_escape_abandons_it();
 

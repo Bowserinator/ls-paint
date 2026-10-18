@@ -11,7 +11,7 @@
 set -euo pipefail
 out="$(cd "$(dirname "$0")" && pwd)"
 sans="$out/../../third_party/fonts/DejaVuSans.ttf"
-pointsize=9
+pointsize=7
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

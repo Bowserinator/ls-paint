@@ -1,10 +1,15 @@
 #include "selection/selection_ops.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <numbers>
 
 namespace lsp {
 
 namespace {
+
+// A total turn below this is rounding noise, not a turn.
+constexpr float kNoTurnDegrees = 1e-3f;
 
 PixelBuffer apply_transform(const PixelBuffer& source, ContentTransform transform) {
     switch (transform) {
@@ -112,6 +117,57 @@ std::vector<std::uint8_t> resample(const std::vector<std::uint8_t>& source, int 
     return result;
 }
 
+// A block turned about its centre: the pixels and the mask that says which of
+// them belong to it.
+struct TurnedBlock {
+    PixelBuffer pixels;
+    std::vector<std::uint8_t> mask;
+};
+
+// Turns a block by `radians`. The box grows so its corners fit, and a pixel is
+// sampled from the single pixel its centre lands on, the way a rescale samples,
+// so a turn never softens an edge. A destination that came from outside the
+// block, or from a pixel the mask leaves out, stays unset.
+TurnedBlock turned_block(const PixelBuffer& source, const std::vector<std::uint8_t>& source_mask,
+                         float radians) {
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    // A quarter turn has to come out exactly as the right-angle transform does,
+    // so a trig value that is merely a rounding crumb away from zero counts as
+    // zero. The sliver below the ceiling keeps a size that should be a whole
+    // number one.
+    const float straight = std::abs(cosine) < 1e-4f ? 0.0f : cosine;
+    const float square = std::abs(sine) < 1e-4f ? 0.0f : sine;
+    const int width = static_cast<int>(
+        std::ceil(std::abs(straight) * source.width() + std::abs(square) * source.height() - 1e-3f));
+    const int height = static_cast<int>(
+        std::ceil(std::abs(square) * source.width() + std::abs(straight) * source.height() - 1e-3f));
+
+    TurnedBlock result{PixelBuffer(width, height), std::vector<std::uint8_t>(static_cast<std::size_t>(width) * height, 0)};
+    if (source.width() <= 0 || source.height() <= 0) return result;
+
+    const float source_centre_x = source.width() / 2.0f;
+    const float source_centre_y = source.height() / 2.0f;
+    const float centre_x = width / 2.0f;
+    const float centre_y = height / 2.0f;
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            // Back from a turned pixel to the pixel its centre came from.
+            const float dx = static_cast<float>(x) + 0.5f - centre_x;
+            const float dy = static_cast<float>(y) + 0.5f - centre_y;
+            const int source_x = static_cast<int>(std::floor(dx * straight + dy * square + source_centre_x));
+            const int source_y = static_cast<int>(std::floor(-dx * square + dy * straight + source_centre_y));
+            if (!source.contains(source_x, source_y)) continue;
+            const std::size_t index = static_cast<std::size_t>(source_y) * source.width() + source_x;
+            if (index >= source_mask.size() || source_mask[index] == 0) continue;
+            result.pixels.at(x, y) = source.at(source_x, source_y);
+            result.mask[static_cast<std::size_t>(y) * width + x] = 1;
+        }
+    }
+    return result;
+}
+
 // Rebuilds the document mask from a floating selection's local mask, which is
 // what keeps the two in step after a move, rotate or resize.
 void sync_mask(SelectionMask& mask, const FloatingContents& contents) {
@@ -119,7 +175,22 @@ void sync_mask(SelectionMask& mask, const FloatingContents& contents) {
     mask.replace_region(contents.position, contents.mask);
 }
 
+// Brings `source` up to the turned state, for an operation that samples it
+// directly. Turns after this one start a fresh run from the new box.
+void bake_turn(FloatingContents& contents) {
+    if (contents.rotation == 0.0f) return;
+    contents.source = contents.content;
+    contents.source_mask = contents.mask;
+    contents.rotation = 0.0f;
+}
+
 }  // namespace
+
+float wrap_degrees(float degrees) {
+    float wrapped = std::fmod(degrees + 180.0f, 360.0f);
+    if (wrapped < 0.0f) wrapped += 360.0f;
+    return wrapped - 180.0f;
+}
 
 void make_transparent(PixelBuffer& pixels, const SelectionMask& mask, RectI region) {
     fill_selected(pixels, mask, region, {0, 0, 0, 0});
@@ -247,6 +318,9 @@ void translate_contents(SelectionMask& mask, FloatingContents& contents, int dx,
     if (contents.empty() || (dx == 0 && dy == 0)) return;
     contents.position.x += dx;
     contents.position.y += dy;
+    // The box a run of turns revolves about travels with the contents.
+    contents.turn_bounds.x += dx;
+    contents.turn_bounds.y += dy;
     sync_mask(mask, contents);
 }
 
@@ -264,6 +338,7 @@ SelectionEdit transform_contents(const PixelBuffer& pixels, SelectionMask& mask,
 
     FloatingContents& contents = *floating;
     const RectI old_position = contents.position;
+    bake_turn(contents);
 
     // The transform runs on the full-resolution source, and the visible copy
     // is resampled from the result. Rotating a squashed selection therefore
@@ -292,6 +367,55 @@ SelectionEdit transform_contents(const PixelBuffer& pixels, SelectionMask& mask,
     return edit;
 }
 
+SelectionEdit rotate_contents(const PixelBuffer& pixels, SelectionMask& mask,
+                              std::optional<FloatingContents>& floating, float degrees, Rgba8 fill) {
+    if (!mask.active() || mask.bounds().empty()) return {};
+
+    SelectionEdit edit;
+    edit.mask_before = mask;
+    edit.float_before = floating;
+    lift_contents(pixels, mask, floating, fill);
+    if (!floating) return {};
+
+    FloatingContents& contents = *floating;
+    if (contents.rotation == 0.0f) contents.turn_bounds = contents.position;
+    contents.rotation = wrap_degrees(contents.rotation + degrees);
+    if (std::abs(contents.rotation) < kNoTurnDegrees) contents.rotation = 0.0f;
+
+    // Every turn lays the source out at the run's box and turns it by the total
+    // angle, so a second turn resamples the lifted originals rather than the
+    // copy the first one made: a run of turns cannot pile up losses, and the
+    // box grows around the centre the run started with.
+    const int base_width = contents.turn_bounds.width;
+    const int base_height = contents.turn_bounds.height;
+    const bool laid_out =
+        contents.source.width() == base_width && contents.source.height() == base_height;
+    const PixelBuffer base_pixels =
+        laid_out ? contents.source : resample(contents.source, base_width, base_height);
+    const std::vector<std::uint8_t> base_mask =
+        laid_out ? contents.source_mask
+                 : resample(contents.source_mask, contents.source.width(), contents.source.height(),
+                            base_width, base_height);
+
+    const float radians = contents.rotation * std::numbers::pi_v<float> / 180.0f;
+    TurnedBlock turned = turned_block(base_pixels, base_mask, radians);
+    const float centre_x = contents.turn_bounds.x + base_width / 2.0f;
+    const float centre_y = contents.turn_bounds.y + base_height / 2.0f;
+    contents.position = {static_cast<int>(std::lround(centre_x - turned.pixels.width() / 2.0f)),
+                         static_cast<int>(std::lround(centre_y - turned.pixels.height() / 2.0f)),
+                         turned.pixels.width(), turned.pixels.height()};
+    contents.content = std::move(turned.pixels);
+    contents.mask = std::move(turned.mask);
+    // A run that has turned all the way round is over: the next turn starts a
+    // fresh one.
+    if (contents.rotation == 0.0f) contents.turn_bounds = {};
+    sync_mask(mask, contents);
+
+    edit.mask_after = mask;
+    edit.float_after = floating;
+    return edit;
+}
+
 SelectionEdit resize_selection(SelectionMask& mask, std::optional<FloatingContents>& floating,
                                RectI new_bounds) {
     if (new_bounds.empty() || !mask.active() || mask.bounds().empty()) return {};
@@ -302,6 +426,7 @@ SelectionEdit resize_selection(SelectionMask& mask, std::optional<FloatingConten
 
     if (floating) {
         FloatingContents& contents = *floating;
+        bake_turn(contents);
         // Every rescale samples the lifted originals, never the output of an
         // earlier one: squashing and then stretching back restores the pixels
         // it started with instead of magnifying the thinned copy.

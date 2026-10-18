@@ -27,6 +27,9 @@ public:
     // Enter/Escape while no gesture is in flight.
     virtual void on_key_pressed(ToolContext&, std::string_view /*text*/) {}
     virtual void on_double_click(ToolContext&) {}
+    // Escape while a gesture is in flight. Returns true when the tool abandoned
+    // the gesture, so no further pointer events belong to it.
+    virtual bool on_cancel(ToolContext&) { return false; }
     // The tool was deselected: release anything transient it was holding.
     virtual void on_deactivate(ToolContext&) {}
 };

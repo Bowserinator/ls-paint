@@ -41,6 +41,12 @@ set(CLIP_INSTALL OFF CACHE BOOL "" FORCE)
 set(CLIP_ENABLE_IMAGE ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/clip)
 
+# sqlite3: the vendored public-domain amalgamation, for the settings store. It
+# is a library of its own so the 250k-line file is compiled once and nothing
+# else pays to rebuild it.
+add_library(sqlite3 STATIC third_party/sqlite3/sqlite3.c)
+target_include_directories(sqlite3 SYSTEM PUBLIC ${CMAKE_SOURCE_DIR}/third_party/sqlite3)
+
 # Everything that does not touch Slint, so tests can link it without the GUI.
 add_library(lsp_core STATIC
     src/app/app_controller.cpp
@@ -61,6 +67,7 @@ add_library(lsp_core STATIC
     src/io/stb_impl.cpp
     src/selection/selection_mask.cpp
     src/selection/selection_ops.cpp
+    src/store/store_sqlite.cpp
     src/text/font_catalog.cpp
     src/tools/brush_stroke_tool.cpp
     src/tools/dropper_tool.cpp
@@ -73,7 +80,7 @@ add_library(lsp_core STATIC
     src/ui/shortcuts.cpp
 )
 target_include_directories(lsp_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(lsp_core PRIVATE clip)
+target_link_libraries(lsp_core PRIVATE clip sqlite3)
 # The text tool rasterizes glyphs with stb_truetype and reads the bundled
 # DejaVu faces; the image formats come from the same headers. SYSTEM keeps the
 # third-party code out of our warnings.
@@ -94,9 +101,12 @@ endif()
 add_executable(ls_paint
     src/main.cpp
     src/render/slint_bridge.cpp
+    src/ui/file_picker.cpp
     src/ui/ui_state.cpp
 )
 target_include_directories(ls_paint PRIVATE ${CMAKE_SOURCE_DIR}/src)
+# portable-file-dialogs: the system's own open and save dialogs, header only.
+target_include_directories(ls_paint SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/portable-file-dialogs)
 target_link_libraries(ls_paint PRIVATE lsp_core Slint::Slint)
 slint_target_sources(ls_paint ui/appwindow.slint)
 # The two dialogs are real windows, shown from the application code. Each is
@@ -104,6 +114,9 @@ slint_target_sources(ls_paint ui/appwindow.slint)
 # otherwise put the same symbols in the generated code twice.
 slint_target_sources(ls_paint ui/dialogs/edit-colors-window.slint NAMESPACE lsp_colors)
 slint_target_sources(ls_paint ui/dialogs/about-window.slint NAMESPACE lsp_about)
+slint_target_sources(ls_paint ui/dialogs/confirm-dialog.slint NAMESPACE lsp_confirm)
+slint_target_sources(ls_paint ui/dialogs/message-dialog.slint NAMESPACE lsp_message)
+slint_target_sources(ls_paint ui/dialogs/resize-dialog.slint NAMESPACE lsp_resize)
 
 if(MSVC)
     foreach(target lsp_core ls_paint)

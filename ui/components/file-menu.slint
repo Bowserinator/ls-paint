@@ -5,6 +5,9 @@ import { UserState } from "../globals.slint";
 // The panel the File tab opens: the file commands in a large-icon column and,
 // beside it, the list of recent pictures.
 export component FileMenu {
+    // The recent rows stop once the next one would run past this: the panel
+    // hangs under the tab strip, so a short window leaves little room.
+    in property <length> max-list-height: 320px;
     width: Styles.large-menu-width + 2px + Styles.file-menu-recent-width;
 
     Rectangle {
@@ -83,9 +86,14 @@ export component FileMenu {
                 }
             }
 
-            // TODO: populate UserState.recent-files and wire file-open-recent.
+            // The documents opened or saved, newest first, numbered down the
+            // column.
             for entry[i] in UserState.recent-files : Rectangle {
-                height: Styles.recent-row-height;
+                // A row past the panel's room collapses to nothing rather than
+                // being hidden: a hidden element keeps its slot in the layout.
+                height: (i + 1) * Styles.recent-row-height <= root.max-list-height
+                    ? Styles.recent-row-height
+                    : 0px;
 
                 Rectangle {
                     background: touch.has-hover ? #e5f1fc : transparent;

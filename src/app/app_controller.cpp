@@ -260,36 +260,6 @@ std::filesystem::path AppController::default_directory() const {
     return std::filesystem::current_path();
 }
 
-std::vector<std::filesystem::path> AppController::list_directory(const std::filesystem::path& directory,
-                                                                bool images_only) const {
-    std::vector<std::filesystem::path> directories;
-    std::vector<std::filesystem::path> files;
-    std::error_code error;
-    if (std::filesystem::is_directory(directory, error)) {
-        for (const std::filesystem::directory_entry& entry :
-             std::filesystem::directory_iterator(directory, error)) {
-            std::error_code kind_error;
-            if (entry.is_directory(kind_error)) {
-                directories.push_back(entry.path());
-            } else if (entry.is_regular_file(kind_error) &&
-                       (!images_only || format_from_extension(entry.path()).has_value())) {
-                files.push_back(entry.path());
-            }
-        }
-    }
-    const auto by_name = [](const std::filesystem::path& left, const std::filesystem::path& right) {
-        return left.filename().string() < right.filename().string();
-    };
-    std::sort(directories.begin(), directories.end(), by_name);
-    std::sort(files.begin(), files.end(), by_name);
-
-    std::vector<std::filesystem::path> entries;
-    entries.push_back(directory / "..");
-    entries.insert(entries.end(), directories.begin(), directories.end());
-    entries.insert(entries.end(), files.begin(), files.end());
-    return entries;
-}
-
 RectI AppController::copy_source_rect() const {
     const SelectionMask& selection = m_document.selection();
     if (selection.active()) return selection.bounds().intersected(m_document.bounds());

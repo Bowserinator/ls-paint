@@ -13,7 +13,8 @@ void InputRouter::pointer_down(ToolId tool, Point2f position, PointerButton butt
     if (m_active) m_active->on_pointer_down(m_context, position, button);
 }
 
-void InputRouter::pointer_move(ToolId tool, Point2f position) {
+void InputRouter::pointer_move(ToolId tool, Point2f position, bool shift) {
+    m_context.shift = shift;
     ITool* instance = m_active != nullptr ? m_active : m_registry.find(tool);
     if (instance) instance->on_pointer_move(m_context, position);
 }
@@ -28,6 +29,12 @@ void InputRouter::key(ToolId tool, std::string_view text) {
     // Mid-gesture keys belong to the gesture, not to the tool's idle handling.
     if (m_active) return;
     if (ITool* instance = m_registry.find(tool)) instance->on_key_pressed(m_context, text);
+}
+
+bool InputRouter::cancel() {
+    if (!m_active || !m_active->on_cancel(m_context)) return false;
+    m_active = nullptr;
+    return true;
 }
 
 void InputRouter::double_click(ToolId tool) {

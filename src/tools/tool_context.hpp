@@ -45,11 +45,19 @@ struct SelectionPreview {
     std::vector<Point2f> points;
 };
 
+// What the selection tool tells the UI about rotating: whether the pointer is
+// in the zone just outside a corner, and whether a turn is under way.
+struct RotatePreview {
+    bool hover = false;
+    bool rotating = false;
+};
+
 // What the active tool tells the UI about a gesture that is still running.
 struct ToolUiState {
     ShapePreview shape;
     TextOverlayState text;
     SelectionPreview selection;
+    RotatePreview rotate;
 };
 
 // Everything a tool is allowed to reach: the document it edits, the history it
@@ -64,6 +72,9 @@ struct ToolContext {
     ShapeOptions& shape_options;
     TextOptions& text_options;
     ToolUiState& ui;
+
+    // Shift held during the pointer event being handled.
+    bool shift = false;
 
     // Applies a floating selection: the contents are stamped into the layer and
     // the background color they were lifted with becomes real pixels. Anything

@@ -37,6 +37,12 @@ struct FloatingContents {
     std::vector<std::uint8_t> origin_mask;  // origin.width * origin.height, 1 = lifted
     Rgba8 fill;                             // background color shown at `origin`
 
+    // A run of turns shares these: the box the run started from, and how far
+    // it has turned since. Every turn squares the contents up with that box
+    // first, so a run of turns lands where one turn of its total angle would.
+    RectI turn_bounds;
+    float rotation = 0.0f;  // degrees in [-180, 180), clockwise, about `turn_bounds`
+
     // The contents at their last full-resolution state: as lifted, or as left
     // by a rotate/flip. Rescaling samples from here rather than from
     // `content`, so squashing a selection and stretching it back restores the
@@ -65,6 +71,9 @@ struct SelectionEdit {
         return region.empty() && mask_before == mask_after && float_before == float_after;
     }
 };
+
+// Wraps an angle into [-180, 180), so a full circle is no turn at all.
+[[nodiscard]] float wrap_degrees(float degrees);
 
 enum class ContentTransform { RotateCw90, RotateCcw90, Rotate180, FlipHorizontal, FlipVertical };
 
@@ -111,6 +120,15 @@ void translate_contents(SelectionMask& mask, FloatingContents& contents, int dx,
 [[nodiscard]] SelectionEdit transform_contents(const PixelBuffer& pixels, SelectionMask& mask,
                                                std::optional<FloatingContents>& floating,
                                                ContentTransform transform, Rgba8 fill);
+
+// Turns the floating contents by `degrees` about their centre, clockwise on
+// screen, lifting them first when needed. The selection becomes the
+// axis-aligned box the turned corners need, so anything the turn leaves
+// outside the block ends up unselected. Turns add up, so a run of turns totalling
+// a full circle restores the contents as they were. The layer is not modified.
+[[nodiscard]] SelectionEdit rotate_contents(const PixelBuffer& pixels, SelectionMask& mask,
+                                            std::optional<FloatingContents>& floating, float degrees,
+                                            Rgba8 fill);
 
 // Rescales the selection (and its floating contents) to `new_bounds`, always
 // sampling the lifted originals — never the result of an earlier rescale, so

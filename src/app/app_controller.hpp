@@ -73,8 +73,6 @@ public:
     [[nodiscard]] const std::filesystem::path& current_path() const noexcept { return m_current_path; }
     [[nodiscard]] std::string display_name() const;
     [[nodiscard]] std::filesystem::path default_directory() const;
-    [[nodiscard]] std::vector<std::filesystem::path> list_directory(
-        const std::filesystem::path& directory, bool images_only) const;
 
     // The system clipboard. Copy and cut also feed the selection clipboard, so
     // the pixels can leave the application and come back.

@@ -13,10 +13,14 @@ public:
 
     void pointer_down(ToolId tool, Point2f position, PointerButton button);
     // The hover position still reaches the tool between clicks: a shape preview
-    // and an open polygon both follow the cursor.
-    void pointer_move(ToolId tool, Point2f position);
+    // and an open polygon both follow the cursor. `shift` is the modifier state
+    // of that event.
+    void pointer_move(ToolId tool, Point2f position, bool shift);
     void pointer_up(Point2f position);
     void key(ToolId tool, std::string_view text);
+    // Abandons the gesture in flight, if its tool supports that. Returns whether
+    // a gesture was abandoned.
+    bool cancel();
     void double_click(ToolId tool);
     void deactivate(ToolId tool);
 

@@ -1,45 +1,154 @@
-import { Slider } from "std-widgets.slint";
 import { UserState, DocumentState, ZoomScale } from "globals.slint";
 import { Styles } from "styles.slint";
+
+// A round -/+ button: a light gray disc with a dark sign, like Paint's.
+component ZoomButton inherits Rectangle {
+    in property <bool> plus: false;
+    callback clicked;
+
+    width: 20px;
+
+    disc := Rectangle {
+        x: 0px;
+        y: (parent.height - self.height) / 2;
+        width: 20px;
+        height: 20px;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: touch.has-hover ? #6f7377 : #8e9195;
+        background: touch.pressed
+            ? @linear-gradient(180deg, #d4d6d8 0%, #bfc2c5 100%)
+            : @linear-gradient(180deg, #fcfcfc 0%, #d9dbdd 100%);
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 8px;
+            height: 2px;
+            background: #4d4d4d;
+        }
+
+        if root.plus : Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 2px;
+            height: 8px;
+            background: #4d4d4d;
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: default;
+        clicked => { root.clicked(); }
+    }
+}
+
+// The zoom track: a thin groove with a blue pointer on it, both centered in
+// the row. The pointer sits on `value`, a position on the zoom ladder, and a
+// press or drag picks the notch nearest the cursor.
+component ZoomSlider inherits Rectangle {
+    in property <float> value;
+    // Fired with the percentage of the notch the pointer was moved to.
+    callback chosen(pct: float);
+
+    property <length> thumb-width: 11px;
+    // Almost the full height of the strip: the pointer is the tall part of the
+    // control, the groove under it only marks the track.
+    property <length> thumb-height: 19px;
+    property <length> groove-height: 4px;
+    property <length> travel: root.width - root.thumb-width;
+
+    function pick(x: length) {
+        let pos = round(clamp((x - root.thumb-width / 2) / root.travel, 0.0, 1.0) * 10.0);
+        if (abs(pos - root.value) > 0.001) {
+            root.chosen(ZoomScale.pos-to-pct(pos));
+        }
+    }
+
+    Rectangle {
+        x: 0px;
+        y: (parent.height - root.groove-height) / 2;
+        width: parent.width;
+        height: root.groove-height;
+        background: #e6e9ea;
+        border-width: 1px;
+        border-color: #d6d6d6;
+    }
+
+    Path {
+        x: root.travel * clamp(root.value / 10.0, 0.0, 1.0);
+        y: (parent.height - root.thumb-height) / 2;
+        width: root.thumb-width;
+        height: root.thumb-height;
+        viewbox-width: 11;
+        viewbox-height: 19;
+        commands: "M 0 0 L 11 0 L 11 14 L 5.5 19 L 0 14 Z";
+        fill: #0078d7;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: default;
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down
+                || (event.kind == PointerEventKind.move && touch.pressed)) {
+                root.pick(touch.mouse-x);
+            }
+        }
+    }
+}
+
+// The glyph a reading wears. The box stretches with the row, so the picture
+// lands against the middle of the cell however tall the cell is.
+component StatusGlyph inherits Rectangle {
+    in property <image> icon;
+
+    width: Styles.status-icon-size;
+
+    Image {
+        x: 0px;
+        y: (parent.height - self.height) / 2;
+        width: Styles.status-icon-size;
+        height: Styles.status-icon-size;
+        source: root.icon;
+    }
+}
+
+// The line that parts two readings.
+component StatusDivider inherits Rectangle {
+    width: 1px;
+    background: #c8ccd2;
+}
 
 // The strip along the bottom, split like MS Paint's: where the pointer is,
 // how big the selection is, how big the paper is, the colour under the pointer,
 // a blank held for later, and the zoom controls on the right. Every cell is a
 // sunken box.
 export component StatusBar inherits Rectangle {
-    background: #eceff1;
+    background: #f0f0f0;
     vertical-stretch: 0;
     min-height: 26px;
 
-    // The thumb follows the zoom, and the drag writes it too: both paths meet
-    // here, so the thumb and the scale never drift apart.
-    in-out property <float> slider-pos: ZoomScale.pct-to-pos(UserState.zoom * 100);
-
-    // Watched because a drag leaves its own value in the property above: the
-    // thumb is put back on the ladder whenever the scale changes.
-    private property <float> zoom-pct: UserState.zoom * 100;
-    changed zoom-pct => { root.slider-pos = ZoomScale.pct-to-pos(root.zoom-pct); }
-
-    // Fired with the notch the slider was dropped on.
+    // Fired with the notch the slider was moved to.
     callback zoom-chosen(pct: float);
     // Fired by the -/+ boxes, one notch per click.
     callback zoom-step(dir: int);
 
     HorizontalLayout {
         padding: 3px;
-        spacing: 3px;
+        spacing: 0px;
 
         // Pointer position, in document pixels.
         Rectangle {
             horizontal-stretch: 0;
             min-width: 100px;
             background: #f7f8fa;
-            border-width: 1px;
-            border-color: #c8ccd2;
 
             HorizontalLayout {
                 padding-left: 6px;
                 padding-right: 6px;
+                spacing: 4px;
+
+                StatusGlyph { icon: @image-url("../icons/status/pointer.png"); }
 
                 Text {
                     vertical-alignment: center;
@@ -53,17 +162,20 @@ export component StatusBar inherits Rectangle {
             }
         }
 
+        StatusDivider {}
+
         // Selection size, empty without one.
         Rectangle {
             horizontal-stretch: 0;
             min-width: 100px;
             background: #f7f8fa;
-            border-width: 1px;
-            border-color: #c8ccd2;
 
             HorizontalLayout {
                 padding-left: 6px;
                 padding-right: 6px;
+                spacing: 4px;
+
+                StatusGlyph { icon: @image-url("../icons/status/selection.png"); }
 
                 Text {
                     vertical-alignment: center;
@@ -77,17 +189,20 @@ export component StatusBar inherits Rectangle {
             }
         }
 
+        StatusDivider {}
+
         // Paper size.
         Rectangle {
             horizontal-stretch: 0;
             min-width: 100px;
             background: #f7f8fa;
-            border-width: 1px;
-            border-color: #c8ccd2;
 
             HorizontalLayout {
                 padding-left: 6px;
                 padding-right: 6px;
+                spacing: 4px;
+
+                StatusGlyph { icon: @image-url("../icons/status/canvas.png"); }
 
                 Text {
                     vertical-alignment: center;
@@ -99,16 +214,19 @@ export component StatusBar inherits Rectangle {
             }
         }
 
+        StatusDivider {}
+
         // The colour under the pointer, blank while it is off the paper.
         Rectangle {
             horizontal-stretch: 1;
             background: #f7f8fa;
-            border-width: 1px;
-            border-color: #c8ccd2;
 
             HorizontalLayout {
                 padding-left: 6px;
                 padding-right: 6px;
+                spacing: 4px;
+
+                StatusGlyph { icon: @image-url("../icons/status/color.png"); }
 
                 Text {
                     vertical-alignment: center;
@@ -121,26 +239,28 @@ export component StatusBar inherits Rectangle {
             }
         }
 
+        StatusDivider {}
+
         // A blank, kept for whatever the ribbon grows next.
         Rectangle {
             horizontal-stretch: 1;
             background: #f7f8fa;
-            border-width: 1px;
-            border-color: #c8ccd2;
         }
 
-        // Zoom: the percentage, then -/+ around the notch slider.
+        StatusDivider {}
+
+        // Zoom: the percentage, then -/+ around the slider. Drawn straight on
+        // the strip, like Paint's, rather than in a box.
         Rectangle {
             horizontal-stretch: 0;
             min-width: 250px;
-            background: #f7f8fa;
-            border-width: 1px;
-            border-color: #c8ccd2;
 
             HorizontalLayout {
                 padding-left: 6px;
                 padding-right: 4px;
-                spacing: 4px;
+                spacing: 6px;
+
+                StatusGlyph { icon: @image-url("../icons/status/zoom.png"); }
 
                 Text {
                     horizontal-stretch: 0;
@@ -156,71 +276,22 @@ export component StatusBar inherits Rectangle {
                         : round(UserState.zoom * 100) + "%";
                 }
 
-                Rectangle {
+                ZoomButton {
                     horizontal-stretch: 0;
-                    width: 20px;
-                    background: #eceff1;
-                    border-width: 1px;
-                    border-color: #b9bdc4;
-
-                    Text {
-                        x: 0;
-                        y: 0;
-                        width: 100%;
-                        height: 100%;
-                        vertical-alignment: center;
-                        horizontal-alignment: center;
-                        font-size: Styles.bar-font-size;
-                        color: Styles.bar-text-color;
-                        text: "-";
-                    }
-
-                    TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { root.zoom-step(-1); }
-                    }
+                    clicked => { root.zoom-step(-1); }
                 }
 
-                Slider {
+                ZoomSlider {
                     horizontal-stretch: 1;
-                    minimum: 0;
-                    maximum: 10;
-                    step: 1;
-                    value <=> root.slider-pos;
-
-                    // Land on a notch: the ladder has no in-between zooms.
-                    changed(pos) => {
-                        let snapped = round(pos);
-                        root.slider-pos = snapped;
-                        root.zoom-chosen(ZoomScale.pos-to-pct(snapped));
-                    }
+                    min-width: 80px;
+                    value: ZoomScale.pct-to-pos(UserState.zoom * 100);
+                    chosen(pct) => { root.zoom-chosen(pct); }
                 }
 
-                Rectangle {
+                ZoomButton {
                     horizontal-stretch: 0;
-                    width: 20px;
-                    background: #eceff1;
-                    border-width: 1px;
-                    border-color: #b9bdc4;
-
-                    Text {
-                        x: 0;
-                        y: 0;
-                        width: 100%;
-                        height: 100%;
-                        vertical-alignment: center;
-                        horizontal-alignment: center;
-                        font-size: Styles.bar-font-size;
-                        color: Styles.bar-text-color;
-                        text: "+";
-                    }
-
-                    TouchArea {
-                        width: 100%;
-                        height: 100%;
-                        clicked => { root.zoom-step(1); }
-                    }
+                    plus: true;
+                    clicked => { root.zoom-step(1); }
                 }
             }
         }
