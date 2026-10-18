@@ -558,7 +558,7 @@ void test_switching_tools_commits_the_floating_selection() {
     CHECK(document.floating().has_value());
 
     app.input().pointer_down(ToolId::Pencil, {20, 20}, PointerButton::Primary);
-    app.input().pointer_up({20, 20});
+    app.input().pointer_up({20, 20}, PointerButton::Primary);
 
     CHECK(!document.floating().has_value());
     CHECK((document.active_layer().pixels.at(6, 5) == Rgba8{1, 2, 3, 255}));

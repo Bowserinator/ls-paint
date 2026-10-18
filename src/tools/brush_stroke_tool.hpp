@@ -13,6 +13,7 @@ public:
     void on_pointer_down(ToolContext& context, Point2f position, PointerButton button) override;
     void on_pointer_move(ToolContext& context, Point2f position) override;
     void on_pointer_up(ToolContext& context, Point2f position) override;
+    bool on_cancel(ToolContext& context) override;
 
 protected:
     virtual Rgba8 stroke_color(ToolContext& context, PointerButton button) const = 0;

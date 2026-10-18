@@ -24,4 +24,12 @@ void BrushStrokeTool::on_pointer_up(ToolContext& context, Point2f position) {
     m_engine.reset();
 }
 
+bool BrushStrokeTool::on_cancel(ToolContext&) {
+    if (!m_recorder) return false;
+    m_recorder->discard();
+    m_recorder.reset();
+    m_engine.reset();
+    return true;
+}
+
 }  // namespace lsp

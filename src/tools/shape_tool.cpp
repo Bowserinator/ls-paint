@@ -727,4 +727,14 @@ void ShapeTool::cancel_polygon(ToolContext& context) {
     context.ui.shape.visible = false;
 }
 
+bool ShapeTool::on_cancel(ToolContext& context) {
+    // A drag paints nothing until the release - it only publishes a preview -
+    // so abandoning it is dropping that preview.
+    if (!m_dragging && !m_polygon_open) return false;
+    cancel_polygon(context);
+    m_dragging = false;
+    context.ui.shape.visible = false;
+    return true;
+}
+
 }  // namespace lsp

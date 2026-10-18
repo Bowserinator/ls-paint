@@ -111,6 +111,7 @@ public:
     void on_pointer_up(ToolContext& context, Point2f position) override;
     void on_key_pressed(ToolContext& context, std::string_view text) override;
     void on_double_click(ToolContext& context) override;
+    bool on_cancel(ToolContext& context) override;
     void on_deactivate(ToolContext& context) override;
 
 private:

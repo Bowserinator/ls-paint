@@ -1384,6 +1384,81 @@ int run_ui_tests() {
         CHECK(written_entries.size() > 1 && written_entries[1] == "445566");
     }
 
+    // 39. A gesture owns the pointer until it ends: the other button abandons
+    // it without painting, a release of the wrong button does not cut a stroke
+    // short, Escape drops a block that is still hovering, and a tool switch
+    // abandons a marquee instead of letting the next move fill it.
+    {
+        Harness h;
+        float canvas_x = 0.0f;
+        float canvas_y = 0.0f;
+        for (float probe = 40.0f; probe < 600.0f; probe += 20.0f) {
+            h.move(probe, probe);
+            if (h.user().get_cursor_on_canvas()) {
+                canvas_x = probe;
+                canvas_y = probe;
+                break;
+            }
+        }
+        CHECK(h.user().get_cursor_on_canvas());
+
+        // The other button takes the pointer back: nothing reaches the layer
+        // and no undo step is recorded.
+        h.user().set_selected_tool(ETool::PENCIL);
+        const PixelBuffer untouched = h.controller().document().active_layer().pixels;
+        h.press(canvas_x, canvas_y);
+        h.move(canvas_x + 20.0f, canvas_y + 6.0f);
+        h.press(canvas_x + 40.0f, canvas_y + 12.0f, PointerEventButton::Right);
+        CHECK(!h.controller().input().active());
+        h.move(canvas_x + 60.0f, canvas_y + 18.0f);
+        h.release(canvas_x + 60.0f, canvas_y + 18.0f, PointerEventButton::Right);
+        CHECK((h.controller().document().active_layer().pixels == untouched));
+        CHECK(!h.controller().history().is_modified());
+
+        // Only the button that started a stroke ends it.
+        h.press(canvas_x, canvas_y);
+        h.move(canvas_x + 24.0f, canvas_y + 8.0f);
+        h.release(canvas_x + 24.0f, canvas_y + 8.0f, PointerEventButton::Right);
+        CHECK(h.controller().input().active());
+        h.release(canvas_x + 24.0f, canvas_y + 8.0f);
+        CHECK(!h.controller().input().active());
+        CHECK(h.controller().history().is_modified());
+        CHECK((h.controller().document().active_layer().pixels != untouched));
+
+        // Escape drops a block that is still hovering. The paste never lands,
+        // so it adds no undo step of its own.
+        h.controller().select_all();
+        h.user().invoke_transform_selection_content(EContentTransform::ROTATE180);
+        CHECK(h.controller().document().floating().has_value());
+        const bool modified_before_escape = h.controller().history().is_modified();
+        h.key("\x1b");
+        CHECK(!h.controller().document().floating().has_value());
+        CHECK(h.controller().history().is_modified() == modified_before_escape);
+
+        // A tool switch abandons a marquee in flight, so the hover that follows
+        // cannot fill a selection the drag never finished.
+        h.user().set_selected_tool(ETool::SELECTION);
+        h.controller().clear_selection();
+        h.press(canvas_x - 40.0f, canvas_y - 40.0f);
+        h.move(canvas_x, canvas_y);
+        h.user().set_selected_tool(ETool::PENCIL);
+        h.user().set_selected_tool(ETool::SELECTION);
+        h.move(canvas_x + 40.0f, canvas_y + 40.0f);
+        CHECK(!h.controller().document().selection().active());
+
+        // A shape drag is a preview until its release, so the same button takes
+        // the preview back and leaves the layer alone.
+        h.user().set_selected_tool(ETool::SHAPE);
+        const PixelBuffer before_shape = h.controller().document().active_layer().pixels;
+        h.press(canvas_x, canvas_y);
+        h.move(canvas_x + 40.0f, canvas_y + 30.0f);
+        CHECK(h.overlay().get_visible());
+        h.press(canvas_x + 40.0f, canvas_y + 30.0f, PointerEventButton::Right);
+        CHECK(!h.overlay().get_visible());
+        h.release(canvas_x + 40.0f, canvas_y + 30.0f, PointerEventButton::Right);
+        CHECK((h.controller().document().active_layer().pixels == before_shape));
+    }
+
     std::filesystem::remove(save_path);
 
     if (g_failures != 0) {

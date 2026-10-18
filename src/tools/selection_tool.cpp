@@ -408,7 +408,15 @@ bool SelectionTool::on_cancel(ToolContext& context) {
     return true;
 }
 
-void SelectionTool::on_deactivate(ToolContext& context) { context.ui.rotate = {}; }
+void SelectionTool::on_deactivate(ToolContext& context) {
+    // A tool switch abandons a gesture in flight, like Escape, but leaves a
+    // hovering block alone: switching tools must not throw away a paste.
+    if (m_drag != Drag::None || !m_polygon.empty()) {
+        on_cancel(context);
+        return;
+    }
+    context.ui.rotate = {};
+}
 
 void SelectionTool::push_drag_edit(ToolContext& context) {
     SelectionEdit edit;

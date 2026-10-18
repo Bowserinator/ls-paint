@@ -13,6 +13,8 @@ public:
 
     void touch(RectI region);
     void commit(HistoryStack& history);
+    // Puts back what the stroke covered: a cancelled gesture leaves no trace.
+    void discard();
 
 private:
     CanvasDocument& m_document;

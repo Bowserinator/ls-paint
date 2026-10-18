@@ -14,6 +14,14 @@ void StrokeRecorder::touch(RectI region) {
     m_document.mark_dirty(region);
 }
 
+void StrokeRecorder::discard() {
+    if (m_region.empty()) return;
+    const PixelBuffer before = m_snapshot.copy_region(m_region);
+    m_document.layers().at(m_layer_index).pixels.blit(m_region.x, m_region.y, before);
+    m_document.mark_dirty(m_region);
+    m_region = {};
+}
+
 void StrokeRecorder::commit(HistoryStack& history) {
     if (m_region.empty()) return;
     const PixelBuffer& current = m_document.layers().at(m_layer_index).pixels;

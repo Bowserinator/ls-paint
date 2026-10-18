@@ -114,6 +114,14 @@ void AppController::push_geometry_edit(std::vector<PixelBuffer> before, Selectio
 
 void AppController::commit_selection_contents() { m_context.commit_selection(); }
 
+bool AppController::discard_floating() {
+    if (!m_document.floating()) return false;
+    m_document.floating().reset();
+    m_document.selection().clear();
+    m_document.mark_dirty(m_document.bounds());
+    return true;
+}
+
 // Makes a floating block the live selection: the contents hover over the
 // canvas while the mask — and so the marching ants — describes where they sit.
 void AppController::install_floating(FloatingContents contents) {

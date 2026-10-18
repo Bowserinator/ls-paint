@@ -63,6 +63,9 @@ public:
     void transform_selection_contents(ContentTransform transform);
     [[nodiscard]] const ClipboardContent& clipboard() const noexcept { return m_clipboard; }
     [[nodiscard]] bool has_selection() const noexcept { return m_document.selection().active(); }
+    // Drops a block that is still hovering: the paste or lift never landed, so
+    // nothing is written to the layer and no undo step is recorded.
+    bool discard_floating();
 
     // File. Each of these leaves the document untouched when it fails.
     IoResult new_document();

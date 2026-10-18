@@ -450,8 +450,15 @@ UiState::UiState(AppWindow& window, AppController& controller)
         refresh();
     });
 
-    m_window.global<UserState>().on_pointer_up([this](float x, float y) {
-        m_controller.input().pointer_up({x, y});
+    m_window.global<UserState>().on_pointer_up([this](float x, float y, bool secondary) {
+        m_controller.input().pointer_up(
+            {x, y}, secondary ? PointerButton::Secondary : PointerButton::Primary);
+        refresh();
+    });
+
+    m_window.global<UserState>().on_pointer_cancel([this] {
+        if (!m_controller.input().active()) return;
+        m_controller.input().pointer_cancel();
         refresh();
     });
 
@@ -465,12 +472,22 @@ UiState::UiState(AppWindow& window, AppController& controller)
     m_window.global<UserState>().on_key_pressed([this](const slint::SharedString& text, bool ctrl, bool shift) {
         if (m_controller.input().active()) {
             // Never act mid-stroke; Escape is the one key that abandons it.
-            if (text == "\x1b" && m_controller.input().cancel()) refresh();
+            if (text == "\x1b" &&
+                m_controller.input().cancel(
+                    tool_from_slint(m_window.global<UserState>().get_selected_tool()))) {
+                refresh();
+            }
             return;
         }
         // While a text box is open every key belongs to it, including the ones
         // that would otherwise be shortcuts.
         if (text_open()) return;
+        // A block still hovering is a paste or a lift that never landed, so
+        // Escape drops it rather than writing it down.
+        if (text == "\x1b" && m_controller.discard_floating()) {
+            refresh();
+            return;
+        }
         // Enter and Escape end the active tool's own gesture (a polygon); the
         // shortcut table below only ever sees what that leaves behind.
         m_controller.input().key(

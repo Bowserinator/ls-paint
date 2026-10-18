@@ -57,7 +57,10 @@ export struct SelectionGrip {
 export global UserState  {
     callback pointer-down(length, length, bool);
     callback pointer-move(length, length, bool);
-    callback pointer-up(length, length);
+    callback pointer-up(length, length, bool);
+    // The pointer left the application mid-gesture, so there is no release to
+    // look forward to: what the gesture has done so far is abandoned.
+    callback pointer-cancel;
     callback canvas-resize(length, length);
     callback key-pressed(string, bool, bool);
 
