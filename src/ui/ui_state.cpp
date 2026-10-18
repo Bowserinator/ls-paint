@@ -310,6 +310,9 @@ UiState::UiState(AppWindow& window, AppController& controller)
     : m_window(window),
       m_controller(controller),
       m_bridge(controller.document().width(), controller.document().height()) {
+    m_window.set_tile_size(kDisplayTileSize);
+    m_window.set_tiles(m_bridge.tiles());
+
     m_palette = std::make_shared<slint::VectorModel<slint::Color>>();
     for (const Rgba8& color : kDefaultPalette)
         m_palette->push_back(slint::Color::from_rgb_uint8(color.r, color.g, color.b));
@@ -1151,7 +1154,6 @@ void UiState::refresh() {
     CanvasDocument& document = m_controller.document();
     if (const auto region = document.flush()) {
         m_bridge.upload(document.flattened(), *region);
-        m_window.set_texture(m_bridge.image());
     }
 
     auto& state = m_window.global<DocumentState>();

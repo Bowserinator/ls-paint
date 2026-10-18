@@ -13,8 +13,7 @@ public:
     virtual void redo(CanvasDocument& document) = 0;
 
     // Roughly the bytes the entry holds, so the stack can keep a size budget
-    // next to the entry count. Mask snapshots are not counted: they are a
-    // fraction of the pixels they describe.
+    // next to the entry count.
     [[nodiscard]] virtual std::size_t memory_bytes() const noexcept = 0;
 };
 

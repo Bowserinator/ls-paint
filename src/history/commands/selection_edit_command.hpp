@@ -5,7 +5,7 @@
 #include <optional>
 #include <utility>
 
-#include "core/pixel_buffer.hpp"
+#include "core/pixel_delta.hpp"
 #include "history/command.hpp"
 #include "selection/selection_mask.hpp"
 #include "selection/selection_ops.hpp"
@@ -22,41 +22,36 @@ namespace lsp {
 // take them away) to show the difference.
 class SelectionEditCommand final : public ICommand {
 public:
-    SelectionEditCommand(std::size_t layer_index, RectI region, PixelBuffer before, PixelBuffer after,
+    SelectionEditCommand(std::size_t layer_index, RectI region, PixelDelta pixels,
                          SelectionMask mask_before, SelectionMask mask_after,
                          std::optional<FloatingContents> float_before,
                          std::optional<FloatingContents> float_after)
         : m_layer_index(layer_index),
           m_region(region),
-          m_before(std::move(before)),
-          m_after(std::move(after)),
+          m_pixels(std::move(pixels)),
           m_mask_before(std::move(mask_before)),
           m_mask_after(std::move(mask_after)),
           m_float_before(std::move(float_before)),
           m_float_after(std::move(float_after)) {}
 
-    void undo(CanvasDocument& document) override {
-        apply(document, m_before, m_mask_before, m_float_before);
-    }
-    void redo(CanvasDocument& document) override {
-        apply(document, m_after, m_mask_after, m_float_after);
-    }
+    void undo(CanvasDocument& document) override;
+    void redo(CanvasDocument& document) override;
 
     [[nodiscard]] std::size_t memory_bytes() const noexcept override {
-        std::size_t total = pixel_bytes(m_before) + pixel_bytes(m_after);
-        if (m_float_before) total += pixel_bytes(m_float_before->content);
-        if (m_float_after) total += pixel_bytes(m_float_after->content);
+        std::size_t total = m_pixels.memory_bytes();
+        total += m_mask_before.memory_bytes() + m_mask_after.memory_bytes();
+        if (m_float_before) total += m_float_before->memory_bytes();
+        if (m_float_after) total += m_float_after->memory_bytes();
         return total;
     }
 
 private:
-    void apply(CanvasDocument& document, const PixelBuffer& pixels, const SelectionMask& mask,
+    void apply(CanvasDocument& document, const SelectionMask& mask,
                const std::optional<FloatingContents>& floating) const;
 
     std::size_t m_layer_index;
     RectI m_region;
-    PixelBuffer m_before;
-    PixelBuffer m_after;
+    PixelDelta m_pixels;
     SelectionMask m_mask_before;
     SelectionMask m_mask_after;
     std::optional<FloatingContents> m_float_before;
@@ -66,8 +61,7 @@ private:
 [[nodiscard]] inline std::unique_ptr<SelectionEditCommand> make_selection_edit(
     std::size_t layer_index, SelectionEdit edit) {
     return std::make_unique<SelectionEditCommand>(
-        layer_index, edit.region, std::move(edit.before), std::move(edit.after),
-        std::move(edit.mask_before), std::move(edit.mask_after), std::move(edit.float_before),
+        layer_index, edit.region, std::move(edit.pixels), std::move(edit.mask_before), std::move(edit.mask_after), std::move(edit.float_before),
         std::move(edit.float_after));
 }
 

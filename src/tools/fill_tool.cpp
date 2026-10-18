@@ -23,7 +23,8 @@ void FillTool::on_pointer_down(ToolContext& context, Point2f position, PointerBu
     const Rgba8 target = pixels.at(start_x, start_y);
     if (target == fill) return;
 
-    const auto fillable = [&](int x, int y) { return pixels.at(x, y) == target && selection.contains(x, y); };
+    const PixelBuffer& readable = pixels;
+    const auto fillable = [&](int x, int y) { return readable.at(x, y) == target && selection.contains(x, y); };
 
     StrokeRecorder recorder(context.document);
     RectI dirty;

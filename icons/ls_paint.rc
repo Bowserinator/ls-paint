@@ -1,0 +1,5 @@
+// The executable's own icon. Explorer, the taskbar button and the Alt+Tab
+// entry read it from the file rather than from the window.
+#define IDI_LS_PAINT 101
+
+IDI_LS_PAINT ICON "icons/ls_paint.ico"

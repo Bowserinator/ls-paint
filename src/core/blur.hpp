@@ -12,6 +12,10 @@ namespace blur {
 // gives the source back unchanged.
 [[nodiscard]] PixelBuffer box_twice(const PixelBuffer& source, int radius);
 
+// The part of box_twice(source, radius) inside `region`, computed without
+// blurring the rest of the image.
+[[nodiscard]] PixelBuffer box_twice_region(const PixelBuffer& source, int radius, RectI region);
+
 }  // namespace blur
 
 }  // namespace lsp

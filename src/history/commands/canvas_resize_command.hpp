@@ -28,7 +28,8 @@ public:
     [[nodiscard]] std::size_t memory_bytes() const noexcept override {
         std::size_t total = 0;
         for (const PixelBuffer& pixels : m_before) total += pixel_bytes(pixels);
-        if (m_floating) total += pixel_bytes(m_floating->content);
+        total += m_selection.memory_bytes();
+        if (m_floating) total += m_floating->memory_bytes();
         return total;
     }
 

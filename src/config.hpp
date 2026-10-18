@@ -10,9 +10,25 @@ namespace lsp {
 
 inline constexpr int kDefaultCanvasWidth = 800;
 inline constexpr int kDefaultCanvasHeight = 600;
-inline constexpr int kMaxCanvasDimension = 4096;
 // Images larger than this are refused on load and never produced by growth.
 inline constexpr int kMaxImageDimension = 16384;
+inline constexpr int kMaxCanvasDimension = kMaxImageDimension;
+
+// Pixel storage is split into bands of whole rows holding about this many
+// pixels (rounded down to a power of two rows). A band is the unit that copies
+// of an image share until one of them is written to.
+inline constexpr std::size_t kPixelBandPixels = 1u << 20;
+// Undo entries keep the changed pixels in squares of this many pixels a side.
+inline constexpr int kUndoTileSize = 128;
+// The blur brush computes the blurred image in squares of this many pixels a
+// side, only where the brush reaches.
+inline constexpr int kBlurChunkSize = 256;
+// A stroke that lays down ink once per pixel tracks its coverage in squares of
+// this many pixels a side, only where it has been.
+inline constexpr int kCoverageChunkSize = 256;
+// The canvas is shown as squares of this many pixels a side, so a brush stroke
+// only refreshes the squares it touched.
+inline constexpr int kDisplayTileSize = 512;
 
 // The application's name, which is also the name of its config folder.
 inline constexpr std::string_view kAppId = "ls_paint";

@@ -6,6 +6,7 @@
 
 #include "core/pixel_buffer.hpp"
 #include "core/types.hpp"
+#include "selection/selection_mask.hpp"
 
 // Hard-edged raster primitives shared by the shape and text tools.
 //
@@ -17,9 +18,9 @@ namespace lsp::raster {
 
 struct Target {
     PixelBuffer& pixels;
-    // One byte per canvas pixel, same dimensions as `pixels`; 0 excludes the
-    // pixel. A null mask means the whole canvas is writable.
-    const std::uint8_t* clip_mask = nullptr;
+    // The selection that holds painting back, sized like `pixels`. Null means
+    // the whole canvas is writable.
+    const SelectionMask* clip = nullptr;
 
     [[nodiscard]] bool allows(int x, int y) const noexcept;
 };

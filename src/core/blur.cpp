@@ -105,4 +105,19 @@ PixelBuffer blur::box_twice(const PixelBuffer& source, int radius) {
     return image;
 }
 
+PixelBuffer blur::box_twice_region(const PixelBuffer& source, int radius, RectI region) {
+    region = region.intersected(source.bounds());
+    if (region.empty()) return {};
+
+    // Each of the four passes lets edge effects creep radius pixels inwards, so
+    // a margin of twice the radius keeps them out of the region. Edges of the
+    // image itself behave the same in the window as in the whole.
+    const int margin = 2 * std::max(radius, 0);
+    const RectI window = RectI{region.x - margin, region.y - margin, region.width + 2 * margin,
+                               region.height + 2 * margin}
+                             .intersected(source.bounds());
+    const PixelBuffer blurred = box_twice(source.copy_region(window), radius);
+    return blurred.copy_region({region.x - window.x, region.y - window.y, region.width, region.height});
+}
+
 }  // namespace lsp

@@ -106,8 +106,7 @@ void paint_where(Target target, RectI box, Rgba8 color, InsideFn inside) {
 
 bool Target::allows(int x, int y) const noexcept {
     if (!pixels.contains(x, y)) return false;
-    if (clip_mask == nullptr) return true;
-    return clip_mask[grid_index(x, y, pixels.width())] != 0;
+    return clip == nullptr || clip->contains(x, y);
 }
 
 void draw_line(Target target, Point2f a, Point2f b, int thickness, Rgba8 color) {

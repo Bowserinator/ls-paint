@@ -316,12 +316,11 @@ void test_textured_outlines_are_grainy_and_bounded() {
 // The selection the raster target carries holds the stamp back as well, so a
 // textured part cannot write outside the marching ants.
 void test_textured_outline_respects_the_target_clip() {
-    std::vector<std::uint8_t> clip(88 * 88, 1);
-    for (int y = 0; y < 88; ++y)
-        for (int x = 0; x < 44; ++x) clip[static_cast<std::size_t>(y) * 88 + x] = 0;
+    SelectionMask clip(88, 88);
+    clip.fill_rect({44, 0, 44, 88});
     PixelBuffer pixels(88, 88);
     const ShapeOptions options{ShapeId::Oval, ShapeTexture::Crayon, ShapeTexture::None, 3, 8};
-    rasterize_shape(Target{pixels, clip.data()}, ShapeId::Oval, {4, 4}, {83, 83}, {}, options,
+    rasterize_shape(Target{pixels, &clip}, ShapeId::Oval, {4, 4}, {83, 83}, {}, options,
                     kInk, kFill);
     CHECK(painted_count(pixels) > 0);
     CHECK(painted_in(pixels, RectI{0, 0, 44, 88}) == 0);

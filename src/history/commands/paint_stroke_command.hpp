@@ -3,33 +3,24 @@
 #include <cstddef>
 #include <utility>
 
-#include "core/pixel_buffer.hpp"
+#include "core/pixel_delta.hpp"
 #include "history/command.hpp"
 
 namespace lsp {
 
 class PaintStrokeCommand final : public ICommand {
 public:
-    PaintStrokeCommand(std::size_t layer_index, RectI region, PixelBuffer before, PixelBuffer after)
-        : m_layer_index(layer_index),
-          m_region(region),
-          m_before(std::move(before)),
-          m_after(std::move(after)) {}
+    PaintStrokeCommand(std::size_t layer_index, PixelDelta delta)
+        : m_layer_index(layer_index), m_delta(std::move(delta)) {}
 
-    void undo(CanvasDocument& document) override { apply(document, m_before); }
-    void redo(CanvasDocument& document) override { apply(document, m_after); }
+    void undo(CanvasDocument& document) override;
+    void redo(CanvasDocument& document) override;
 
-    [[nodiscard]] std::size_t memory_bytes() const noexcept override {
-        return pixel_bytes(m_before) + pixel_bytes(m_after);
-    }
+    [[nodiscard]] std::size_t memory_bytes() const noexcept override { return m_delta.memory_bytes(); }
 
 private:
-    void apply(CanvasDocument& document, const PixelBuffer& pixels) const;
-
     std::size_t m_layer_index;
-    RectI m_region;
-    PixelBuffer m_before;
-    PixelBuffer m_after;
+    PixelDelta m_delta;
 };
 
 }  // namespace lsp

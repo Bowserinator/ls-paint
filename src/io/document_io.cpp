@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <span>
 #include <system_error>
 #include <vector>
 
@@ -40,16 +41,26 @@ void write_stream(void* context, void* data, int size) {
     std::fwrite(data, 1, static_cast<std::size_t>(size), static_cast<std::FILE*>(context));
 }
 
+// The pixel as it looks over an opaque background.
+Rgba8 over_background(Rgba8 pixel, Rgba8 background) {
+    const float alpha = unit_from_byte(pixel.a);
+    const auto mix = [alpha](std::uint8_t top, std::uint8_t bottom) {
+        return static_cast<std::uint8_t>(std::lround(top * alpha + bottom * (1.0f - alpha)));
+    };
+    return {mix(pixel.r, background.r), mix(pixel.g, background.g), mix(pixel.b, background.b), 255};
+}
+
 // stb_image_write takes three bytes per pixel for Bmp and Jpeg.
-std::vector<std::uint8_t> to_rgb_bytes(const PixelBuffer& source) {
+std::vector<std::uint8_t> to_rgb_bytes(const PixelBuffer& source, Rgba8 background) {
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(source.width()) * source.height() * 3);
     for (int y = 0; y < source.height(); ++y) {
-        const Rgba8* pixels = source.row(y).data();
+        const std::span<const Rgba8> pixels = source.row(y);
         std::uint8_t* row = bytes.data() + static_cast<std::size_t>(y) * source.width() * 3;
-        for (int x = 0; x < source.width(); ++x) {
-            row[static_cast<std::size_t>(x) * 3] = pixels[x].r;
-            row[static_cast<std::size_t>(x) * 3 + 1] = pixels[x].g;
-            row[static_cast<std::size_t>(x) * 3 + 2] = pixels[x].b;
+        for (std::size_t x = 0; x < pixels.size(); ++x) {
+            const Rgba8 opaque = over_background(pixels[x], background);
+            row[x * 3] = opaque.r;
+            row[x * 3 + 1] = opaque.g;
+            row[x * 3 + 2] = opaque.b;
         }
     }
     return bytes;
@@ -120,14 +131,15 @@ bool save(const CanvasDocument& document, const std::filesystem::path& path, Ima
 
     int written = 0;
     if (format == ImageFormat::Png) {
+        const std::vector<Rgba8> pixels = source.contiguous_copy(source.bounds());
         written = stbi_write_png_to_func(write_stream, file, source.width(), source.height(), 4,
-                                         source.row(0).data(), source.width() * 4);
+                                         pixels.data(), source.width() * 4);
     } else if (format == ImageFormat::Bmp) {
-        const std::vector<std::uint8_t> bytes = to_rgb_bytes(flatten_to_opaque(source));
+        const std::vector<std::uint8_t> bytes = to_rgb_bytes(source, kWhite);
         written = stbi_write_bmp_to_func(write_stream, file, source.width(), source.height(), 3,
                                          bytes.data());
     } else {
-        const std::vector<std::uint8_t> bytes = to_rgb_bytes(flatten_to_opaque(source));
+        const std::vector<std::uint8_t> bytes = to_rgb_bytes(source, kWhite);
         written = stbi_write_jpg_to_func(write_stream, file, source.width(), source.height(), 3,
                                          bytes.data(), kJpegQuality);
     }
@@ -156,17 +168,9 @@ const char* extension_for(ImageFormat format) {
 PixelBuffer flatten_to_opaque(const PixelBuffer& source, Rgba8 background) {
     PixelBuffer result(source.width(), source.height());
     for (int y = 0; y < source.height(); ++y) {
-        const Rgba8* pixels = source.row(y).data();
-        Rgba8* out = result.row(y).data();
-        for (int x = 0; x < source.width(); ++x) {
-            const Rgba8 pixel = pixels[x];
-            const float alpha = unit_from_byte(pixel.a);
-            const auto mix = [alpha](std::uint8_t top, std::uint8_t bottom) {
-                return static_cast<std::uint8_t>(std::lround(top * alpha + bottom * (1.0f - alpha)));
-            };
-            out[x] = Rgba8{mix(pixel.r, background.r), mix(pixel.g, background.g),
-                           mix(pixel.b, background.b), 255};
-        }
+        const std::span<const Rgba8> pixels = source.row(y);
+        const std::span<Rgba8> out = result.row(y);
+        for (std::size_t x = 0; x < pixels.size(); ++x) out[x] = over_background(pixels[x], background);
     }
     return result;
 }

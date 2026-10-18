@@ -66,15 +66,12 @@ struct ToolUiState {
     RotatePreview rotate;
 };
 
-// The active layer as a raster target that the selection holds back. It owns
-// the clip bytes the target points into, so it has to outlive the target.
+// The active layer as a raster target that the selection holds back.
 struct LayerTarget {
-    std::vector<std::uint8_t> clip;
+    const SelectionMask& clip;
     PixelBuffer& pixels;
 
-    [[nodiscard]] raster::Target target() const {
-        return {pixels, clip.empty() ? nullptr : clip.data()};
-    }
+    [[nodiscard]] raster::Target target() const { return {pixels, &clip}; }
 };
 
 // Everything a tool is allowed to reach: the document it edits, the history it
@@ -107,15 +104,8 @@ struct ToolContext {
         history.push(make_selection_edit(layer_index, std::move(edit)));
     }
 
-    // One byte per canvas pixel: 0 outside the current selection. Empty when
-    // nothing is selected, in which case the whole canvas is writable.
-    [[nodiscard]] std::vector<std::uint8_t> selection_clip() const {
-        if (!document.selection().active()) return {};
-        return document.selection().extract_region(document.bounds());
-    }
-
     [[nodiscard]] LayerTarget layer_target() const {
-        return {selection_clip(), document.active_layer().pixels};
+        return {document.selection(), document.active_layer().pixels};
     }
 };
 

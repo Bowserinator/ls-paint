@@ -245,9 +245,9 @@ SelectionEdit erase_contents(PixelBuffer& pixels, SelectionMask& mask,
         edit.float_after = std::nullopt;
         edit.region = floating->origin.intersected(pixels.bounds());
         if (!edit.region.empty()) {
-            edit.before = pixels.copy_region(edit.region);
+            const PixelBuffer before = pixels;
             fill_from_bytes(pixels, floating->origin, floating->origin_mask, edit.region, fill);
-            edit.after = pixels.copy_region(edit.region);
+            edit.pixels = PixelDelta::between(before, pixels, edit.region);
         }
         floating.reset();
         return edit;
@@ -256,9 +256,9 @@ SelectionEdit erase_contents(PixelBuffer& pixels, SelectionMask& mask,
     const RectI region = mask.bounds().intersected(pixels.bounds());
     if (region.empty()) return {};
     edit.region = region;
-    edit.before = pixels.copy_region(region);
+    const PixelBuffer before = pixels;
     fill_selected(pixels, mask, region, fill);
-    edit.after = pixels.copy_region(region);
+    edit.pixels = PixelDelta::between(before, pixels, region);
     return edit;
 }
 
@@ -271,7 +271,7 @@ SelectionEdit paste_clipboard(PixelBuffer& pixels, SelectionMask& mask, const Cl
 
     SelectionEdit edit;
     edit.region = region;
-    edit.before = pixels.copy_region(region);
+    const PixelBuffer before = pixels;
     edit.mask_before = mask;
 
     paste_masked(pixels, clip.pixels, x, y, clip.mask);
@@ -280,7 +280,7 @@ SelectionEdit paste_clipboard(PixelBuffer& pixels, SelectionMask& mask, const Cl
     mask.replace_region(target, clip.mask);
 
     edit.mask_after = mask;
-    edit.after = pixels.copy_region(region);
+    edit.pixels = PixelDelta::between(before, pixels, region);
     return edit;
 }
 
@@ -466,10 +466,10 @@ SelectionEdit commit_contents(PixelBuffer& pixels, SelectionMask& mask,
     edit.region = floating->origin.united(floating->position).intersected(pixels.bounds());
 
     if (!edit.region.empty()) {
-        edit.before = pixels.copy_region(edit.region);
+        const PixelBuffer before = pixels;
         fill_from_bytes(pixels, floating->origin, floating->origin_mask, edit.region, floating->fill);
         stamp_from_bytes(pixels, floating->position, floating->content, floating->mask, edit.region);
-        edit.after = pixels.copy_region(edit.region);
+        edit.pixels = PixelDelta::between(before, pixels, edit.region);
     }
     floating.reset();
     return edit;

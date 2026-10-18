@@ -7,6 +7,9 @@ int main(int argc, char** argv) {
     auto window = AppWindow::create();
     lsp::AppController controller;
     lsp::UiState ui(*window, controller);
+    // Wayland and X11 window managers match the window to its desktop entry,
+    // and so to the icon, by this id.
+    slint::set_xdg_app_id("ls_paint");
     // The window is shown first and the remembered place put back after: the
     // size is already set from the constructor, so nothing jumps, while a
     // position asked for before the window existed is what some backends drop.

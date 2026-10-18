@@ -4,9 +4,14 @@
 
 namespace lsp {
 
-void PaintStrokeCommand::apply(CanvasDocument& document, const PixelBuffer& pixels) const {
-    document.layers().at(m_layer_index).pixels.blit(m_region.x, m_region.y, pixels);
-    document.mark_dirty(m_region);
+void PaintStrokeCommand::undo(CanvasDocument& document) {
+    m_delta.undo(document.layers().at(m_layer_index).pixels);
+    document.mark_dirty(m_delta.bounds());
+}
+
+void PaintStrokeCommand::redo(CanvasDocument& document) {
+    m_delta.redo(document.layers().at(m_layer_index).pixels);
+    document.mark_dirty(m_delta.bounds());
 }
 
 }  // namespace lsp

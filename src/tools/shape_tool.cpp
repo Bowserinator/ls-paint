@@ -405,13 +405,8 @@ Brush texture_brush(ShapeTexture texture, int thickness) {
 // The clip the raster target applies, in the form a brush stamp understands, so
 // a textured part is held back by the same selection the hard edges honour.
 SelectionMask target_clip(raster::Target target) {
-    const RectI bounds = target.pixels.bounds();
-    SelectionMask clip(bounds.width, bounds.height);
-    if (target.clip_mask == nullptr) return clip;  // no selection is writable everywhere
-    const std::size_t count = static_cast<std::size_t>(bounds.width) * bounds.height;
-    clip.replace_region(bounds,
-                        std::vector<std::uint8_t>(target.clip_mask, target.clip_mask + count));
-    return clip;
+    if (target.clip != nullptr) return *target.clip;
+    return SelectionMask(target.pixels.width(), target.pixels.height());
 }
 
 // Stamps a textured outline along the shape's path.
@@ -430,13 +425,7 @@ SelectionMask interior_clip(raster::Target target, std::span<const Point2f> poin
     const RectI bounds = target.pixels.bounds();
     SelectionMask interior(bounds.width, bounds.height);
     interior.fill_polygon(points);
-    if (target.clip_mask == nullptr) return interior;
-    std::vector<std::uint8_t> bytes = interior.extract_region(bounds);
-    const std::size_t count = bytes.size();
-    for (std::size_t i = 0; i < count; ++i) {
-        if (target.clip_mask[i] == 0) bytes[i] = 0;
-    }
-    interior.replace_region(bounds, bytes);
+    if (target.clip != nullptr) interior.intersect(*target.clip);
     return interior;
 }
 

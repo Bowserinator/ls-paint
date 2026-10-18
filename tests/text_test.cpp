@@ -227,10 +227,9 @@ void test_utf8_is_drawn_and_invalid_bytes_do_not_crash() {
 
 void test_clip_mask_limits_the_text() {
     PixelBuffer pixels(240, 48);
-    std::vector<std::uint8_t> mask(240 * 48, 1);
-    for (int y = 0; y < 48; ++y)
-        for (int x = 70; x < 240; ++x) mask[static_cast<std::size_t>(y) * 240 + x] = 0;
-    (void)draw_text(Target{pixels, mask.data()}, {4, 4}, "Clipped", body_options(), kInk);
+    SelectionMask mask(240, 48);
+    mask.fill_rect({0, 0, 70, 48});
+    (void)draw_text(Target{pixels, &mask}, {4, 4}, "Clipped", body_options(), kInk);
     CHECK(painted_count(pixels) > 0);
     for (int y = 0; y < 48; ++y)
         for (int x = 70; x < 240; ++x) CHECK(pixels.at(x, y).a == 0);

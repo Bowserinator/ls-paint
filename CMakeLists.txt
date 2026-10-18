@@ -66,6 +66,7 @@ add_library(lsp_core STATIC
     src/core/color.cpp
     src/core/compositor.cpp
     src/core/pixel_buffer.cpp
+    src/core/pixel_delta.cpp
     src/core/raster.cpp
     src/history/history_stack.cpp
     src/history/commands/paint_stroke_command.cpp
@@ -127,6 +128,13 @@ slint_target_sources(ls_paint ui/dialogs/confirm-dialog.slint NAMESPACE lsp_conf
 slint_target_sources(ls_paint ui/dialogs/message-dialog.slint NAMESPACE lsp_message)
 slint_target_sources(ls_paint ui/dialogs/resize-dialog.slint NAMESPACE lsp_resize)
 
+if(WIN32)
+    target_sources(ls_paint PRIVATE icons/ls_paint.rc)
+    # The resource names the icon from the project root, which the resource
+    # compiler only finds on the include path.
+    target_include_directories(ls_paint PRIVATE ${CMAKE_SOURCE_DIR})
+endif()
+
 if(MSVC)
     foreach(target lsp_core ls_paint)
         # Source and string literals are UTF-8, which the path conversions assume.
@@ -146,3 +154,14 @@ include(CTest)
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
+
+include(GNUInstallDirs)
+
+# A desktop entry points at the binary and its icon by name, so all three are
+# installed together. The installed binary finds Slint and clip through the
+# library directory beside it, which the build-tree rpath does not cover.
+set_target_properties(ls_paint PROPERTIES INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
+install(TARGETS ls_paint RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES $<TARGET_FILE:clip> DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES ls_paint.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES icons/ls_paint.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)

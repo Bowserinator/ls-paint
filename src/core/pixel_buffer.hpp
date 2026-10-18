@@ -1,6 +1,8 @@
 #pragma once
 
+#include <bit>
 #include <cstddef>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -9,12 +11,16 @@
 
 namespace lsp {
 
+// A grid of pixels. Storage is split into horizontal bands that are shared
+// between copies until one of them is written to, so copying a buffer is cheap
+// and a fresh uniform buffer only costs memory where it is later painted.
+//
+// Spans handed out by row() stay valid only until the buffer is copied or
+// assigned.
 class PixelBuffer {
 public:
     PixelBuffer() = default;
-
-    PixelBuffer(int width, int height, Rgba8 fill = kTransparent)
-        : m_width(width), m_height(height), m_pixels(static_cast<std::size_t>(width) * height, fill) {}
+    PixelBuffer(int width, int height, Rgba8 fill = kTransparent);
 
     [[nodiscard]] int width() const noexcept { return m_width; }
     [[nodiscard]] int height() const noexcept { return m_height; }
@@ -25,20 +31,32 @@ public:
     }
 
     [[nodiscard]] std::span<Rgba8> row(int y) {
-        return {m_pixels.data() + grid_index(0, y, m_width), static_cast<std::size_t>(m_width)};
+        Band& band = m_bands[static_cast<std::size_t>(y) >> m_band_shift];
+        if (band.use_count() > 1) band = std::make_shared<std::vector<Rgba8>>(*band);
+        return {band->data() + row_offset(y), static_cast<std::size_t>(m_width)};
     }
 
     [[nodiscard]] std::span<const Rgba8> row(int y) const {
-        return {m_pixels.data() + grid_index(0, y, m_width), static_cast<std::size_t>(m_width)};
+        const Band& band = m_bands[static_cast<std::size_t>(y) >> m_band_shift];
+        return {band->data() + row_offset(y), static_cast<std::size_t>(m_width)};
     }
 
     [[nodiscard]] Rgba8& at(int x, int y) { return row(y)[static_cast<std::size_t>(x)]; }
     [[nodiscard]] const Rgba8& at(int x, int y) const { return row(y)[static_cast<std::size_t>(x)]; }
 
-    friend bool operator==(const PixelBuffer&, const PixelBuffer&) = default;
+    friend bool operator==(const PixelBuffer& a, const PixelBuffer& b);
 
     [[nodiscard]] PixelBuffer copy_region(RectI region) const;
     void blit(int x, int y, const PixelBuffer& source);
+    // Copies `region` from a buffer of the same size.
+    void copy_region_from(const PixelBuffer& source, RectI region);
+    // Whether row `y` of both buffers is known to hold the same pixels without
+    // looking at them.
+    [[nodiscard]] bool row_shared_with(const PixelBuffer& other, int y) const noexcept;
+    // The pixels of `region` as one row-major block.
+    [[nodiscard]] std::vector<Rgba8> contiguous_copy(RectI region) const;
+    // Bytes of pixel storage the buffer references.
+    [[nodiscard]] std::size_t storage_bytes() const noexcept;
 
     [[nodiscard]] PixelBuffer rotated_90_cw() const;
     [[nodiscard]] PixelBuffer rotated_90_ccw() const;
@@ -47,15 +65,22 @@ public:
     [[nodiscard]] PixelBuffer flipped_vertical() const;
 
 private:
+    using Band = std::shared_ptr<std::vector<Rgba8>>;
+
+    [[nodiscard]] std::size_t row_offset(int y) const noexcept {
+        return (static_cast<std::size_t>(y) & m_band_mask) * static_cast<std::size_t>(m_width);
+    }
+
     int m_width = 0;
     int m_height = 0;
-    std::vector<Rgba8> m_pixels;
+    unsigned m_band_shift = 0;
+    std::size_t m_band_mask = 0;
+    std::vector<Band> m_bands;
 };
 
 // Bytes one buffer of this size holds.
 [[nodiscard]] inline std::size_t pixel_bytes(const PixelBuffer& pixels) noexcept {
-    return static_cast<std::size_t>(pixels.width()) * static_cast<std::size_t>(pixels.height()) *
-           sizeof(Rgba8);
+    return pixels.storage_bytes();
 }
 
 }  // namespace lsp

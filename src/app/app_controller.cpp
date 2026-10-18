@@ -133,10 +133,12 @@ void AppController::make_selection_transparent() {
 
     const std::size_t layer_index = m_document.layers().active_index();
     PixelBuffer& pixels = m_document.active_layer().pixels;
-    PixelBuffer before = pixels.copy_region(region);
+    const PixelBuffer before = pixels;
     make_transparent(pixels, selection, region);
     m_document.mark_dirty(region);
-    m_history.push(std::make_unique<PaintStrokeCommand>(layer_index, region, std::move(before), pixels.copy_region(region)));
+    PixelDelta delta = PixelDelta::between(before, pixels, region);
+    if (delta.empty()) return;
+    m_history.push(std::make_unique<PaintStrokeCommand>(layer_index, std::move(delta)));
 }
 
 void AppController::push_selection_edit(SelectionEdit edit) {
@@ -250,7 +252,7 @@ IoResult AppController::copy_to_clipboard() {
     (void)m_document.flush();
     const RectI region = copy_source_rect();
     if (region.empty()) return IoResult::failure("There is nothing to copy");
-    if (!Clipboard::set_image(m_document.flattened().copy_region(region)))
+    if (!Clipboard::set_image(m_document.flattened(), region))
         return IoResult::failure("The system clipboard is not available");
     return IoResult::success();
 }

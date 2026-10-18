@@ -1,10 +1,12 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <vector>
 
 #include "core/pixel_buffer.hpp"
+#include "core/pixel_delta.hpp"
 #include "selection/selection_mask.hpp"
 
 namespace lsp {
@@ -51,16 +53,20 @@ struct FloatingContents {
 
     [[nodiscard]] bool empty() const noexcept { return content.width() <= 0; }
 
+    [[nodiscard]] std::size_t memory_bytes() const noexcept {
+        return pixel_bytes(content) + pixel_bytes(source) + mask.size() + origin_mask.size() +
+               source_mask.size();
+    }
+
     friend bool operator==(const FloatingContents&, const FloatingContents&) = default;
 };
 
-// One reversible selection edit: the pixel region it touched, both ends of the
+// One reversible selection edit: the pixels it changed, both ends of the
 // selection mask, and — while the contents float — both ends of the floating
 // copy, so undo/redo restores the selection along with the pixels.
 struct SelectionEdit {
     RectI region;
-    PixelBuffer before;
-    PixelBuffer after;
+    PixelDelta pixels;
     SelectionMask mask_before;
     SelectionMask mask_after;
     std::optional<FloatingContents> float_before;

@@ -4,7 +4,9 @@
 #include <cmath>
 #include <cstdint>
 #include <numbers>
+#include <span>
 
+#include "config.hpp"
 #include "core/blend_modes.hpp"
 #include "core/blur.hpp"
 #include "core/warp.hpp"
@@ -190,9 +192,46 @@ void BrushEngine::prepare_source() {
     if (m_source_ready) return;
     m_source_ready = true;
     if (!m_source || m_brush.kind != BrushKind::Blur) return;
+    const int columns = (m_source->width() + kBlurChunkSize - 1) / kBlurChunkSize;
+    const int rows = (m_source->height() + kBlurChunkSize - 1) / kBlurChunkSize;
+    m_blurred_columns = columns;
+    m_blurred.assign(static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows), PixelBuffer());
+}
+
+void BrushEngine::ensure_blurred(RectI area) {
+    area = area.intersected(m_source->bounds());
+    if (area.empty()) return;
     // A quarter of the size: the blur reaches as far as half the brush, which
     // keeps its effect inside the tip the user can see.
-    m_blurred = blur::box_twice(*m_source, std::max(1, m_brush.size / 4));
+    const int radius = std::max(1, m_brush.size / 4);
+    for (int row = area.y / kBlurChunkSize; row <= (area.bottom() - 1) / kBlurChunkSize; ++row) {
+        for (int column = area.x / kBlurChunkSize; column <= (area.right() - 1) / kBlurChunkSize; ++column) {
+            PixelBuffer& chunk = m_blurred[grid_index(column, row, m_blurred_columns)];
+            if (chunk.width() > 0) continue;
+            chunk = blur::box_twice_region(
+                *m_source, radius,
+                {column * kBlurChunkSize, row * kBlurChunkSize, kBlurChunkSize, kBlurChunkSize});
+        }
+    }
+}
+
+std::uint8_t& BrushEngine::coverage_at(int x, int y, int width, int height) {
+    const int columns = (width + kCoverageChunkSize - 1) / kCoverageChunkSize;
+    const int rows = (height + kCoverageChunkSize - 1) / kCoverageChunkSize;
+    if (columns != m_coverage_columns || rows != m_coverage_rows) {
+        m_coverage_columns = columns;
+        m_coverage_rows = rows;
+        m_coverage.assign(static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows), {});
+    }
+    std::vector<std::uint8_t>& chunk =
+        m_coverage[grid_index(x / kCoverageChunkSize, y / kCoverageChunkSize, columns)];
+    if (chunk.empty()) chunk.assign(static_cast<std::size_t>(kCoverageChunkSize) * kCoverageChunkSize, 0);
+    return chunk[grid_index(x % kCoverageChunkSize, y % kCoverageChunkSize, kCoverageChunkSize)];
+}
+
+const Rgba8& BrushEngine::blurred_at(int x, int y) const {
+    return m_blurred[grid_index(x / kBlurChunkSize, y / kBlurChunkSize, m_blurred_columns)].at(
+        x % kBlurChunkSize, y % kBlurChunkSize);
 }
 
 void BrushEngine::steer(float dx, float dy) {
@@ -330,9 +369,10 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move, floa
     const RectI area = RectI{left, top, side, side}.intersected(target.bounds());
 
     const BlendFn blend = blend_fn_for(m_profile.blend);
-    const bool blur_stamp = m_brush.kind == BrushKind::Blur &&
-                            m_blurred.width() >= target.width() &&
-                            m_blurred.height() >= target.height();
+    const bool blur_stamp = m_brush.kind == BrushKind::Blur && !m_blurred.empty() &&
+                            m_source->width() >= target.width() &&
+                            m_source->height() >= target.height();
+    if (blur_stamp) ensure_blurred(area);
     const bool warp_stamp = m_brush.kind == BrushKind::Liquify && m_source != nullptr &&
                             m_source->width() >= target.width() &&
                             m_source->height() >= target.height();
@@ -342,11 +382,9 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move, floa
                              m_source->height() >= target.height();
         pick_up(sourced ? *m_source : target, cx, cy, radius);
     }
-    if (m_profile.flat && m_coverage.size() != static_cast<std::size_t>(target.width()) * target.height()) {
-        m_coverage.assign(static_cast<std::size_t>(target.width()) * target.height(), 0);
-    }
 
     for (int y = area.y; y < area.bottom(); ++y) {
+        const std::span<Rgba8> out = target.row(y);
         for (int x = area.x; x < area.right(); ++x) {
             if (!m_selection.contains(x, y)) continue;
             const Sample sample = ink_at(m_profile, tip, static_cast<float>(x) + 0.5f - cx,
@@ -360,18 +398,19 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move, floa
                 color = warp::sample_bilinear(*m_source, static_cast<float>(x) + 0.5f - move.x * ink,
                                               static_cast<float>(y) + 0.5f - move.y * ink);
             } else if (blur_stamp) {
-                color = m_blurred.at(x, y);
+                color = blurred_at(x, y);
             }
             if (m_profile.flat) {
                 // Only the ink beyond what this stroke already put here is added.
-                std::uint8_t& laid = m_coverage[grid_index(x, y, target.width())];
+                std::uint8_t& laid = coverage_at(x, y, target.width(), target.height());
                 const std::uint8_t wanted = byte_from_unit(ink);
                 if (wanted <= laid) continue;
                 const float before = unit_from_byte(laid);
                 laid = wanted;
                 ink = (unit_from_byte(wanted) - before) / (1.0f - before);
             }
-            target.at(x, y) = ink >= 1.0f ? color : blend(target.at(x, y), color, ink);
+            Rgba8& pixel = out[static_cast<std::size_t>(x)];
+            pixel = ink >= 1.0f ? color : blend(pixel, color, ink);
         }
     }
     return area;

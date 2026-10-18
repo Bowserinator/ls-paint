@@ -35,6 +35,12 @@ private:
     // Prepares whatever the sampled kind reads for the whole stroke.
     void prepare_source();
 
+    // Makes sure the blurred image is available over `area`.
+    void ensure_blurred(RectI area);
+    [[nodiscard]] const Rgba8& blurred_at(int x, int y) const;
+    // The ink already laid at a pixel of a canvas `width` by `height`.
+    [[nodiscard]] std::uint8_t& coverage_at(int x, int y, int width, int height);
+
     // Turns the tip towards the way the stroke is heading.
     void steer(float dx, float dy);
 
@@ -50,7 +56,8 @@ private:
     Rgba8 m_color;
     const SelectionMask& m_selection;
     const PixelBuffer* m_source = nullptr;  // the layer as the stroke began
-    PixelBuffer m_blurred;                  // what the blur type samples
+    std::vector<PixelBuffer> m_blurred;     // what the blur type samples, by chunk
+    int m_blurred_columns = 0;
     bool m_source_ready = false;
     BrushProfile m_profile;
     std::optional<Point2f> m_last;
@@ -63,7 +70,10 @@ private:
     std::uint32_t m_seed = 0;
     std::uint32_t m_stamps = 0;
     Rgba8 m_loaded;
-    std::vector<std::uint8_t> m_coverage;
+    // How much ink this stroke has laid on each pixel, by chunk.
+    std::vector<std::vector<std::uint8_t>> m_coverage;
+    int m_coverage_columns = 0;
+    int m_coverage_rows = 0;
 };
 
 }  // namespace lsp

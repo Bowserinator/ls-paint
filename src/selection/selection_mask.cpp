@@ -8,13 +8,29 @@
 
 namespace lsp {
 
-void SelectionMask::ensure_allocated() {
-    if (m_mask.empty()) m_mask.assign(static_cast<std::size_t>(m_width) * m_height, 0);
+bool operator==(const SelectionMask& a, const SelectionMask& b) {
+    if (a.m_width != b.m_width || a.m_height != b.m_height || a.m_bounds != b.m_bounds) return false;
+    if (a.m_mask == b.m_mask) return true;
+    if (!a.m_mask || !b.m_mask) return false;
+    return *a.m_mask == *b.m_mask;
 }
 
-std::uint8_t& SelectionMask::cell(int x, int y) { return m_mask[grid_index(x, y, m_width)]; }
+std::vector<std::uint8_t>& SelectionMask::writable() {
+    if (!m_mask) {
+        reset_cells();
+    } else if (m_mask.use_count() > 1) {
+        m_mask = std::make_shared<std::vector<std::uint8_t>>(*m_mask);
+    }
+    return *m_mask;
+}
 
-std::uint8_t SelectionMask::cell(int x, int y) const { return m_mask[grid_index(x, y, m_width)]; }
+void SelectionMask::reset_cells() {
+    m_mask = std::make_shared<std::vector<std::uint8_t>>(static_cast<std::size_t>(m_width) * m_height, 0);
+}
+
+std::uint8_t& SelectionMask::cell(int x, int y) { return (*m_mask)[grid_index(x, y, m_width)]; }
+
+std::uint8_t SelectionMask::cell(int x, int y) const { return (*m_mask)[grid_index(x, y, m_width)]; }
 
 void SelectionMask::recompute_bounds() {
     int min_x = std::numeric_limits<int>::max();
@@ -22,9 +38,10 @@ void SelectionMask::recompute_bounds() {
     int max_x = -1;
     int max_y = -1;
 
+    const SelectionMask& cells = *this;
     for (int y = 0; y < m_height; ++y) {
         for (int x = 0; x < m_width; ++x) {
-            if (cell(x, y) == 0) continue;
+            if (cells.cell(x, y) == 0) continue;
             min_x = std::min(min_x, x);
             min_y = std::min(min_y, y);
             max_x = std::max(max_x, x);
@@ -42,10 +59,9 @@ void SelectionMask::fill_rect(RectI rect) {
         clear();
         return;
     }
-    ensure_allocated();
-    std::ranges::fill(m_mask, 0);
+    reset_cells();
     for (int y = rect.y; y < rect.bottom(); ++y)
-        std::fill_n(m_mask.begin() + static_cast<std::ptrdiff_t>(y) * m_width + rect.x, rect.width, 1);
+        std::fill_n(m_mask->begin() + static_cast<std::ptrdiff_t>(y) * m_width + rect.x, rect.width, 1);
     m_bounds = rect;
 }
 
@@ -55,8 +71,7 @@ void SelectionMask::fill_polygon(std::span<const Point2f> points) {
         return;
     }
 
-    ensure_allocated();
-    std::ranges::fill(m_mask, 0);
+    reset_cells();
 
     std::vector<float> crossings;
     for (int y = 0; y < m_height; ++y) {
@@ -71,8 +86,14 @@ void SelectionMask::fill_polygon(std::span<const Point2f> points) {
 }
 
 void SelectionMask::invert() {
-    ensure_allocated();
-    for (std::uint8_t& value : m_mask) value = value ? 0 : 1;
+    for (std::uint8_t& value : writable()) value = value ? 0 : 1;
+    recompute_bounds();
+}
+
+void SelectionMask::intersect(const SelectionMask& other) {
+    if (!m_mask || !other.m_mask || m_width != other.m_width || m_height != other.m_height) return;
+    std::vector<std::uint8_t>& cells = writable();
+    for (std::size_t i = 0; i < cells.size(); ++i) cells[i] &= (*other.m_mask)[i];
     recompute_bounds();
 }
 
@@ -80,12 +101,11 @@ void SelectionMask::replace_region(RectI region, const std::vector<std::uint8_t>
     if (region.empty() || bytes.size() != static_cast<std::size_t>(region.width) * region.height) return;
     const RectI clipped = region.intersected({0, 0, m_width, m_height});
     if (clipped.empty()) return;
-    ensure_allocated();
+    std::vector<std::uint8_t>& cells = writable();
     for (int y = clipped.y; y < clipped.bottom(); ++y) {
         const auto source = bytes.begin() + static_cast<std::ptrdiff_t>(y - region.y) * region.width +
                             (clipped.x - region.x);
-        std::copy_n(source, clipped.width,
-                    m_mask.begin() + static_cast<std::ptrdiff_t>(y) * m_width + clipped.x);
+        std::copy_n(source, clipped.width, cells.begin() + static_cast<std::ptrdiff_t>(y) * m_width + clipped.x);
     }
     recompute_bounds();
 }
@@ -96,7 +116,7 @@ std::vector<std::uint8_t> SelectionMask::extract_region(RectI region) const {
     for (int y = region.y; y < region.bottom(); ++y) {
         if (y < 0 || y >= m_height) continue;
         for (int x = region.x; x < region.right(); ++x) {
-            if (x < 0 || x >= m_width || m_mask.empty()) continue;
+            if (x < 0 || x >= m_width || !m_mask) continue;
             bytes[grid_index(x - region.x, y - region.y, region.width)] = cell(x, y);
         }
     }

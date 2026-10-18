@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=LS Paint
+Comment=Microsoft paint clone
+Exec=ls_paint %f
+Icon=ls_paint
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+MimeType=image/png;image/bmp;image/jpeg;
+StartupWMClass=ls_paint

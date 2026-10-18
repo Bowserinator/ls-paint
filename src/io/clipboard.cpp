@@ -135,9 +135,11 @@ std::uint8_t read_channel(std::uint32_t word, unsigned long mask, unsigned long 
 
 }  // namespace
 
-bool Clipboard::set_image(const PixelBuffer& image) {
-    if (image.width() <= 0 || image.height() <= 0) return false;
-    const clip::image wrapped(image.row(0).data(), rgba8_spec(image.width(), image.height()));
+bool Clipboard::set_image(const PixelBuffer& image, RectI region) {
+    region = region.intersected(image.bounds());
+    if (region.empty()) return false;
+    const std::vector<Rgba8> pixels = image.contiguous_copy(region);
+    const clip::image wrapped(pixels.data(), rgba8_spec(region.width, region.height));
     return clip::set_image(wrapped);
 }
 

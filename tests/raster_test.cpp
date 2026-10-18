@@ -169,10 +169,9 @@ void test_fewer_than_three_polygon_points_paints_nothing() {
 
 void test_clip_mask_blocks_pixels_outside_the_selection() {
     PixelBuffer pixels(16, 16);
-    std::vector<std::uint8_t> mask(16 * 16, 0);
-    for (int y = 0; y < 16; ++y)
-        for (int x = 8; x < 16; ++x) mask[static_cast<std::size_t>(y) * 16 + x] = 1;
-    raster::draw_rect_fill(Target{pixels, mask.data()}, {0, 0, 16, 16}, kInk);
+    SelectionMask mask(16, 16);
+    mask.fill_rect({8, 0, 8, 16});
+    raster::draw_rect_fill(Target{pixels, &mask}, {0, 0, 16, 16}, kInk);
     CHECK(pixels.at(7, 8).a == 0);
     CHECK(pixels.at(8, 8).a == 255);
     CHECK(pixels.at(15, 15).a == 255);
