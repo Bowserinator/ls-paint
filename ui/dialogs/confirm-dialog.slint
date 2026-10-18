@@ -6,8 +6,9 @@ import { Win10, WinButton } from "../win10.slint";
 export component ConfirmDialog inherits Window {
     title: "LS Paint";
     width: 380px;
-    height: 96px;
+    height: body.preferred-height + 2 * Win10.frame-width;
     always-on-top: true;
+    default-font-family: "Selawik";
 
     in property <string> message: "";
 
@@ -22,7 +23,7 @@ export component ConfirmDialog inherits Window {
         border-width: Win10.frame-width;
         border-color: Win10.frame-color;
 
-        VerticalLayout {
+        body := VerticalLayout {
             padding: 12px;
             spacing: 10px;
 

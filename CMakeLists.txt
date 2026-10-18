@@ -117,7 +117,8 @@ add_executable(ls_paint
 target_include_directories(ls_paint PRIVATE ${CMAKE_SOURCE_DIR}/src)
 # portable-file-dialogs: the system's own open and save dialogs, header only.
 target_include_directories(ls_paint SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/portable-file-dialogs)
-target_link_libraries(ls_paint PRIVATE lsp_core Slint::Slint)
+find_package(Threads REQUIRED)
+target_link_libraries(ls_paint PRIVATE lsp_core Slint::Slint Threads::Threads)
 slint_target_sources(ls_paint ui/appwindow.slint)
 # The two dialogs are real windows, shown from the application code. Each is
 # compiled in its own namespace: the files they share with the ribbon would
@@ -133,6 +134,15 @@ if(WIN32)
     # The resource names the icon from the project root, which the resource
     # compiler only finds on the include path.
     target_include_directories(ls_paint PRIVATE ${CMAKE_SOURCE_DIR})
+    # The window is the whole user interface, so the program must start without
+    # a console window beside it.
+    set_target_properties(ls_paint PROPERTIES WIN32_EXECUTABLE TRUE)
+    if(MSVC AND NOT CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "GNU")
+        # A Windows subsystem program starts at WinMain; this one has a main.
+        target_link_options(ls_paint PRIVATE /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
+    elseif(NOT MSVC)
+        target_link_options(ls_paint PRIVATE -mwindows)
+    endif()
 endif()
 
 if(MSVC)
@@ -152,7 +162,14 @@ endif()
 
 include(CTest)
 if(BUILD_TESTING)
-    add_subdirectory(tests)
+    # The tests build on their own, so the default build produces only the
+    # application; `check` builds the test executables and runs them.
+    add_subdirectory(tests EXCLUDE_FROM_ALL)
+    add_custom_target(check
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+        DEPENDS ${LSP_TEST_TARGETS}
+        USES_TERMINAL
+    )
 endif()
 
 include(GNUInstallDirs)

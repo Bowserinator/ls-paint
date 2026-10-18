@@ -8,8 +8,9 @@ import { Win10, WinButton, WinFieldLabel, WinNumberBox } from "../win10.slint";
 export component ResizeDialog inherits Window {
     title: "Resize image";
     width: 340px;
-    height: 175px;
+    height: body.preferred-height + 2 * Win10.frame-width;
     always-on-top: true;
+    default-font-family: "Selawik";
 
     // The fields are text so the user can clear them while typing; the entries
     // are checked before anything is resized.
@@ -26,7 +27,7 @@ export component ResizeDialog inherits Window {
         border-width: Win10.frame-width;
         border-color: Win10.frame-color;
 
-        VerticalLayout {
+        body := VerticalLayout {
             padding: 14px;
             spacing: 10px;
 

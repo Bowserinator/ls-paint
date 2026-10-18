@@ -8,8 +8,11 @@ import { CanvasRuler } from "components/canvas-ruler.slint";
 import { CanvasShadow } from "components/canvas-shadow.slint";
 import { CanvasCursor } from "components/canvas-cursor.slint";
 
-import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ToolOptions } from "globals.slint";
+import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ToolOptions, ViewArea } from "globals.slint";
 export * from "globals.slint";
+
+import "../assets/selawik.regular.ttf";
+import "../assets/selawik.bold.ttf";
 
 // Which quadrant of the rotation centre the pointer is in, as seen on screen.
 enum ERotateCorner { NE, NW, SE, SW }
@@ -72,6 +75,47 @@ export component AppWindow inherits Window {
     in property <int> tile-size: 512;
     property <int> tile-columns: max(1, ceil(DocumentState.canvas-width / root.tile-size));
 
+    // How many times the tiles are halved for the current zoom, so a zoomed-out
+    // view shows an averaged image instead of a sparse sample of the pixels.
+    property <int> zoom-level: UserState.zoom >= 1.0 ? 0 : max(0, floor(-log(UserState.zoom, 2.0) + 0.5));
+    // Pixels each tile image shows past its edge, in document pixels. It matches
+    // the overlap the backend builds in.
+    property <float> tile-overlap: 2.0 * pow(2.0, root.zoom-level);
+    callback zoom-level-changed(int);
+
+    // What the window shows of the document, so only the tiles near it are built.
+    in-out property <ViewArea> view-area: {
+        x: (-scroll.viewport-x - root.canvas-origin) / UserState.zoom / 1px,
+        y: (-scroll.viewport-y - root.canvas-origin) / UserState.zoom / 1px,
+        width: scroll.visible-width / UserState.zoom / 1px,
+        height: scroll.visible-height / UserState.zoom / 1px,
+    };
+    callback view-area-changed(ViewArea);
+    changed view-area => { root.view-area-changed(root.view-area); }
+
+    // The brush or pencil that was in hand last, which Escape returns to when
+    // it leaves the text tool.
+    property <ETool> current-tool: UserState.selected-tool;
+    property <ETool> last-brush-tool: ETool.PENCIL;
+    changed current-tool => {
+        if (root.current-tool == ETool.BRUSH || root.current-tool == ETool.PENCIL) {
+            root.last-brush-tool = root.current-tool;
+        }
+    }
+    changed zoom-level => { root.zoom-level-changed(root.zoom-level); }
+
+    // Where a tile edge falls on screen. Edges sit on whole pixels and each tile
+    // runs a little under its neighbour, so no gap shows between the two; the
+    // paper's own edge stays exact.
+    pure function edge-x(doc: float) -> length {
+        return doc >= DocumentState.canvas-width ? DocumentState.canvas-width * UserState.zoom * 1px
+            : round(doc * UserState.zoom) * 1px;
+    }
+    pure function edge-y(doc: float) -> length {
+        return doc >= DocumentState.canvas-height ? DocumentState.canvas-height * UserState.zoom * 1px
+            : round(doc * UserState.zoom) * 1px;
+    }
+
     // Where the canvas right click menu is asked to open.
     in-out property <length> menu-x: 0px;
     in-out property <length> menu-y: 0px;
@@ -103,9 +147,6 @@ export component AppWindow inherits Window {
         : 64.0;
     property <length> resize-dx;
     property <length> resize-dy;
-    // Scratch for set-zoom: how far the viewport slides per pixel of cursor
-    // distance, i.e. 1 - new zoom / old zoom.
-    property <float> zoom-anchor;
 
     // Window sizes
     min-height: 240px;
@@ -119,7 +160,7 @@ export component AppWindow inherits Window {
     public function focus-app() { focus-scope.focus(); }
 
     // Global styles
-    default-font-family: "Segoe UI";
+    default-font-family: "Selawik";
     title: (DocumentState.modified ? DocumentState.title + " *" : DocumentState.title) + " - LS Paint";
 
     function resize-canvas(dx: length, dy: length) {
@@ -130,17 +171,20 @@ export component AppWindow inherits Window {
     }
 
     // Where every zoom change funnels through: clamp the scale to the ends
-    // of the ladder and turn the view around the point under (px, py) so the
-    // document pixel there stays put. The zoom changes first because the new
-    // canvas size is what the viewport clamp below has to respect.
+    // of the ladder and turn the view around (px, py), a point in the visible
+    // view, so the document pixel under it stays put. The zoom changes first
+    // because the new canvas size is what the viewport clamp has to respect.
     function set-zoom(target: float, px: length, py: length) {
         let z = clamp(target, ZoomScale.min-zoom, ZoomScale.max-zoom);
-        root.zoom-anchor = 1.0 - z / UserState.zoom;
+        // Only the paper scales; its margin does not.
+        let paper-x = px - scroll.viewport-x - root.canvas-origin;
+        let paper-y = py - scroll.viewport-y - root.canvas-origin;
+        let shift = 1.0 - z / UserState.zoom;
+        let next-x = scroll.viewport-x + paper-x * shift;
+        let next-y = scroll.viewport-y + paper-y * shift;
         UserState.zoom = z;
-        scroll.viewport-x = min(0px, max(min(0px, scroll.visible-width - scroll.viewport-width),
-                                         scroll.viewport-x + px * root.zoom-anchor));
-        scroll.viewport-y = min(0px, max(min(0px, scroll.visible-height - scroll.viewport-height),
-                                         scroll.viewport-y + py * root.zoom-anchor));
+        scroll.viewport-x = min(0px, max(min(0px, scroll.visible-width - scroll.viewport-width), next-x));
+        scroll.viewport-y = min(0px, max(min(0px, scroll.visible-height - scroll.viewport-height), next-y));
     }
 
     // Ctrl+wheel zooms the view around the point under the cursor, whether the
@@ -203,6 +247,9 @@ export component AppWindow inherits Window {
         height: 100%;
 
         key-pressed(event) => {
+            if (event.text == "\u{1b}" && UserState.selected-tool == ETool.TEXT) {
+                UserState.selected-tool = root.last-brush-tool;
+            }
             UserState.key-pressed(event.text, event.modifiers.control || event.modifiers.meta,
                                   event.modifiers.shift, event.modifiers.alt);
             accept
@@ -411,8 +458,8 @@ export component AppWindow inherits Window {
                                         // zooms around the click point and never reaches
                                         // the C++ registry, so no stroke can start and no
                                         // floating selection gets baked.
-                                        root.apply-zoom(touch.mouse-x + scroll.viewport-x,
-                                                        touch.mouse-y + scroll.viewport-y,
+                                        root.apply-zoom(touch.mouse-x + root.canvas-origin + scroll.viewport-x,
+                                                        touch.mouse-y + root.canvas-origin + scroll.viewport-y,
                                                         event.button == PointerEventButton.right
                                                             || event.modifiers.alt ? 1 / ZoomScale.step : ZoomScale.step);
                                     } else if (event.button == PointerEventButton.right
@@ -443,11 +490,11 @@ export component AppWindow inherits Window {
                                     UserState.pointer-cancel();
                                 } else if (event.kind == PointerEventKind.move) {
                                     if (root.size-dragging) {
-                                        // A screen pixel of travel is a pixel of
-                                        // brush: right grows the tip, left shrinks
-                                        // it, whatever the zoom.
+                                        // The drag distance is measured on the
+                                        // document, so zoomed out a drag grows
+                                        // the brush faster and zoomed in slower.
                                         ToolOptions.brush-size = max(1px, root.size-drag-size
-                                            + touch.mouse-x - root.size-drag-start);
+                                            + (touch.mouse-x - root.size-drag-start) / UserState.zoom);
                                         // The tip grows about the point the drag
                                         // started on, so the drag changes the size
                                         // alone and leaves the brush where it was.
@@ -469,8 +516,8 @@ export component AppWindow inherits Window {
                             // modifier, pan without, never left to the
                             // Flickable's scroll filter.
                             scroll-event(event) => {
-                                root.handle-wheel(event, touch.mouse-x + scroll.viewport-x,
-                                                  touch.mouse-y + scroll.viewport-y);
+                                root.handle-wheel(event, touch.mouse-x + root.canvas-origin + scroll.viewport-x,
+                                                  touch.mouse-y + root.canvas-origin + scroll.viewport-y);
                                 accept
                             }
 
@@ -486,10 +533,12 @@ export component AppWindow inherits Window {
                                     ? ImageRendering.smooth
                                     : ImageRendering.pixelated;
                                 source: tile;
-                                x: mod(i, root.tile-columns) * root.tile-size * UserState.zoom * 1px;
-                                y: floor(i / root.tile-columns) * root.tile-size * UserState.zoom * 1px;
-                                width: min(root.tile-size, DocumentState.canvas-width - mod(i, root.tile-columns) * root.tile-size) * UserState.zoom * 1px;
-                                height: min(root.tile-size, DocumentState.canvas-height - floor(i / root.tile-columns) * root.tile-size) * UserState.zoom * 1px;
+                                x: root.edge-x(mod(i, root.tile-columns) * root.tile-size);
+                                y: root.edge-y(floor(i / root.tile-columns) * root.tile-size);
+                                width: root.edge-x((mod(i, root.tile-columns) + 1) * root.tile-size + root.tile-overlap)
+                                    - root.edge-x(mod(i, root.tile-columns) * root.tile-size);
+                                height: root.edge-y((floor(i / root.tile-columns) + 1) * root.tile-size + root.tile-overlap)
+                                    - root.edge-y(floor(i / root.tile-columns) * root.tile-size);
                             }
                         }
                         }
@@ -601,6 +650,7 @@ export component AppWindow inherits Window {
                             key-pressed(event) => {
                                 if (event.text == "\u{1b}") {
                                     UserState.cancel-text();
+                                    UserState.selected-tool = root.last-brush-tool;
                                     return accept;
                                 }
                                 return reject;

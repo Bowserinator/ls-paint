@@ -247,6 +247,14 @@ export global ShapeStyle {
 
 // One entry of the Shapes picker palette. The commands come from the same
 // geometry the rasterizer uses, so a glyph always shows what the tool draws.
+// The part of the document on screen, in document pixels.
+export struct ViewArea {
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+}
+
 export struct ShapeGlyph {
     commands: string,
     kind: EShapeKind,

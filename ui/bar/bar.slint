@@ -37,14 +37,18 @@ export component BarItemGroup {
     height: Styles.bar-height;
     min-width: 45px;
 
-    HorizontalLayout {
-        padding-left: Styles.ribbon-group-padding;
-        padding-right: Styles.ribbon-group-padding;
-        padding-bottom: Styles.bar-padding;
-        padding-top: 0;
-        height: Styles.bar-button-height;
+    VerticalLayout {
+        alignment: start;
 
-        @children
+        HorizontalLayout {
+            padding-left: Styles.ribbon-group-padding;
+            padding-right: Styles.ribbon-group-padding;
+            padding-bottom: Styles.bar-padding;
+            padding-top: 0;
+            height: Styles.bar-button-height;
+
+            @children
+        }
     }
 
     Text {

@@ -3,6 +3,12 @@
 #include "appwindow.h"
 #include "ui/ui_state.hpp"
 
+#ifdef _WIN32
+#include <stdlib.h>
+
+#include <windows.h>
+#endif
+
 int main(int argc, char** argv) {
     auto window = AppWindow::create();
     lsp::AppController controller;
@@ -19,3 +25,9 @@ int main(int argc, char** argv) {
     window->run();
     return 0;
 }
+
+#ifdef _WIN32
+// The program runs without a console, so the system starts it here whichever
+// toolchain linked it.
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) { return main(__argc, __argv); }
+#endif

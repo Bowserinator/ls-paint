@@ -143,14 +143,9 @@ std::vector<Point2f> ellipse_points(RectI box) {
     return points;
 }
 
-std::vector<Point2f> curve_points(Point2f a, Point2f b) {
-    // A single-arc curve: the drag defines the bow, so the curve bulges
-    // perpendicular to the drag by a quarter of its length.
-    constexpr float kBow = 0.25f;
+// The quadratic Bezier from `a` to `b` bent towards `control`.
+std::vector<Point2f> curve_points(Point2f a, Point2f control, Point2f b) {
     constexpr int kSamples = 24;
-    const float dx = b.x - a.x;
-    const float dy = b.y - a.y;
-    const Point2f control{(a.x + b.x) / 2.0f - dy * kBow, (a.y + b.y) / 2.0f + dx * kBow};
     std::vector<Point2f> points;
     points.reserve(kSamples + 1);
     for (int i = 0; i <= kSamples; ++i) {
@@ -160,6 +155,15 @@ std::vector<Point2f> curve_points(Point2f a, Point2f b) {
                           inverse * inverse * a.y + 2.0f * inverse * t * control.y + t * t * b.y});
     }
     return points;
+}
+
+// Where a curve between `a` and `b` bends when nothing says otherwise: out to
+// the side of the drag by a quarter of its length.
+Point2f default_bend(Point2f a, Point2f b) {
+    constexpr float kBow = 0.25f;
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    return {(a.x + b.x) / 2.0f - dy * kBow, (a.y + b.y) / 2.0f + dx * kBow};
 }
 
 std::vector<Point2f> rounded_box_points(RectI box, float radius) {
@@ -493,7 +497,9 @@ std::vector<Point2f> shape::outline(ShapeId kind, Point2f a, Point2f b,
                                     std::span<const Point2f> polygon) {
     if (kind == ShapeId::Polygon) return {polygon.begin(), polygon.end()};
     if (kind == ShapeId::Line) return {a, b};
-    if (kind == ShapeId::Curve) return curve_points(a, b);
+    if (kind == ShapeId::Curve) {
+        return curve_points(a, polygon.size() == 1 ? polygon.front() : default_bend(a, b), b);
+    }
 
     const RectI box = normalized_rect(a, b);
     const float x0 = static_cast<float>(box.x);
@@ -623,6 +629,16 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
 }
 
 void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerButton button) {
+    if (m_curve_pending) {
+        if (context.shape_options.kind == ShapeId::Curve) {
+            m_bending = true;
+            m_curve_control = position;
+            update_curve_preview(context);
+            return;
+        }
+        // The tool was switched to another shape while a curve was waiting.
+        cancel_curve(context);
+    }
     if (context.shape_options.kind != ShapeId::Polygon) {
         // The tool was switched back to a drag shape while a polygon was open.
         if (m_polygon_open) cancel_polygon(context);
@@ -647,11 +663,21 @@ void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerB
 }
 
 void ShapeTool::on_pointer_move(ToolContext& context, Point2f position) {
+    if (m_bending) {
+        m_curve_control = position;
+        update_curve_preview(context);
+        return;
+    }
     if (!m_dragging && !m_polygon_open) return;
     update_preview(context, position);
 }
 
 void ShapeTool::on_pointer_up(ToolContext& context, Point2f position) {
+    if (m_bending) {
+        m_curve_control = position;
+        commit_curve(context);
+        return;
+    }
     if (m_polygon_open) {
         // The polygon only closes on an explicit click, Enter or double-click.
         update_preview(context, position);
@@ -659,11 +685,24 @@ void ShapeTool::on_pointer_up(ToolContext& context, Point2f position) {
     }
     if (!m_dragging) return;
     m_dragging = false;
+    if (context.shape_options.kind == ShapeId::Curve && distance(m_origin, position) >= 1.0f) {
+        // The first drag only lays out the baseline; the next one bends it.
+        m_curve_pending = true;
+        m_curve_end = position;
+        m_curve_control = {(m_origin.x + position.x) / 2.0f, (m_origin.y + position.y) / 2.0f};
+        update_curve_preview(context);
+        return;
+    }
     commit_drag(context, position);
     context.ui.shape.visible = false;
 }
 
 void ShapeTool::on_key_pressed(ToolContext& context, std::string_view text) {
+    if (m_curve_pending) {
+        if (text == kKeyEnter) commit_curve(context);
+        if (text == kKeyEscape) cancel_curve(context);
+        return;
+    }
     if (!m_polygon_open) return;
     if (text == kKeyEnter) {
         close_polygon(context);
@@ -673,6 +712,10 @@ void ShapeTool::on_key_pressed(ToolContext& context, std::string_view text) {
 }
 
 void ShapeTool::on_double_click(ToolContext& context) {
+    if (m_curve_pending) {
+        commit_curve(context);
+        return;
+    }
     if (!m_polygon_open) return;
     // Slint reports the double click after the second press already placed a
     // vertex, so drop that near-duplicate before closing.
@@ -684,6 +727,8 @@ void ShapeTool::on_double_click(ToolContext& context) {
 
 void ShapeTool::on_deactivate(ToolContext& context) {
     cancel_polygon(context);
+    cancel_curve(context);
+    m_bending = false;
     m_dragging = false;
     context.ui.shape.visible = false;
 }
@@ -703,13 +748,38 @@ void ShapeTool::update_preview(ToolContext& context, Point2f cursor) {
         publish(context, points, false, m_button);
         return;
     }
-    publish(context, shape::outline(context.shape_options.kind, m_origin, cursor, {}),
+    // A curve is a straight baseline until it is bent.
+    const Point2f middle{(m_origin.x + cursor.x) / 2.0f, (m_origin.y + cursor.y) / 2.0f};
+    const std::span<const Point2f> bend = context.shape_options.kind == ShapeId::Curve
+                                              ? std::span<const Point2f>(&middle, 1)
+                                              : std::span<const Point2f>();
+    publish(context, shape::outline(context.shape_options.kind, m_origin, cursor, bend),
             shape::is_closed(context.shape_options.kind), m_button);
+}
+
+void ShapeTool::update_curve_preview(ToolContext& context) {
+    publish(context, shape::outline(ShapeId::Curve, m_origin, m_curve_end, {&m_curve_control, 1}),
+            false, m_button);
 }
 
 void ShapeTool::commit_drag(ToolContext& context, Point2f end) {
     m_cursor = end;
     commit_shape(context, context.shape_options.kind, m_origin, end, {}, m_button);
+}
+
+void ShapeTool::commit_curve(ToolContext& context) {
+    const Point2f control = m_curve_control;
+    m_curve_pending = false;
+    m_bending = false;
+    context.ui.shape.visible = false;
+    commit_shape(context, ShapeId::Curve, m_origin, m_curve_end, {&control, 1}, m_button);
+}
+
+void ShapeTool::cancel_curve(ToolContext& context) {
+    if (!m_curve_pending) return;
+    m_curve_pending = false;
+    m_bending = false;
+    context.ui.shape.visible = false;
 }
 
 void ShapeTool::close_polygon(ToolContext& context) {
@@ -733,8 +803,9 @@ void ShapeTool::cancel_polygon(ToolContext& context) {
 bool ShapeTool::on_cancel(ToolContext& context) {
     // A drag paints nothing until the release - it only publishes a preview -
     // so abandoning it is dropping that preview.
-    if (!m_dragging && !m_polygon_open) return false;
+    if (!m_dragging && !m_polygon_open && !m_curve_pending) return false;
     cancel_polygon(context);
+    cancel_curve(context);
     m_dragging = false;
     context.ui.shape.visible = false;
     return true;

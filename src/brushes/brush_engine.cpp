@@ -18,6 +18,12 @@ namespace {
 
 // How far a stroke must go before its direction is trusted.
 constexpr float kOrientDistance = 3.0f;
+// How quickly a tip that mixes in colours from the canvas draws the chosen
+// colour back, per pixel of travel.
+constexpr float kReloadRate = 0.03f;
+// The most that the colours picked up from the canvas can make of what a tip
+// lays down; the chosen colour always supplies the rest.
+constexpr float kMaxPickupShare = 0.5f;
 
 std::uint32_t hash_of(std::uint32_t a, std::uint32_t b, std::uint32_t c) {
     std::uint32_t hash = a * 374761393u + b * 668265263u + c * 2246822519u;
@@ -152,6 +158,13 @@ Sample ink_at(const BrushProfile& profile, const Tip& tip, float dx, float dy, i
         sample.ink = std::min(1.0f, sample.ink * (1.0f + profile.wet_edge * rim));
     }
     return sample;
+}
+
+Rgba8 mixed(Rgba8 from, Rgba8 to, float amount) {
+    const auto channel = [&](std::uint8_t a, std::uint8_t b) {
+        return static_cast<std::uint8_t>(std::lround(lerp(static_cast<float>(a), static_cast<float>(b), amount)));
+    };
+    return Rgba8{channel(from.r, to.r), channel(from.g, to.g), channel(from.b, to.b), from.a};
 }
 
 Rgba8 shaded(Rgba8 color, float shade) {
@@ -301,6 +314,7 @@ RectI BrushEngine::finish(PixelBuffer& target) {
 
 void BrushEngine::pick_up(const PixelBuffer& canvas, float cx, float cy, float radius) {
     const float step = std::max(1.0f, m_profile.spacing * static_cast<float>(m_brush.size));
+    m_loaded = mixed(m_loaded, m_color, 1.0f - std::exp(-kReloadRate * step));
     const float rate = 1.0f - std::exp(-m_profile.pickup * step);
     const float reach = radius * 0.5f;
     const float taps[5][2] = {{0, 0}, {reach, 0}, {-reach, 0}, {0, reach}, {0, -reach}};
@@ -383,6 +397,7 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move, floa
         pick_up(sourced ? *m_source : target, cx, cy, radius);
     }
 
+    const Rgba8 paint = mixed(m_color, m_loaded, kMaxPickupShare);
     for (int y = area.y; y < area.bottom(); ++y) {
         const std::span<Rgba8> out = target.row(y);
         for (int x = area.x; x < area.right(); ++x) {
@@ -391,7 +406,7 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move, floa
                                          static_cast<float>(y) + 0.5f - cy, x, y);
             float ink = sample.ink;
             if (ink <= 0.0f) continue;
-            Rgba8 color = shaded(m_loaded, sample.shade);
+            Rgba8 color = shaded(paint, sample.shade);
             if (warp_stamp) {
                 // The pixel comes from where the tip was, less and less near the
                 // rim, so the drag pulls the picture along with it.

@@ -7,8 +7,9 @@ import { Win10, WinButton } from "../win10.slint";
 export component MessageDialog inherits Window {
     title: root.heading;
     width: 380px;
-    height: 150px;
+    height: body.preferred-height + 2 * Win10.frame-width;
     always-on-top: true;
+    default-font-family: "Selawik";
 
     in property <string> heading: "";
     in property <string> text: "";
@@ -22,7 +23,7 @@ export component MessageDialog inherits Window {
         border-width: Win10.frame-width;
         border-color: Win10.frame-color;
 
-        VerticalLayout {
+        body := VerticalLayout {
             padding: 14px;
             spacing: 12px;
 

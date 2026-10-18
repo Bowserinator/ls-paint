@@ -6,6 +6,14 @@
 #include <string_view>
 #include <vector>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
 #include <dwrite.h>
 
 namespace lsp {
@@ -97,7 +105,15 @@ std::string font_file(IDWriteFont* font) {
     return path;
 }
 
-// Every family DirectWrite reports, with the file of the first font in it. The
+// The regular face of a family, which the text tool thickens and slants itself.
+// The family's first font is not always that one: it can be a light or condensed
+// cut.
+bool regular_font(IDWriteFontFamily* family, ComRef<IDWriteFont>& font) {
+    return family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                                        DWRITE_FONT_STYLE_NORMAL, font.put()) == S_OK;
+}
+
+// Every family DirectWrite reports, with the file of its regular face. The
 // names DirectWrite returns are already unique, so no two entries share a
 // family.
 std::vector<FontFace> load_faces(IDWriteFontCollection* collection) {
@@ -113,7 +129,7 @@ std::vector<FontFace> load_faces(IDWriteFontCollection* collection) {
         if (name.empty()) continue;
 
         ComRef<IDWriteFont> font;
-        if (family->GetFont(0, font.put()) != S_OK) continue;
+        if (!regular_font(family.get(), font)) continue;
         faces.push_back({name, font_file(font.get())});
     }
 
@@ -148,7 +164,7 @@ public:
             ComRef<IDWriteFontFamily> family;
             if (m_collection->GetFontFamily(index, family.put()) != S_OK) continue;
             ComRef<IDWriteFont> font;
-            if (family->GetFont(0, font.put()) != S_OK) continue;
+            if (!regular_font(family.get(), font)) continue;
             BOOL has_glyph = FALSE;
             if (font->HasCharacter(static_cast<UINT32>(codepoint), &has_glyph) != S_OK ||
                 has_glyph == FALSE) {

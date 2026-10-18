@@ -92,7 +92,8 @@ namespace shape {
 [[nodiscard]] bool is_closed(ShapeId kind);
 
 // Outline of `kind` in canvas pixels. ShapeId::Polygon returns `polygon`
-// unchanged; every other kind ignores it.
+// unchanged and ShapeId::Curve bends towards its single point, if it has one;
+// every other kind ignores it.
 [[nodiscard]] std::vector<Point2f> outline(ShapeId kind, Point2f a, Point2f b,
                                            std::span<const Point2f> polygon);
 
@@ -123,6 +124,9 @@ private:
     void start_drag(ToolContext& context, Point2f position, PointerButton button);
     void update_preview(ToolContext& context, Point2f cursor);
     void commit_drag(ToolContext& context, Point2f end);
+    void update_curve_preview(ToolContext& context);
+    void commit_curve(ToolContext& context);
+    void cancel_curve(ToolContext& context);
     void close_polygon(ToolContext& context);
     void cancel_polygon(ToolContext& context);
 
@@ -132,6 +136,10 @@ private:
     Point2f m_cursor{};
     std::vector<Point2f> m_polygon;
     bool m_polygon_open = false;
+    bool m_curve_pending = false;
+    bool m_bending = false;
+    Point2f m_curve_end{};
+    Point2f m_curve_control{};
 };
 
 }  // namespace lsp

@@ -1,5 +1,5 @@
 #include <algorithm>
-#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <string>
@@ -225,6 +225,35 @@ void test_utf8_is_drawn_and_invalid_bytes_do_not_crash() {
     (void)draw_text(Target{broken}, {4, 4}, "bad \xff\xfe bytes", body_options(), kInk);
 }
 
+// True when the middle quarter of the ink bounds carries ink. The box a
+// missing glyph draws is hollow, with walls too near its bounds to reach the
+// middle, while a drawn glyph crosses its own center.
+bool inked_in_the_middle(const PixelBuffer& pixels, const RectI& box) {
+    const int x0 = box.x + box.width / 4;
+    const int x1 = box.x + box.width - box.width / 4;
+    const int y0 = box.y + box.height / 4;
+    const int y1 = box.y + box.height - box.height / 4;
+    for (int y = y0; y < y1; ++y)
+        for (int x = x0; x < x1; ++x)
+            if (pixels.at(x, y).a != 0) return true;
+    return false;
+}
+
+// Draws one character the bundled faces lack. When an installed face covers
+// it, it must come out as that glyph, not as the hollow box of a missing one.
+void draw_one_character_checked(const char* utf8, char32_t codepoint) {
+    if (installed_fonts().face_path_covering(codepoint).empty()) return;
+    PixelBuffer pixels(64, 48);
+    const RectI touched = draw_text(Target{pixels}, {4, 4}, utf8, body_options(), kInk);
+    CHECK(!touched.empty());
+    CHECK(inked_in_the_middle(pixels, touched));
+}
+
+void test_characters_the_bundled_faces_lack_are_drawn_by_an_installed_face() {
+    draw_one_character_checked("\xe4\xb8\xad", 0x4E2D);  // the han character zhong
+    draw_one_character_checked("\xed\x95\x9c", 0xD55C);  // the hangul syllable han
+}
+
 void test_clip_mask_limits_the_text() {
     PixelBuffer pixels(240, 48);
     SelectionMask mask(240, 48);
@@ -258,6 +287,7 @@ int main() {
     test_the_catalog_lists_installed_families_with_files();
     test_a_zero_size_draws_nothing();
     test_utf8_is_drawn_and_invalid_bytes_do_not_crash();
+    test_characters_the_bundled_faces_lack_are_drawn_by_an_installed_face();
     test_clip_mask_limits_the_text();
     test_text_off_canvas_leaves_the_buffer_alone();
 

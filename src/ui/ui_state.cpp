@@ -312,6 +312,20 @@ UiState::UiState(AppWindow& window, AppController& controller)
       m_bridge(controller.document().width(), controller.document().height()) {
     m_window.set_tile_size(kDisplayTileSize);
     m_window.set_tiles(m_bridge.tiles());
+    const auto show_view = [this](const ViewArea& area) {
+        // A margin of a pixel each way covers the partly visible edge ones.
+        const int left = floor_to_int(area.x) - 1;
+        const int top = floor_to_int(area.y) - 1;
+        m_bridge.set_view(m_controller.document().flattened(),
+                          RectI{left, top, ceil_to_int(area.width) + 2, ceil_to_int(area.height) + 2});
+    };
+    m_window.on_view_area_changed(show_view);
+    show_view(m_window.get_view_area());
+    m_window.on_zoom_level_changed([this](int level) {
+        if (!m_bridge.set_level(level)) return;
+        const PixelBuffer& pixels = m_controller.document().flattened();
+        m_bridge.upload(pixels, pixels.bounds());
+    });
 
     m_palette = std::make_shared<slint::VectorModel<slint::Color>>();
     for (const Rgba8& color : kDefaultPalette)

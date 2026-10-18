@@ -115,6 +115,9 @@ const LoadedFont* font_at_path(const std::string& path) {
     if (found == cache.end()) {
         LoadedFont font;
         (void)read_font(font, path);
+        // A file that fails is only remembered as a failure, not as megabytes
+        // of bytes no glyph will ever come from.
+        if (!font.ready) font.bytes.clear();
         found = cache.emplace(path, std::move(font)).first;
     }
     return found->second.ready ? &found->second : nullptr;
@@ -126,21 +129,17 @@ const LoadedFont* font_at_path(const std::string& path) {
 
 // An installed face that draws `codepoint`, nothing when there is none.
 const LoadedFont* fallback_font(std::uint32_t codepoint) {
-    static const std::vector<const LoadedFont*> preferred = [] {
-        std::vector<const LoadedFont*> fonts;
-        for (const std::string_view family : kFallbackFamilies) {
-            const std::string path = installed_fonts().face_path(family);
-            if (path.empty()) continue;
-            if (const LoadedFont* font = font_at_path(path)) fonts.push_back(font);
-        }
-        return fonts;
-    }();
     static std::map<std::uint32_t, const LoadedFont*> cache;
     if (const auto found = cache.find(codepoint); found != cache.end()) return found->second;
 
+    // The preferred families are read one at a time as far as the search needs,
+    // because each file can be tens of megabytes.
     const LoadedFont* result = nullptr;
-    for (const LoadedFont* font : preferred) {
-        if (has_glyph(*font, codepoint)) {
+    for (const std::string_view family : kFallbackFamilies) {
+        const std::string path = installed_fonts().face_path(family);
+        if (path.empty()) continue;
+        const LoadedFont* font = font_at_path(path);
+        if (font != nullptr && has_glyph(*font, codepoint)) {
             result = font;
             break;
         }
@@ -149,6 +148,19 @@ const LoadedFont* fallback_font(std::uint32_t codepoint) {
         const std::string path = installed_fonts().face_path_covering(codepoint);
         const LoadedFont* font = path.empty() ? nullptr : font_at_path(path);
         if (font != nullptr && has_glyph(*font, codepoint)) result = font;
+    }
+    if (result == nullptr) {
+        // The platform's match can name a face this rasterizer cannot read (a
+        // CFF2 collection, say), so the installed files are then tried one by
+        // one until one both loads and covers the character.
+        for (const FontFace& face : installed_fonts().faces()) {
+            if (face.path.empty()) continue;
+            const LoadedFont* font = font_at_path(face.path);
+            if (font != nullptr && has_glyph(*font, codepoint)) {
+                result = font;
+                break;
+            }
+        }
     }
     cache[codepoint] = result;
     return result;

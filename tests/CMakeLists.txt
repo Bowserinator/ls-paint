@@ -76,3 +76,16 @@ else()
         target_compile_options(${target} PRIVATE -Wall -Wextra)
     endforeach()
 endif()
+
+# The executables the parent scope's `check` target builds before it runs them.
+set(LSP_TEST_TARGETS
+    lsp_tests
+    lsp_raster_tests
+    lsp_color_tests
+    lsp_text_tests
+    lsp_io_tests
+    lsp_shape_tests
+    lsp_store_tests
+    lsp_ui_tests
+    PARENT_SCOPE
+)
