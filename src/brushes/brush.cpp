@@ -49,6 +49,11 @@ BrushProfile brush::profile(BrushKind kind) {
             profile.grain = 0.15f;
             profile.spacing = 0.2f;
             break;
+        case BrushKind::Blur: profile.coverage = 0.6f; break;
+        case BrushKind::Liquify:
+            profile.coverage = 0.45f;
+            profile.spacing = 0.06f;
+            break;
     }
     return profile;
 }

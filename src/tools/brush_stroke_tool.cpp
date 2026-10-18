@@ -7,7 +7,8 @@ namespace lsp {
 void BrushStrokeTool::on_pointer_down(ToolContext& context, Point2f position, PointerButton button) {
     if (m_recorder) return;
     m_recorder.emplace(context.document);
-    m_engine.emplace(context.brush, stroke_color(context, button), context.document.selection());
+    m_engine.emplace(context.brush, stroke_color(context, button), context.document.selection(),
+                     &m_recorder->snapshot());
     on_pointer_move(context, position);
 }
 

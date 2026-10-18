@@ -66,3 +66,24 @@ hand watercolor -fill none -stroke "$mark" -strokewidth 4 \
     -fill "#7fb4d8" -stroke "#4d84a8" -strokewidth 2 \
     -draw "ellipse 24,46 14,12 0,360" -fill "#bcd9ec" -stroke none \
     -draw "ellipse 24,46 9,8 0,360" -draw "circle 10,72 13,72"
+
+# A soft grey tip with a few faded dots, so the thumbnail reads as smudging
+# rather than drawing.
+hand blur -fill none -stroke "$mark" -strokewidth 5 \
+    -draw "path 'M 8,68 C 18,62 30,66 42,50'" \
+    -fill "#c2c7cd" -stroke "#8d959d" -strokewidth 2 \
+    -draw "translate 24,52 rotate -45 ellipse -13,-8 13,8 0,360" \
+    -stroke none \
+    -draw "fill rgba(194,199,205,0.55) circle 14,60 19,60" \
+    -draw "fill rgba(194,199,205,0.40) circle 27,57 33,57" \
+    -draw "fill rgba(194,199,205,0.30) circle 20,69 27,69" \
+    -draw "fill rgba(194,199,205,0.22) circle 33,68 38,68"
+
+hand liquify -fill none -stroke "$mark" -strokewidth 5 \
+    -draw "path 'M 8,68 C 18,62 30,66 42,50'" \
+    -fill "#c2c7cd" -stroke "#8d959d" -strokewidth 2 \
+    -draw "translate 26,52 rotate -45 ellipse -12,-7 12,7 0,360" \
+    -fill none -stroke "#7f96ad" -strokewidth 3 \
+    -draw "path 'M 10,58 C 20,48 32,50 41,60'" \
+    -draw "path 'M 16,66 C 23,60 31,61 37,66'" \
+    -fill "$mark" -stroke none -draw "circle 41,60 44,60"

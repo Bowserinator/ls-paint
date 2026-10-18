@@ -1459,6 +1459,117 @@ int run_ui_tests() {
         CHECK((h.controller().document().active_layer().pixels == before_shape));
     }
 
+    // 40. The blur brush softens what it crosses, keeps its work inside the
+    // selection, and leaves one undo step. Both buttons blur: an effect brush
+    // has no second colour.
+    {
+        Harness h;
+        h.user().set_primary_color(slint::Color::from_argb_uint8(0, 255, 0, 0));
+
+        // Map document pixels onto window points, learned from a marquee.
+        h.user().set_selected_tool(ETool::SELECTION);
+        h.drag(kMarqueeX0, kMarqueeY0, kMarqueeX1, kMarqueeY1);
+        Origin origin;
+        origin.x = kMarqueeX0 - float(h.doc().get_selection_x());
+        origin.y = kMarqueeY0 - float(h.doc().get_selection_y());
+        h.key("\x1b");
+        CHECK(!h.doc().get_has_selection());
+
+        // A hard band of colour across the paper.
+        h.user().set_selected_tool(ETool::PENCIL);
+        h.tool_options().set_brush_size(12);
+        h.drag(origin.to_window_x(100), origin.to_window_y(100), origin.to_window_x(220),
+               origin.to_window_y(100));
+        const PixelBuffer band = h.controller().document().active_layer().pixels;
+        const Rgba8 paper = band.at(160, 40);
+        CHECK(band.at(160, 100) != paper);  // the band landed
+        CHECK(band.at(160, 80) == paper);   // and leaves the paper above it clear
+
+        // The blur brush drags across the band's edge.
+        h.user().set_selected_tool(ETool::BRUSH);
+        h.tool_options().set_brush_kind(EBrushKind::BLUR);
+        h.tool_options().set_brush_size(40);
+        h.drag(origin.to_window_x(160), origin.to_window_y(60), origin.to_window_x(160),
+               origin.to_window_y(140));
+        const PixelBuffer blurred = h.controller().document().active_layer().pixels;
+        CHECK((blurred != band));
+        CHECK(blurred.at(160, 94) != band.at(160, 94));  // the band's edge softened
+        CHECK(blurred.at(160, 88) != band.at(160, 88));  // colour bled above it
+        CHECK(blurred.at(160, 60) == band.at(160, 60));  // and no further than that
+        h.controller().history().undo();
+        CHECK((h.controller().document().active_layer().pixels == band));
+
+        // Only the selected pixels soften.
+        h.user().set_selected_tool(ETool::SELECTION);
+        h.drag(origin.to_window_x(140), origin.to_window_y(80), origin.to_window_x(180),
+               origin.to_window_y(120));
+        CHECK(h.doc().get_has_selection());
+        const PixelBuffer selected = h.controller().document().active_layer().pixels;
+        h.user().set_selected_tool(ETool::BRUSH);
+        h.drag(origin.to_window_x(120), origin.to_window_y(100), origin.to_window_x(200),
+               origin.to_window_y(100));
+        const PixelBuffer clipped = h.controller().document().active_layer().pixels;
+        CHECK(clipped.at(120, 100) == selected.at(120, 100));
+        CHECK(clipped.at(200, 100) == selected.at(200, 100));
+        CHECK(clipped.at(160, 100) != selected.at(160, 100));
+        h.controller().history().undo();
+        CHECK((h.controller().document().active_layer().pixels == selected));
+
+        // The right button blurs too.
+        h.press(origin.to_window_x(160), origin.to_window_y(100), PointerEventButton::Right);
+        h.move(origin.to_window_x(160), origin.to_window_y(112));
+        h.release(origin.to_window_x(160), origin.to_window_y(112), PointerEventButton::Right);
+        CHECK((h.controller().document().active_layer().pixels != selected));
+        h.controller().history().undo();
+        CHECK((h.controller().document().active_layer().pixels == selected));
+    }
+
+    // 41. The liquify brush pulls what it covers along with the drag: a pixel
+    // under the stroke comes from where the stroke began, so a 40 pixel drag
+    // shifts the picture by 40 pixels, and one undo puts the layer back.
+    {
+        Harness h;
+        h.user().set_primary_color(slint::Color::from_argb_uint8(0, 255, 0, 0));
+
+        h.user().set_selected_tool(ETool::SELECTION);
+        h.drag(kMarqueeX0, kMarqueeY0, kMarqueeX1, kMarqueeY1);
+        Origin origin;
+        origin.x = kMarqueeX0 - float(h.doc().get_selection_x());
+        origin.y = kMarqueeY0 - float(h.doc().get_selection_y());
+        h.key("\x1b");
+
+        // A hard vertical band.
+        h.user().set_selected_tool(ETool::PENCIL);
+        h.tool_options().set_brush_size(12);
+        h.drag(origin.to_window_x(100), origin.to_window_y(100), origin.to_window_x(100),
+               origin.to_window_y(220));
+        const PixelBuffer band = h.controller().document().active_layer().pixels;
+        const Rgba8 paper = band.at(20, 160);
+
+        // Where the band starts, rather than trusting the arithmetic.
+        int first = 0;
+        while (first < 400 && band.at(first, 160) == paper) ++first;
+        CHECK(band.at(first, 160) != paper);
+
+        // Push sideways by 40 pixels, starting inside the band.
+        const int from_x = first + 10;
+        const int to_x = from_x + 40;
+        h.user().set_selected_tool(ETool::BRUSH);
+        h.tool_options().set_brush_kind(EBrushKind::LIQUIFY);
+        h.tool_options().set_brush_size(40);
+        h.drag(origin.to_window_x(float(from_x)), origin.to_window_y(160),
+               origin.to_window_x(float(to_x)), origin.to_window_y(160));
+
+        const PixelBuffer pushed = h.controller().document().active_layer().pixels;
+        // Five pixels short of where the tip stopped, the picture now shows what
+        // was 40 pixels to its left: the drag moved it one to one.
+        CHECK((pushed.at(to_x - 5, 160) == band.at(to_x - 5 - 40, 160)));
+        // Well past the tip nothing was touched.
+        CHECK((pushed.at(to_x + 60, 160) == band.at(to_x + 60, 160)));
+        h.controller().history().undo();
+        CHECK((h.controller().document().active_layer().pixels == band));
+    }
+
     std::filesystem::remove(save_path);
 
     if (g_failures != 0) {

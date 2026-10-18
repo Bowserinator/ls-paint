@@ -2,6 +2,8 @@
 #include <cstdio>
 #include <vector>
 
+#include "core/blur.hpp"
+#include "core/warp.hpp"
 #include "core/raster.hpp"
 
 using namespace lsp;
@@ -218,6 +220,82 @@ void test_target_allows_stays_inside_the_canvas() {
     CHECK(!target.allows(-1, 0));
 }
 
+void test_blur_spreads_a_dot() {
+    PixelBuffer pixels(9, 9, Rgba8{255, 255, 255, 255});
+    pixels.at(4, 4) = kInk;
+
+    const PixelBuffer blurred = blur::box_twice(pixels, 1);
+
+    CHECK(blurred.at(4, 4).r > 0);     // the dot picks up its neighbours
+    CHECK(blurred.at(4, 3).r < 255);   // and they pick up the dot
+    CHECK(blurred.at(0, 0).r == 255);  // far away nothing moved
+}
+
+void test_blur_keeps_a_flat_area_flat() {
+    const PixelBuffer pixels(7, 5, Rgba8{40, 90, 160, 255});
+
+    CHECK((blur::box_twice(pixels, 3) == pixels));
+}
+
+void test_blur_keeps_a_transparent_area_transparent() {
+    const PixelBuffer pixels(6, 6);
+
+    CHECK((blur::box_twice(pixels, 2) == pixels));
+}
+
+void test_blur_does_not_blacken_a_soft_edge() {
+    // An opaque block on the left half. Blurring thins its edge toward
+    // transparency, but the colour must not be dragged toward black on the way.
+    PixelBuffer pixels(8, 4, Rgba8{200, 60, 30, 255});
+    for (int y = 0; y < pixels.height(); ++y)
+        for (int x = 4; x < pixels.width(); ++x) pixels.at(x, y) = Rgba8{0, 0, 0, 0};
+
+    const PixelBuffer blurred = blur::box_twice(pixels, 1);
+
+    CHECK(blurred.at(3, 1).a < 200);
+    CHECK(blurred.at(3, 1).r >= 198);
+    CHECK(blurred.at(3, 1).g <= blurred.at(3, 1).r && blurred.at(3, 1).b <= blurred.at(3, 1).g);
+}
+
+void test_blur_ignores_a_radius_below_one() {
+    const PixelBuffer pixels(5, 5, Rgba8{10, 20, 30, 200});
+
+    CHECK((blur::box_twice(pixels, 0) == pixels));
+    CHECK((blur::box_twice(pixels, -3) == pixels));
+}
+
+void test_warp_reads_between_pixels() {
+    PixelBuffer pixels(2, 1);
+    pixels.at(0, 0) = Rgba8{255, 0, 0, 255};
+    pixels.at(1, 0) = Rgba8{0, 0, 255, 255};
+
+    // Halfway between the two centres: an even mix of them.
+    const Rgba8 middle = warp::sample_bilinear(pixels, 1.0f, 0.5f);
+    CHECK(middle.r == 128);
+    CHECK(middle.b == 128);
+    CHECK(middle.a == 255);
+
+    // On a pixel's centre the pixel itself comes back.
+    CHECK((warp::sample_bilinear(pixels, 0.5f, 0.5f) == pixels.at(0, 0)));
+    CHECK((warp::sample_bilinear(pixels, 1.5f, 0.5f) == pixels.at(1, 0)));
+
+    // Outside the picture the nearest edge is held.
+    CHECK((warp::sample_bilinear(pixels, -4.0f, 0.5f) == pixels.at(0, 0)));
+    CHECK((warp::sample_bilinear(pixels, 99.0f, 0.5f) == pixels.at(1, 0)));
+}
+
+void test_warp_does_not_darken_a_soft_edge() {
+    PixelBuffer pixels(2, 1);
+    pixels.at(0, 0) = Rgba8{255, 255, 255, 255};
+    pixels.at(1, 0) = Rgba8{0, 0, 0, 0};  // transparent, so its colour must not count
+
+    const Rgba8 sampled = warp::sample_bilinear(pixels, 1.0f, 0.5f);
+    CHECK(sampled.r == 255);
+    CHECK(sampled.g == 255);
+    CHECK(sampled.b == 255);
+    CHECK(sampled.a == 128);
+}
+
 }  // namespace
 
 int main() {
@@ -240,6 +318,13 @@ int main() {
     test_glyph_skips_pixels_off_canvas();
     test_bounds_helpers_round_outward();
     test_target_allows_stays_inside_the_canvas();
+    test_blur_spreads_a_dot();
+    test_blur_keeps_a_flat_area_flat();
+    test_blur_keeps_a_transparent_area_transparent();
+    test_blur_does_not_blacken_a_soft_edge();
+    test_blur_ignores_a_radius_below_one();
+    test_warp_reads_between_pixels();
+    test_warp_does_not_darken_a_soft_edge();
 
     std::printf(failures == 0 ? "ALL OK\n" : "%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;

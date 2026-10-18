@@ -54,6 +54,8 @@ add_library(lsp_core STATIC
     src/brushes/brush.cpp
     src/brushes/brush_engine.cpp
     src/core/blend_modes.cpp
+    src/core/blur.cpp
+    src/core/warp.cpp
     src/core/canvas_document.cpp
     src/core/color.cpp
     src/core/compositor.cpp

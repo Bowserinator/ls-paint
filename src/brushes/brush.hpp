@@ -15,6 +15,8 @@ enum class BrushKind {
     Marker,
     NaturalPencil,
     Watercolor,
+    Blur,
+    Liquify,
 };
 
 // The nib one brush type lays down: the tip that gets stamped, how much ink

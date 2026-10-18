@@ -5,6 +5,8 @@
 #include <cstdint>
 
 #include "core/blend_modes.hpp"
+#include "core/blur.hpp"
+#include "core/warp.hpp"
 
 namespace lsp {
 
@@ -53,16 +55,35 @@ BrushProfile BrushEngine::effective_profile(const Brush& brush) {
     return profile;
 }
 
+bool BrushEngine::is_effect(BrushKind kind) noexcept {
+    return kind == BrushKind::Blur || kind == BrushKind::Liquify;
+}
+
+void BrushEngine::prepare_source() {
+    if (m_source_ready) return;
+    m_source_ready = true;
+    if (!m_source || m_brush.kind != BrushKind::Blur) return;
+    // A quarter of the size: the blur reaches as far as half the brush, which
+    // keeps its effect inside the tip the user can see.
+    m_blurred = blur::box_twice(*m_source, std::max(1, m_brush.size / 4));
+}
+
 RectI BrushEngine::stroke_to(PixelBuffer& target, Point2f to) {
+    prepare_source();
     const float step = std::max(1.0f, m_profile.spacing * static_cast<float>(m_brush.size));
 
     if (!m_last) {
         m_last = to;
+        m_start = to;
         m_carry = step;
-        return stamp(target, to);
+        // Nothing has moved yet, so a pushing tip has nothing to displace.
+        return stamp(target, to, {0.0f, 0.0f});
     }
 
     const Point2f from = *m_last;
+    // How far the tip has already come: the pushing kind displaces by this much
+    // rather than by the last step alone.
+    const Point2f offset{from.x - m_start.x, from.y - m_start.y};
     const float dx = to.x - from.x;
     const float dy = to.y - from.y;
     const float length = std::hypot(dx, dy);
@@ -71,7 +92,9 @@ RectI BrushEngine::stroke_to(PixelBuffer& target, Point2f to) {
     float travelled = m_carry;
     for (; travelled <= length; travelled += step) {
         const float t = travelled / length;
-        dirty = dirty.united(stamp(target, {from.x + dx * t, from.y + dy * t}));
+        const Point2f center{from.x + dx * t, from.y + dy * t};
+        dirty = dirty.united(
+            stamp(target, center, {offset.x + dx * t, offset.y + dy * t}));
     }
 
     m_carry = travelled - length;
@@ -79,7 +102,7 @@ RectI BrushEngine::stroke_to(PixelBuffer& target, Point2f to) {
     return dirty;
 }
 
-RectI BrushEngine::stamp(PixelBuffer& target, Point2f center) const {
+RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move) const {
     const int size = std::max(1, m_brush.size);
     const float radius = static_cast<float>(size) * 0.5f;
     const bool odd = size % 2 == 1;
@@ -96,13 +119,28 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center) const {
     const RectI area = RectI{left, top, side, side}.intersected(target.bounds());
 
     const BlendFn blend = blend_fn_for(BlendMode::Normal);
+    const bool blur_stamp = m_brush.kind == BrushKind::Blur &&
+                            m_blurred.width() >= target.width() &&
+                            m_blurred.height() >= target.height();
+    const bool warp_stamp = m_brush.kind == BrushKind::Liquify && m_source != nullptr &&
+                            m_source->width() >= target.width() &&
+                            m_source->height() >= target.height();
     for (int y = area.y; y < area.bottom(); ++y) {
         for (int x = area.x; x < area.right(); ++x) {
             if (!m_selection.contains(x, y)) continue;
             const float ink = ink_at(m_profile, static_cast<float>(x) + 0.5f - cx,
                                      static_cast<float>(y) + 0.5f - cy, radius, x, y);
             if (ink <= 0.0f) continue;
-            target.at(x, y) = ink >= 1.0f ? m_color : blend(target.at(x, y), m_color, ink);
+            Rgba8 color = m_color;
+            if (warp_stamp) {
+                // The pixel comes from where the tip was, less and less near the
+                // rim, so the drag pulls the picture along with it.
+                color = warp::sample_bilinear(*m_source, static_cast<float>(x) + 0.5f - move.x * ink,
+                                              static_cast<float>(y) + 0.5f - move.y * ink);
+            } else if (blur_stamp) {
+                color = m_blurred.at(x, y);
+            }
+            target.at(x, y) = ink >= 1.0f ? color : blend(target.at(x, y), color, ink);
         }
     }
     return area;

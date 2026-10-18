@@ -242,6 +242,8 @@ BrushKind brush_from_slint(EBrushKind kind) {
         case EBrushKind::MARKER: return BrushKind::Marker;
         case EBrushKind::NATURALPENCIL: return BrushKind::NaturalPencil;
         case EBrushKind::WATERCOLOR: return BrushKind::Watercolor;
+        case EBrushKind::BLUR: return BrushKind::Blur;
+        case EBrushKind::LIQUIFY: return BrushKind::Liquify;
     }
     return BrushKind::Brush;
 }
