@@ -113,9 +113,16 @@ export component ColorButtonVertical inherits ImageButtonBase {
             Rectangle {
                 width: Styles.bar-large-icon-size;
                 height: Styles.bar-large-icon-size;
-                background: colr;
                 border-width: 1px;
-                border-color: (colr.red + colr.blue + colr.green) / 3.0 > 51 ? black : white;
+                border-color: Styles.ribbon-icon-border-color;
+
+                Rectangle {
+                    x: 2px;
+                    y: 2px;
+                    width: parent.width - 4px;
+                    height: parent.height - 4px;
+                    background: colr;
+                }
             }
         }
         txt := ButtonText { font-size: root.font-size; }

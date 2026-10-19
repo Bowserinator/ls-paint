@@ -18,6 +18,7 @@ component RibbonTab inherits Rectangle {
     // The Text tab: framed by two separators while it is not the one selected.
     in property <bool> contextual: false;
     callback clicked;
+    callback double-clicked;
 
     height: Styles.tab-height;
     background: backstage ? (pressed || touch.has-hover ? Styles.tab-backstage-open : Styles.tab-backstage)
@@ -64,6 +65,34 @@ component RibbonTab inherits Rectangle {
     touch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
+        double-clicked => { root.double-clicked(); }
+    }
+}
+
+// The button at the end of the tab strip: a chevron pointing up while the ribbon
+// is open and down while it is closed.
+component RibbonToggle inherits Rectangle {
+    in property <bool> open;
+    callback clicked;
+
+    background: touch.has-hover ? #f0f1f2 : transparent;
+
+    Path {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 10px;
+        height: 6px;
+        viewbox-width: 10;
+        viewbox-height: 6;
+        commands: root.open ? "M 1 5 L 5 1 L 9 5" : "M 1 1 L 5 5 L 9 1";
+        fill: transparent;
+        stroke: Styles.bar-text-color;
+        stroke-width: 1px;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
     }
 }
 
@@ -82,6 +111,22 @@ export component TopBar inherits Rectangle {
     changed tab => {
         UserState.check-clipboard();
     }
+    // While the ribbon is closed, a tab opens it over the paper until the
+    // pointer goes elsewhere. Only its tab reads as selected while it is up.
+    private property <bool> ribbon-shown: UserState.show-ribbon || ribbon-popup.is-open;
+    // Picking a tool or a command puts the ribbon away again.
+    private property <ETool> tool: UserState.selected-tool;
+    changed tool => { ribbon-popup.close(); }
+    function pick-tab(page: int) {
+        root.tab = page;
+        if (!UserState.show-ribbon) {
+            ribbon-popup.show();
+        }
+    }
+    function toggle-ribbon() {
+        ribbon-popup.close();
+        UserState.show-ribbon = !UserState.show-ribbon;
+    }
     changed text-tool => {
         if (root.text-tool) {
             root.tab = 3;
@@ -90,7 +135,7 @@ export component TopBar inherits Rectangle {
         }
     }
 
-    height: Styles.tab-height + Styles.bar-height;
+    height: Styles.tab-height + (UserState.show-ribbon ? Styles.bar-height : 0px);
 
     Rectangle {
         y: 0px;
@@ -107,15 +152,15 @@ export component TopBar inherits Rectangle {
         background: Styles.tab-border;
     }
 
-    if (root.tab == 1) : HomeBar {
+    if (UserState.show-ribbon && root.tab == 1) : HomeBar {
         y: Styles.tab-height;
         width: 100%;
     }
-    if (root.tab == 2) : ViewBar {
+    if (UserState.show-ribbon && root.tab == 2) : ViewBar {
         y: Styles.tab-height;
         width: 100%;
     }
-    if (root.tab == 3) : TextBar {
+    if (UserState.show-ribbon && root.tab == 3) : TextBar {
         y: Styles.tab-height;
         width: 100%;
     }
@@ -137,22 +182,56 @@ export component TopBar inherits Rectangle {
         RibbonTab {
             width: Styles.tab-width-home;
             title: "Home";
-            selected: root.tab == 1;
-            clicked => { root.tab = 1; }
+            selected: root.ribbon-shown && root.tab == 1;
+            clicked => { root.pick-tab(1); }
+            double-clicked => { root.toggle-ribbon(); }
         }
         RibbonTab {
             width: Styles.tab-width-view;
             title: "View";
-            selected: root.tab == 2;
-            clicked => { root.tab = 2; }
+            selected: root.ribbon-shown && root.tab == 2;
+            clicked => { root.pick-tab(2); }
+            double-clicked => { root.toggle-ribbon(); }
         }
         RibbonTab {
             width: Styles.tab-width-text;
             title: "Text";
             visible: root.text-tool;
             contextual: true;
-            selected: root.tab == 3;
-            clicked => { root.tab = 3; }
+            selected: root.ribbon-shown && root.tab == 3;
+            clicked => { root.pick-tab(3); }
+            double-clicked => { root.toggle-ribbon(); }
+        }
+    }
+
+    RibbonToggle {
+        x: parent.width - self.width;
+        y: 0px;
+        width: Styles.ribbon-toggle-width;
+        height: Styles.tab-height - 1px;
+        open: UserState.show-ribbon;
+        clicked => { root.toggle-ribbon(); }
+    }
+
+    ribbon-popup := PopupWindow {
+        x: 0px;
+        y: Styles.tab-height;
+        width: root.width;
+        height: Styles.bar-height;
+        close-policy: close-on-click-outside;
+
+        Rectangle {
+            background: Styles.ribbon-background;
+
+            if (root.tab == 1) : HomeBar {
+                width: 100%;
+            }
+            if (root.tab == 2) : ViewBar {
+                width: 100%;
+            }
+            if (root.tab == 3) : TextBar {
+                width: 100%;
+            }
         }
     }
 

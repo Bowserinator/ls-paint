@@ -28,6 +28,7 @@ inline constexpr std::string_view kStoreKeyWindowHeight = "window_height";
 inline constexpr std::string_view kStoreKeyShowRulers = "show_rulers";
 inline constexpr std::string_view kStoreKeyShowGridlines = "show_gridlines";
 inline constexpr std::string_view kStoreKeyShowStatusBar = "show_status_bar";
+inline constexpr std::string_view kStoreKeyShowRibbon = "show_ribbon";
 inline constexpr std::string_view kStoreKeyFontFamily = "font_family";
 inline constexpr std::string_view kStoreKeyRecentFiles = "recent_files";
 inline constexpr std::string_view kStoreKeyPaletteCustoms = "palette_customs";

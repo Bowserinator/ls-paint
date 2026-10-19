@@ -120,12 +120,10 @@ export component TextBar inherits Bar {
                 spacing: Styles.bar-list-spacing;
 
                 // The two selectors are one setting: the text either covers what
-                // is under it or lets it show through. The opaque one previews
-                // the color the text is filled with.
+                // is under it or lets it show through.
                 ImageButtonHorizontal {
                     icon: @image-url("../../icons/text/background-opaque.png");
                     text: "Opaque";
-                    swatch: UserState.secondary-color;
                     focused: FontStyle.opaque-background;
                     clicked => { FontStyle.opaque-background = true; }
                 }

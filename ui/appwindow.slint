@@ -130,6 +130,13 @@ export component AppWindow inherits Window {
     property <length> size-drag-doc-x: 0px;
     property <length> size-drag-doc-y: 0px;
 
+    property <bool> zoom-armed: false;
+    property <bool> zoom-dragging: false;
+    property <length> zoom-drag-start: 0px;
+    property <float> zoom-drag-from: 1.0;
+    property <length> zoom-drag-anchor-x: 0px;
+    property <length> zoom-drag-anchor-y: 0px;
+
     property <length> canvas-origin: 4px;
     // Document size: canvas-w/h are what the screen shows at the current
     // zoom, doc-w/h the pixels the document actually owns.
@@ -261,8 +268,25 @@ export component AppWindow inherits Window {
             if (event.text == "\u{1b}" && UserState.selected-tool == ETool.TEXT) {
                 UserState.selected-tool = root.last-brush-tool;
             }
-            UserState.key-pressed(event.text, event.modifiers.control || event.modifiers.meta,
-                                  event.modifiers.shift, event.modifiers.alt);
+            let typing = UserState.selected-tool == ETool.TEXT && TextOverlay.visible;
+            let plain = !event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt;
+            if (event.text == " " && (event.modifiers.control || event.modifiers.meta)) {
+                root.zoom-armed = true;
+            } else if (plain && !typing && event.text == "e") {
+                UserState.selected-tool = ETool.ERASER;
+            } else if (plain && !typing && event.text == "p") {
+                UserState.selected-tool = root.last-brush-tool;
+            } else {
+                UserState.key-pressed(event.text, event.modifiers.control || event.modifiers.meta,
+                                      event.modifiers.shift, event.modifiers.alt);
+            }
+            accept
+        }
+
+        key-released(event) => {
+            if (event.text == " ") {
+                root.zoom-armed = false;
+            }
             accept
         }
 
@@ -495,7 +519,14 @@ export component AppWindow inherits Window {
                                 }
                                 if (event.kind == PointerEventKind.down) {
                                     focus-scope.focus();
-                                    if ((event.modifiers.control || event.modifiers.meta)
+                                    if (root.zoom-armed
+                                        && (event.modifiers.control || event.modifiers.meta)) {
+                                        root.zoom-dragging = true;
+                                        root.zoom-drag-start = touch.mouse-x;
+                                        root.zoom-drag-from = UserState.zoom;
+                                        root.zoom-drag-anchor-x = touch.mouse-x + root.canvas-origin + scroll.viewport-x;
+                                        root.zoom-drag-anchor-y = touch.mouse-y + root.canvas-origin + scroll.viewport-y;
+                                    } else if ((event.modifiers.control || event.modifiers.meta)
                                         && event.modifiers.alt) {
                                         // Ctrl+Alt resizes the brush instead of
                                         // painting, so the press never reaches a
@@ -528,7 +559,9 @@ export component AppWindow inherits Window {
                                                                event.button == PointerEventButton.right);
                                     }
                                 } else if (event.kind == PointerEventKind.up) {
-                                    if (root.size-dragging) {
+                                    if (root.zoom-dragging) {
+                                        root.zoom-dragging = false;
+                                    } else if (root.size-dragging) {
                                         root.size-dragging = false;
                                     } else {
                                         UserState.pointer-up(touch.mouse-x / UserState.zoom,
@@ -538,10 +571,15 @@ export component AppWindow inherits Window {
                                 } else if (event.kind == PointerEventKind.cancel) {
                                     // The toolkit took the pointer away: the gesture
                                     // cannot be finished, so it is abandoned.
+                                    root.zoom-dragging = false;
                                     root.size-dragging = false;
                                     UserState.pointer-cancel();
                                 } else if (event.kind == PointerEventKind.move) {
-                                    if (root.size-dragging) {
+                                    if (root.zoom-dragging) {
+                                        root.set-zoom(root.zoom-drag-from
+                                                      + (touch.mouse-x - root.zoom-drag-start) / 400px,
+                                                      root.zoom-drag-anchor-x, root.zoom-drag-anchor-y);
+                                    } else if (root.size-dragging) {
                                         // The drag distance is measured on the
                                         // document, so zoomed out a drag grows
                                         // the brush faster and zoomed in slower.

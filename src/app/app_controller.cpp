@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "config.hpp"
+#include "core/blend_modes.hpp"
 #include "history/commands/canvas_resize_command.hpp"
 #include "history/commands/paint_stroke_command.hpp"
 #include "history/commands/selection_edit_command.hpp"
@@ -14,6 +15,14 @@
 namespace lsp {
 
 namespace {
+
+PixelBuffer flattened_onto(PixelBuffer image, Rgba8 background) {
+    const BlendFn blend = blend_fn_for(BlendMode::Normal);
+    for (int y = 0; y < image.height(); ++y) {
+        for (Rgba8& pixel : image.row(y)) pixel = blend(background, pixel, 1.0f);
+    }
+    return image;
+}
 
 // What the clipboard holds when it holds no image, so a paste that fails can be
 // diagnosed from the console.
@@ -268,7 +277,8 @@ IoResult AppController::open_document(const std::filesystem::path& path) {
     if (loaded.pixels.width() > kMaxCanvasDimension || loaded.pixels.height() > kMaxCanvasDimension)
         return IoResult::failure("Image is larger than the canvas limit: " + utf8_from_path(path));
 
-    m_document.restore({std::move(loaded.pixels)});
+    m_document.restore(
+        {flattened_onto(std::move(loaded.pixels), m_colors.ink(PointerButton::Secondary))});
     m_history.clear();
     m_current_path = path;
     return IoResult::success();

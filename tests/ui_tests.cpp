@@ -477,6 +477,15 @@ int run_ui_tests() {
     h.user().set_show_status_bar(true);
     CHECK(h.user().get_show_status_bar());
 
+    // 15b-2b. Closing the ribbon only changes what the window shows above the
+    //        paper: the document is untouched.
+    CHECK(h.user().get_show_ribbon());
+    h.user().set_show_ribbon(false);
+    CHECK(!h.user().get_show_ribbon());
+    CHECK(h.controller().document().flattened() == strip_before);
+    h.user().set_show_ribbon(true);
+    CHECK(h.user().get_show_ribbon());
+
     // 15b-3. The View tab's Gridlines box only changes what the window draws
     //       over the paper: the document itself is untouched.
     const PixelBuffer paper_before = h.controller().document().flattened();
@@ -1213,6 +1222,7 @@ int run_ui_tests() {
             first.user().set_show_rulers(true);
             first.user().set_show_gridlines(true);
             first.user().set_show_status_bar(false);
+            first.user().set_show_ribbon(false);
             first.font_style().set_family("DejaVu Serif");
             // Closing the window is what writes the settings out.
             first.window().dispatch_close_requested_event();
@@ -1224,6 +1234,7 @@ int run_ui_tests() {
             // That toggle is checked through the store below instead.
             CHECK(second.user().get_show_gridlines());
             CHECK(!second.user().get_show_status_bar());
+            CHECK(!second.user().get_show_ribbon());
             CHECK(std::string(second.font_style().get_family()) == "DejaVu Serif");
         }
         // The settings landed under that directory, and the window size the
@@ -1232,6 +1243,7 @@ int run_ui_tests() {
         CHECK(store_path.parent_path() == round_trip_dir / kAppId);
         SQLiteStore stored(store_path);
         CHECK(stored.get(kStoreKeyShowRulers).value_or("") == "1");
+        CHECK(stored.get(kStoreKeyShowRibbon).value_or("") == "0");
         CHECK(stored.get(kStoreKeyWindowWidth).value_or("") == "900");
         CHECK(stored.get(kStoreKeyWindowHeight).value_or("") == "600");
         CHECK(stored.get(kStoreKeyFontFamily).value_or("") == "DejaVu Serif");

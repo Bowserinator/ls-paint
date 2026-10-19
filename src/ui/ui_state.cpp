@@ -672,6 +672,8 @@ void UiState::load_settings() {
         m_window.global<UserState>().set_show_gridlines(*stored);
     if (const std::optional<bool> stored = stored_bool(*m_settings, kStoreKeyShowStatusBar))
         m_window.global<UserState>().set_show_status_bar(*stored);
+    if (const std::optional<bool> stored = stored_bool(*m_settings, kStoreKeyShowRibbon))
+        m_window.global<UserState>().set_show_ribbon(*stored);
 
     restore_settings();
 
@@ -750,6 +752,7 @@ UiState::SettingsSnapshot UiState::current_settings() const {
     snapshot.rulers = user.get_show_rulers();
     snapshot.gridlines = user.get_show_gridlines();
     snapshot.status_bar = user.get_show_status_bar();
+    snapshot.ribbon = user.get_show_ribbon();
     snapshot.family = std::string(m_window.global<FontStyle>().get_family());
     return snapshot;
 }
@@ -779,6 +782,7 @@ void UiState::save_settings() {
     m_settings->set(kStoreKeyShowRulers, snapshot.rulers ? "1" : "0");
     m_settings->set(kStoreKeyShowGridlines, snapshot.gridlines ? "1" : "0");
     m_settings->set(kStoreKeyShowStatusBar, snapshot.status_bar ? "1" : "0");
+    m_settings->set(kStoreKeyShowRibbon, snapshot.ribbon ? "1" : "0");
     m_settings->set(kStoreKeyFontFamily, snapshot.family);
     std::vector<std::string> recent;
     recent.reserve(m_recent_files.size());
