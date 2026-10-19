@@ -41,8 +41,9 @@ export enum EBrushKind {
     LIQUIFY,
 }
 
-// One run of the marching-ants outline, in document pixels. The pattern is
-// rebuilt from the C++ side on every animation tick.
+// One run of the marching-ants outline, in screen pixels from the paper's
+// top-left corner. The pattern is rebuilt from the C++ side on every animation
+// tick and whenever the zoom changes.
 export struct SelectionDash {
     x: float,
     y: float,
@@ -70,8 +71,15 @@ export global UserState  {
     callback select-all();
     callback invert-selection();
     callback clear-selection();
-    callback transparent-selection();
+    // When on, the background color does not paint as selection contents are
+    // placed or copied. The C++ side flips it.
+    in-out property <bool> transparent-selection: false;
+    callback toggle-transparent-selection();
     callback crop-to-selection();
+    callback delete-selection();
+    // Inverts the colors of the selection, or of the whole picture when nothing
+    // is selected.
+    callback invert-selection-colors();
     callback rotate(ERotation);
     callback flip-horizontal();
     callback flip-vertical();

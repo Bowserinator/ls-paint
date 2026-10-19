@@ -11,8 +11,6 @@
 
 namespace lsp {
 
-void make_transparent(PixelBuffer& pixels, const SelectionMask& mask, RectI region);
-
 // The pixels under a selection plus the mask that shaped them, in region-local
 // coordinates so the same block can be pasted anywhere on the canvas.
 struct ClipboardContent {
@@ -82,6 +80,13 @@ struct SelectionEdit {
 
 enum class ContentTransform { RotateCw90, RotateCcw90, Rotate180, FlipHorizontal, FlipVertical };
 
+// Inverts the color of the pixels of `region` that the selection holds, or all
+// of them when nothing is selected. Transparency is left alone.
+void invert_colors(PixelBuffer& pixels, const SelectionMask& mask, RectI region);
+
+// A copy of `pixels` in which every pixel of `color` is fully transparent.
+[[nodiscard]] PixelBuffer with_color_cleared(const PixelBuffer& pixels, Rgba8 color);
+
 // Copies the masked pixels out of the layer. Empty when nothing is selected.
 [[nodiscard]] ClipboardContent capture_clipboard(const PixelBuffer& pixels, const SelectionMask& mask);
 
@@ -135,6 +140,18 @@ void translate_contents(SelectionMask& mask, FloatingContents& contents, int dx,
                                             std::optional<FloatingContents>& floating, float degrees,
                                             Rgba8 fill);
 
+// Stretches the selection and its contents to `width` x `height`, keeping the
+// top-left corner where it is and lifting the contents first when needed.
+[[nodiscard]] SelectionEdit scale_contents(const PixelBuffer& pixels, SelectionMask& mask,
+                                           std::optional<FloatingContents>& floating, int width,
+                                           int height, Rgba8 fill);
+
+// Shears the selection and its contents, lifting them first when needed. The
+// selection grows by the room the lean needs.
+[[nodiscard]] SelectionEdit skew_contents(const PixelBuffer& pixels, SelectionMask& mask,
+                                          std::optional<FloatingContents>& floating,
+                                          float horizontal_degrees, float vertical_degrees, Rgba8 fill);
+
 // Rescales the selection (and its floating contents) to `new_bounds`, always
 // sampling the lifted originals — never the result of an earlier rescale, so
 // a squash followed by a stretch-back restores the pixels it started with.
@@ -143,13 +160,18 @@ void translate_contents(SelectionMask& mask, FloatingContents& contents, int dx,
                                              RectI new_bounds);
 
 // Stamps the floating contents into the layer: the origin takes the background
-// color, the contents land where they now are. Clears the float.
+// color, the contents land where they now are. Clears the float. Pixels of
+// `transparent`, and fully transparent ones, are left out so the layer shows
+// through them.
 [[nodiscard]] SelectionEdit commit_contents(PixelBuffer& pixels, SelectionMask& mask,
-                                            std::optional<FloatingContents>& floating);
+                                            std::optional<FloatingContents>& floating,
+                                            std::optional<Rgba8> transparent = std::nullopt);
 
 // Paints the floating contents — and the background color left behind at their
 // origin — over `region` of `target`. This is what makes the lift visible
-// without ever having touched the layers.
-void draw_floating(PixelBuffer& target, const FloatingContents& contents, RectI region);
+// without ever having touched the layers. `transparent` is left out as it is
+// for commit_contents().
+void draw_floating(PixelBuffer& target, const FloatingContents& contents, RectI region,
+                   std::optional<Rgba8> transparent = std::nullopt);
 
 }  // namespace lsp

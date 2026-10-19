@@ -19,6 +19,9 @@ namespace lsp {
 // assigned.
 class PixelBuffer {
 public:
+    // Storage for a run of whole rows, shared between copies.
+    using Band = std::shared_ptr<std::vector<Rgba8>>;
+
     PixelBuffer() = default;
     PixelBuffer(int width, int height, Rgba8 fill = kTransparent);
 
@@ -58,14 +61,34 @@ public:
     // Bytes of pixel storage the buffer references.
     [[nodiscard]] std::size_t storage_bytes() const noexcept;
 
+    // The bands of rows the pixels are stored in, top to bottom. Buffers of the
+    // same size always split their rows the same way.
+    [[nodiscard]] int band_count() const noexcept { return static_cast<int>(m_bands.size()); }
+    // The rows band `index` holds.
+    [[nodiscard]] RectI band_rows(int index) const noexcept;
+    [[nodiscard]] const Band& band(int index) const { return m_bands[static_cast<std::size_t>(index)]; }
+    // Makes band `index` of this buffer another view of `band`, which must come
+    // from a buffer of the same size.
+    void set_band(int index, Band band) { m_bands[static_cast<std::size_t>(index)] = std::move(band); }
+
     [[nodiscard]] PixelBuffer rotated_90_cw() const;
     [[nodiscard]] PixelBuffer rotated_90_ccw() const;
     [[nodiscard]] PixelBuffer rotated_180() const;
     [[nodiscard]] PixelBuffer flipped_horizontal() const;
     [[nodiscard]] PixelBuffer flipped_vertical() const;
 
+    // The picture stretched or squashed to the given size, each pixel taken
+    // from the single source pixel it falls on.
+    [[nodiscard]] PixelBuffer scaled(int width, int height) const;
+    // The picture sheared by `degrees`, positive leaning to the right (or
+    // downward). The result grows by the room the lean needs, and the corners it
+    // leaves uncovered take `fill`.
+    [[nodiscard]] PixelBuffer skewed_horizontal(float degrees, Rgba8 fill) const;
+    [[nodiscard]] PixelBuffer skewed_vertical(float degrees, Rgba8 fill) const;
+
 private:
-    using Band = std::shared_ptr<std::vector<Rgba8>>;
+    // Gives every band storage of its own, with nothing in it worth keeping.
+    void allocate_all_bands();
 
     [[nodiscard]] std::size_t row_offset(int y) const noexcept {
         return (static_cast<std::size_t>(y) & m_band_mask) * static_cast<std::size_t>(m_width);

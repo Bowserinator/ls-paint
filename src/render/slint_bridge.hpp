@@ -20,9 +20,20 @@ public:
 
     void upload(const PixelBuffer& source, RectI region);
 
-    // Shows the canvas averaged down by 2^level, for views zoomed out that far.
-    // Returns whether the level changed, in which case every tile is stale.
-    bool set_level(int level);
+    // Sets how far the view is zoomed and how many device pixels a logical
+    // pixel holds. Zoomed out, this shows the canvas averaged down by a power
+    // of two, which is quick to make. Returns whether every tile is now stale.
+    bool set_zoom(float zoom, float dpr);
+
+    // Once the zoom has settled, remakes the tiles resampled to the exact
+    // scale of the screen. Returns whether every tile is now stale.
+    bool refine();
+
+    // Document pixels each tile image shows past its edge. The window lays the
+    // tiles out with the same value.
+    [[nodiscard]] float tile_overlap() const;
+    // Whether the window should show tile pixels as crisp blocks.
+    [[nodiscard]] bool pixelated() const;
 
     // Tells which part of the canvas is on screen, in document pixels, so the
     // images around it are made and the ones far from it are dropped.
@@ -39,6 +50,11 @@ private:
         int last_row = 0;
     };
 
+    // Screen pixels per document pixel.
+    [[nodiscard]] double device_scale() const;
+    // How far past a changed region, in document pixels, a tile can show it.
+    [[nodiscard]] int reach_before() const;
+    [[nodiscard]] int reach_after() const;
     // The tiles within `margin` tiles of the view.
     [[nodiscard]] TileRange range_around(RectI view, int margin) const;
     // Makes the images of the tiles at `indices`, spreading the work over the
@@ -52,6 +68,9 @@ private:
     int m_columns = 0;
     int m_rows = 0;
     int m_level = 0;
+    float m_zoom = 1.0f;
+    float m_dpr = 1.0f;
+    bool m_resampled = false;
     RectI m_view;
     bool m_has_view = false;
     std::vector<bool> m_present;  // whether each tile holds its image

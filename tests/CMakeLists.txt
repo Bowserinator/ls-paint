@@ -7,6 +7,11 @@ target_link_libraries(lsp_tests PRIVATE lsp_core)
 target_include_directories(lsp_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME lsp_tests COMMAND lsp_tests)
 
+add_executable(lsp_large_file_tests large_file_tests.cpp)
+target_link_libraries(lsp_large_file_tests PRIVATE lsp_core)
+target_include_directories(lsp_large_file_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME lsp_large_file_tests COMMAND lsp_large_file_tests)
+
 add_executable(lsp_raster_tests raster_test.cpp)
 target_link_libraries(lsp_raster_tests PRIVATE lsp_core)
 target_include_directories(lsp_raster_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -36,6 +41,11 @@ add_executable(lsp_store_tests store_test.cpp)
 target_link_libraries(lsp_store_tests PRIVATE lsp_core)
 target_include_directories(lsp_store_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME lsp_store_tests COMMAND lsp_store_tests)
+
+add_executable(lsp_tile_resample_tests tile_resample_test.cpp)
+target_link_libraries(lsp_tile_resample_tests PRIVATE lsp_core)
+target_include_directories(lsp_tile_resample_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME lsp_tile_resample_tests COMMAND lsp_tile_resample_tests)
 
 add_executable(lsp_ui_tests
     ui_tests.cpp
@@ -68,11 +78,11 @@ add_custom_target(snapshots
 )
 
 if(MSVC)
-    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE /W4)
     endforeach()
 else()
-    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE -Wall -Wextra)
     endforeach()
 endif()
@@ -86,6 +96,7 @@ set(LSP_TEST_TARGETS
     lsp_io_tests
     lsp_shape_tests
     lsp_store_tests
+    lsp_tile_resample_tests
     lsp_ui_tests
     PARENT_SCOPE
 )

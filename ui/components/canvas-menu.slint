@@ -1,8 +1,10 @@
 import { Styles } from "../styles.slint";
 
-// One command line of the canvas right click menu.
+// One command line of the canvas right click menu: its icon, a thin rule, and
+// the caption.
 export component CanvasMenuItem inherits Rectangle {
     in property <string> caption;
+    in property <image> icon;
     in property <bool> enabled: true;
     callback activated;
 
@@ -11,9 +13,25 @@ export component CanvasMenuItem inherits Rectangle {
     background: touch.has-hover && enabled ? Styles.menu-hover : transparent;
     opacity: enabled ? 1.0 : 0.4;
 
+    Image {
+        x: (Styles.menu-item-height - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        width: 16px;
+        height: 16px;
+        source: root.icon;
+        image-fit: contain;
+    }
+
+    Rectangle {
+        x: Styles.menu-item-height;
+        width: 1px;
+        height: parent.height;
+        background: Styles.bar-border-light;
+    }
+
     Text {
-        x: Styles.bar-padding;
-        width: parent.width - 2 * Styles.bar-padding;
+        x: Styles.menu-item-height + 1px + Styles.bar-padding;
+        width: parent.width - self.x - Styles.bar-padding;
         height: parent.height;
         text: root.caption;
         font-size: Styles.bar-font-size;

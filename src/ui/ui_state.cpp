@@ -58,22 +58,51 @@ std::optional<slint::Color> color_from_text(std::string_view text) {
     return to_slint(*parsed);
 }
 
-// The canvas size fields hold digits and nothing else, so anything else is a
-// size the user has not finished typing.
-[[nodiscard]] int parse_canvas_size(const slint::SharedString& text) {
+// A resize field as a whole number of at least 1, or 0 when it is not one.
+[[nodiscard]] int parse_resize_field(const slint::SharedString& text) {
     const std::string_view value(text);
-    if (!std::ranges::all_of(value, [](char c) { return c >= '0' && c <= '9'; })) return 0;
-    const std::optional<int> size = parse_int(value);
-    if (!size || *size < 1 || *size > kMaxCanvasDimension) return 0;
-    return *size;
+    constexpr std::size_t kMaxDigits = 7;
+    if (value.empty() || value.size() > kMaxDigits ||
+        !std::ranges::all_of(value, [](char c) { return c >= '0' && c <= '9'; }))
+        return 0;
+    return parse_int(value).value_or(0);
 }
 
-// Marching ants: alternating light and dark runs three pixels long, advanced
-// one pixel per tick. The whole pattern is rebuilt from the selection's
-// border on every tick, so the animation is just the phase moving forward.
+// The pixels an axis of `base` takes from a resize field, or 0 when that is
+// not a size the canvas can have.
+[[nodiscard]] int resized_extent(int field, int base, bool percentage) {
+    const long long pixels = percentage ? (static_cast<long long>(base) * field + 50) / 100 : field;
+    return pixels >= 1 && pixels <= kMaxCanvasDimension ? static_cast<int>(pixels) : 0;
+}
+
+// What a field holding `value` of one unit reads in the other, for an axis of
+// `base` pixels.
+[[nodiscard]] int converted_field(int value, int base, bool to_percentage) {
+    if (base <= 0) return value;
+    const long long converted = to_percentage ? (static_cast<long long>(value) * 100 + base / 2) / base
+                                              : (static_cast<long long>(value) * base + 50) / 100;
+    return static_cast<int>(std::clamp<long long>(converted, 1, 9999999));
+}
+
+// A skew field as degrees, or nothing when it is not a whole number the shear
+// can take.
+constexpr int kMaxSkewDegrees = 89;
+[[nodiscard]] std::optional<float> parse_skew_field(const slint::SharedString& text) {
+    const std::optional<int> degrees = parse_int(std::string_view(text));
+    if (!degrees || std::abs(*degrees) > kMaxSkewDegrees) return std::nullopt;
+    return static_cast<float>(*degrees);
+}
+
+// Marching ants: alternating light and dark runs three screen pixels long,
+// advanced one pixel per tick. The whole pattern is rebuilt on every tick, so
+// the animation is just the phase moving forward.
 constexpr int kAntSegment = 3;
 constexpr int kAntPeriod = kAntSegment * 2;
 constexpr auto kAntTick = std::chrono::milliseconds(80);
+// An outline longer than this many screen pixels is cut down to the window,
+// plus a margin so a scroll between two ticks shows no gap.
+constexpr float kAntClipLength = 4096.0f;
+constexpr int kAntClipMargin = 128;
 
 // A second press this soon and this close to the first counts as a double click.
 constexpr auto kDoubleClickWindow = std::chrono::milliseconds(400);
@@ -93,74 +122,129 @@ constexpr std::array<EShapeKind, 23> kShapeGalleryOrder{
     EShapeKind::CALLOUTROUNDED, EShapeKind::CALLOUTOVAL, EShapeKind::CALLOUTCLOUD,
     EShapeKind::HEART,         EShapeKind::LIGHTNING};
 
-// Walks the selection's border as a closed polyline — top, right, bottom,
-// left — and emits one unit run per border cell, coloured by the marching
-// phase. The view draws each cell as a single screen pixel, so the ants weigh
-// the same at every zoom instead of thickening with the magnification.
-void append_border_runs(const RectI& bounds, int phase, std::vector<SelectionDash>& dark,
-                        std::vector<SelectionDash>& light) {
-    const int w = bounds.width;
-    const int h = bounds.height;
-    if (w <= 0 || h <= 0) return;
+// Walks an outline given in screen pixels and emits the marching-ants runs:
+// alternating dark and light dashes of a fixed screen length, shifted by the
+// phase. Dash length and weight depend only on the screen, so the outline looks
+// the same at every zoom. A closed outline joins its last point back to its
+// first. With a `clip`, only the dashes that reach it are made, so an outline
+// far larger than the window costs no more than the part that can be seen.
+void append_ant_runs(const std::vector<Point2f>& outline, bool closed, int phase, const RectI* clip,
+                     std::vector<SelectionDash>& dark, std::vector<SelectionDash>& light) {
+    if (outline.empty()) return;
 
-    const int perimeter = 2 * (w + h - 2);
-    if (perimeter <= 0) {
-        // A single pixel has no border to march around; outline it anyway.
-        dark.push_back({static_cast<float>(bounds.x), static_cast<float>(bounds.y), 1.0f, 1.0f});
-        return;
-    }
-
-    // The point at arc position s. Each edge excludes its far corner, so the
-    // four together visit every border pixel once.
-    auto point_at = [&bounds, w, h](int s) -> std::pair<int, int> {
-        if (s < w - 1) return {bounds.x + s, bounds.y};
-        s -= w - 1;
-        if (s < h - 1) return {bounds.right() - 1, bounds.y + s};
-        s -= h - 1;
-        if (s < w - 1) return {bounds.right() - 1 - s, bounds.bottom() - 1};
-        s -= w - 1;
-        return {bounds.x, bounds.bottom() - 1 - s};
+    struct Run {
+        int x = 0;
+        int y = 0;
+        int w = 0;
+        int h = 0;
+        bool dark = false;
+        bool open = false;
+    } run;
+    auto flush = [&] {
+        if (!run.open) return;
+        (run.dark ? dark : light)
+            .push_back({static_cast<float>(run.x), static_cast<float>(run.y),
+                        static_cast<float>(run.w), static_cast<float>(run.h)});
+        run.open = false;
     };
-
-    for (int s = 0; s < perimeter; ++s) {
-        const auto [x, y] = point_at(s);
-        const int offset = (((s - phase) % kAntPeriod) + kAntPeriod) % kAntPeriod;
-        (offset < kAntSegment ? dark : light).push_back(
-            {static_cast<float>(x), static_cast<float>(y), 1.0f, 1.0f});
-    }
-}
-
-// Walks the polyline a selection gesture has drawn so far and emits one unit
-// run per cell, so an unfinished lasso or polygon shows the same crawling
-// outline the finished selection gets.
-void append_path_runs(const std::vector<Point2f>& points, int phase, std::vector<SelectionDash>& dark,
-                      std::vector<SelectionDash>& light) {
-    if (points.size() < 2) return;
 
     int step = 0;
     int last_x = 0;
     int last_y = 0;
     bool have_last = false;
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        const int x0 = round_to_int(points[i - 1].x);
-        const int y0 = round_to_int(points[i - 1].y);
-        const int x1 = round_to_int(points[i].x);
-        const int y1 = round_to_int(points[i].y);
-        const int steps = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
-        // The segment's first cell is the previous segment's last one.
-        for (int k = (i == 1 ? 0 : 1); k <= steps; ++k) {
-            const int x = steps == 0 ? x0 : x0 + (x1 - x0) * k / steps;
-            const int y = steps == 0 ? y0 : y0 + (y1 - y0) * k / steps;
-            if (have_last && x == last_x && y == last_y) continue;
-            last_x = x;
-            last_y = y;
-            have_last = true;
-            const int offset = (((step - phase) % kAntPeriod) + kAntPeriod) % kAntPeriod;
-            (offset < kAntSegment ? dark : light).push_back(
-                {static_cast<float>(x), static_cast<float>(y), 1.0f, 1.0f});
-            ++step;
+    auto add_cell = [&](int x, int y) {
+        if (have_last && x == last_x && y == last_y) return;
+        last_x = x;
+        last_y = y;
+        have_last = true;
+        const int offset = (((step++ - phase) % kAntPeriod) + kAntPeriod) % kAntPeriod;
+        if (clip != nullptr && !clip->contains(x, y)) {
+            flush();
+            return;
         }
+        const bool is_dark = offset < kAntSegment;
+        if (run.open && run.dark == is_dark) {
+            if (run.h == 1 && y == run.y && x == run.x + run.w) {
+                ++run.w;
+                return;
+            }
+            if (run.w == 1 && x == run.x && y == run.y + run.h) {
+                ++run.h;
+                return;
+            }
+        }
+        flush();
+        run = {x, y, 1, 1, is_dark, true};
+    };
+
+    // Passes over `cells` cells of the outline without making any of them.
+    auto skip = [&](int cells) {
+        flush();
+        step += cells;
+        have_last = false;
+    };
+
+    const std::size_t count = outline.size();
+    const std::size_t segments = closed ? count : count - 1;
+    for (std::size_t i = 0; i < segments; ++i) {
+        const Point2f& from = outline[i];
+        const Point2f& to = outline[(i + 1) % count];
+        const int x0 = round_to_int(from.x);
+        const int y0 = round_to_int(from.y);
+        const int x1 = round_to_int(to.x);
+        const int y1 = round_to_int(to.y);
+        const int steps = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
+        // A segment stops short of its far end, which the next one starts on.
+        if (clip != nullptr && steps > 0 && (x0 == x1 || y0 == y1)) {
+            // A straight run only has cells in the clip over one stretch of it,
+            // so the rest is stepped over instead of walked.
+            const bool horizontal = y0 == y1;
+            const int along = horizontal ? x0 : y0;
+            const int across = horizontal ? y0 : x0;
+            const int sign = (horizontal ? x1 > x0 : y1 > y0) ? 1 : -1;
+            const int near_edge = horizontal ? clip->x : clip->y;
+            const int far_edge = horizontal ? clip->right() : clip->bottom();
+            const int lane_low = horizontal ? clip->y : clip->x;
+            const int lane_high = horizontal ? clip->bottom() : clip->right();
+            int first = 0;
+            int last = 0;
+            if (across >= lane_low && across < lane_high) {
+                first = sign > 0 ? near_edge - along : along - (far_edge - 1);
+                last = sign > 0 ? far_edge - along : along - near_edge + 1;
+                first = std::clamp(first, 0, steps);
+                last = std::clamp(last, first, steps);
+            }
+            skip(first);
+            for (int k = first; k < last; ++k) {
+                add_cell(horizontal ? x0 + sign * k : x0, horizontal ? y0 : y0 + sign * k);
+            }
+            skip(steps - last);
+        } else {
+            for (int k = 0; k < steps; ++k) {
+                add_cell(x0 + (x1 - x0) * k / steps, y0 + (y1 - y0) * k / steps);
+            }
+        }
+        if (steps == 0 || (!closed && i + 1 == segments)) add_cell(x1, y1);
     }
+    flush();
+}
+
+// The outline of a selection box, in screen pixels at the given zoom. A box
+// one pixel wide or tall collapses to a single line.
+std::vector<Point2f> border_outline(const RectI& bounds, float zoom) {
+    const float left = static_cast<float>(round_to_int(bounds.x * zoom));
+    const float top = static_cast<float>(round_to_int(bounds.y * zoom));
+    const float right = std::max(left, static_cast<float>(round_to_int(bounds.right() * zoom) - 1));
+    const float bottom =
+        std::max(top, static_cast<float>(round_to_int(bounds.bottom() * zoom) - 1));
+    return {{left, top}, {right, top}, {right, bottom}, {left, bottom}};
+}
+
+std::vector<Point2f> scaled(const std::vector<Point2f>& points, float zoom) {
+    std::vector<Point2f> result;
+    result.reserve(points.size());
+    for (const Point2f& point : points) result.push_back({point.x * zoom, point.y * zoom});
+    return result;
 }
 
 std::vector<SelectionGrip> grip_anchors(const RectI& bounds) {
@@ -321,11 +405,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
     };
     m_window.on_view_area_changed(show_view);
     show_view(m_window.get_view_area());
-    m_window.on_zoom_level_changed([this](int level) {
-        if (!m_bridge.set_level(level)) return;
-        const PixelBuffer& pixels = m_controller.document().flattened();
-        m_bridge.upload(pixels, pixels.bounds());
-    });
+    m_window.on_canvas_zoom_changed([this](float zoom) { apply_zoom(zoom); });
 
     m_palette = std::make_shared<slint::VectorModel<slint::Color>>();
     for (const Rgba8& color : kDefaultPalette)
@@ -496,7 +576,23 @@ UiState::UiState(AppWindow& window, AppController& controller)
     m_window.global<UserState>().on_select_all([this] { m_controller.select_all(); refresh(); });
     m_window.global<UserState>().on_invert_selection([this] { m_controller.invert_selection(); refresh(); });
     m_window.global<UserState>().on_clear_selection([this] { m_controller.clear_selection(); refresh(); });
-    m_window.global<UserState>().on_transparent_selection([this] { m_controller.make_selection_transparent(); refresh(); });
+    m_window.global<UserState>().on_toggle_transparent_selection([this] {
+        auto& state = m_window.global<UserState>();
+        const bool on = !state.get_transparent_selection();
+        state.set_transparent_selection(on);
+        sync_colors();
+        m_controller.set_transparent_selection(on);
+        refresh();
+    });
+    m_window.global<UserState>().on_delete_selection([this] {
+        sync_colors();
+        m_controller.delete_selection_contents();
+        refresh();
+    });
+    m_window.global<UserState>().on_invert_selection_colors([this] {
+        m_controller.invert_colors();
+        refresh();
+    });
     m_window.global<UserState>().on_crop_to_selection([this] { m_controller.crop_to_selection(); refresh(); });
     m_window.global<UserState>().on_rotate([this](ERotation rotation) { m_controller.rotate(rotation_from_slint(rotation)); refresh(); });
     m_window.global<UserState>().on_flip_horizontal([this] { m_controller.flip_horizontal(); refresh(); });
@@ -507,7 +603,12 @@ UiState::UiState(AppWindow& window, AppController& controller)
         m_controller.cut_selection();
         refresh();
     });
-    m_window.global<UserState>().on_copy_selection([this] { m_controller.copy_selection(); refresh(); });
+    m_window.global<UserState>().on_copy_selection([this] {
+        sync_colors();
+        m_controller.refresh_transparent_color();
+        m_controller.copy_selection();
+        refresh();
+    });
     m_window.global<UserState>().on_paste_selection([this] { do_paste(); });
     m_window.global<UserState>().on_check_clipboard([this] { check_clipboard(); });
     m_window.global<UserState>().on_transform_selection_content(
@@ -608,6 +709,28 @@ void UiState::load_settings() {
     // The text tool draws with the family the box is set in.
     sync_font_style();
     m_stored_settings = current_settings();
+}
+
+void UiState::apply_zoom(float zoom) {
+    const float ratio = m_window.window().scale_factor();
+    if (m_bridge.set_zoom(zoom, ratio > 0.0f ? ratio : 1.0f)) rebuild_tiles();
+    publish_tile_style();
+    update_ants();
+    m_zoom_timer.start(slint::TimerMode::SingleShot, std::chrono::milliseconds(kZoomSettleMilliseconds), [this] {
+        if (!m_bridge.refine()) return;
+        rebuild_tiles();
+        publish_tile_style();
+    });
+}
+
+void UiState::rebuild_tiles() {
+    const PixelBuffer& pixels = m_controller.document().flattened();
+    m_bridge.upload(pixels, pixels.bounds());
+}
+
+void UiState::publish_tile_style() {
+    m_window.set_tile_overlap(m_bridge.tile_overlap());
+    m_window.set_tile_pixelated(m_bridge.pixelated());
 }
 
 UiState::SettingsSnapshot UiState::current_settings() const {
@@ -795,6 +918,7 @@ void UiState::do_open_color_dialog() {
     // Every open centers the window again.
     push_color_dialog();
     (*m_color_window)->show();
+    center_dialog((*m_color_window)->window());
 }
 
 // Writes the color, the color the square shades and the readouts from the
@@ -931,6 +1055,7 @@ void UiState::ensure_about_window() {
 void UiState::do_open_about() {
     ensure_about_window();
     (*m_about_window)->show();
+    center_dialog((*m_about_window)->window());
 }
 
 void UiState::ensure_confirm_window() {
@@ -1004,6 +1129,9 @@ void UiState::ensure_resize_window() {
     lsp_resize::ResizeDialog& dialog = **m_resize_window;
     dialog.on_accepted([this] { do_resize_ok(); });
     dialog.on_cancelled([this] { close_resize_window(); });
+    dialog.on_unit_changed([this] { do_resize_unit_changed(); });
+    dialog.on_horizontal_edited([this] { do_resize_link(true); });
+    dialog.on_vertical_edited([this] { do_resize_link(false); });
     dialog.window().on_close_requested([this] {
         // Closing the question with the window manager is the same as
         // cancelling it.
@@ -1024,6 +1152,21 @@ lsp_resize::ResizeDialog& UiState::resize_window() {
 
 bool UiState::resize_window_open() const noexcept {
     return m_resize_window && (*m_resize_window)->window().is_visible();
+}
+
+// A dialog is a window of its own, so it needs its own place on screen: this
+// puts it in the middle of the main window. Its size is only known once it is
+// on screen, so call this after show(). A backend that does not move windows,
+// Wayland among them, leaves it where it put it.
+void UiState::center_dialog(slint::Window& dialog) const {
+    const slint::PhysicalSize inner = dialog.size();
+    if (inner.width == 0 || inner.height == 0) return;
+    const slint::Window& window = m_window.window();
+    const slint::PhysicalPosition corner = window.position();
+    const slint::PhysicalSize outer = window.size();
+    const int x = corner.x + (static_cast<int>(outer.width) - static_cast<int>(inner.width)) / 2;
+    const int y = corner.y + (static_cast<int>(outer.height) - static_cast<int>(inner.height)) / 2;
+    dialog.set_position(slint::PhysicalPosition({x, y}));
 }
 
 void UiState::sync_colors() {
@@ -1166,6 +1309,12 @@ void UiState::do_cancel_text() {
 
 void UiState::refresh() {
     CanvasDocument& document = m_controller.document();
+    // The background color can change at any time, and the transparent
+    // selection follows it.
+    if (m_controller.transparent_selection()) {
+        sync_colors();
+        m_controller.refresh_transparent_color();
+    }
     if (const auto region = document.flush()) {
         m_bridge.upload(document.flattened(), *region);
     }
@@ -1246,26 +1395,71 @@ void UiState::update_ants() {
                 std::make_shared<slint::VectorModel<SelectionDash>>(std::vector<SelectionDash>{}));
             state.set_grips(
                 std::make_shared<slint::VectorModel<SelectionGrip>>(std::vector<SelectionGrip>{}));
+            m_ants_key.clear();
         }
         return;
     }
     m_ants_visible = true;
 
-    std::vector<SelectionDash> dark;
-    std::vector<SelectionDash> light;
+    const float zoom = m_window.global<UserState>().get_zoom();
+
+    // Every outline to draw, in screen pixels.
+    struct Outline {
+        std::vector<Point2f> points;
+        bool closed = false;
+    };
+    std::vector<Outline> outlines;
     if (visible) {
         // A turned float is not the box its mask holds, so its outline follows
         // the shape its contents cover.
         const std::optional<FloatingContents>& floating = document.floating();
         if (floating.has_value() && floating->rotation != 0.0f) {
-            append_path_runs(turned_corners(*floating), m_ant_phase, dark, light);
+            outlines.push_back({scaled(turned_corners(*floating), zoom), false});
         } else {
-            append_border_runs(bounds, m_ant_phase, dark, light);
+            outlines.push_back({border_outline(bounds, zoom), true});
         }
     }
-    if (drawing) append_path_runs(preview.points, m_ant_phase, dark, light);
-    state.set_ants_dark(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(dark)));
-    state.set_ants_light(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(light)));
+    if (drawing) outlines.push_back({scaled(preview.points, zoom), false});
+
+    // An outline far longer than the window only needs the part that can be
+    // seen. A short one is drawn whole.
+    float length = 0.0f;
+    for (const Outline& outline : outlines) {
+        for (std::size_t i = 1; i < outline.points.size(); ++i)
+            length += std::abs(outline.points[i].x - outline.points[i - 1].x) +
+                      std::abs(outline.points[i].y - outline.points[i - 1].y);
+    }
+    std::optional<RectI> clip;
+    const ViewArea view = m_window.get_view_area();
+    if (length > kAntClipLength && view.width > 0.0f && view.height > 0.0f) {
+        const int left = floor_to_int(view.x * zoom) - kAntClipMargin;
+        const int top = floor_to_int(view.y * zoom) - kAntClipMargin;
+        clip = RectI{left, top, ceil_to_int(view.width * zoom) + 2 * kAntClipMargin,
+                     ceil_to_int(view.height * zoom) + 2 * kAntClipMargin};
+    }
+
+    // A pointer event asks for the outline too, and most of the time nothing
+    // about it has changed since the last tick.
+    std::vector<float> key{static_cast<float>(m_ant_phase)};
+    if (clip) key.insert(key.end(), {float(clip->x), float(clip->y), float(clip->width), float(clip->height)});
+    for (const Outline& outline : outlines) {
+        key.push_back(outline.closed ? 1.0f : 0.0f);
+        for (const Point2f& point : outline.points) key.insert(key.end(), {point.x, point.y});
+        key.push_back(-1.0f);
+    }
+    const bool outline_unchanged = key == m_ants_key;
+    m_ants_key = std::move(key);
+
+    std::vector<SelectionDash> dark;
+    std::vector<SelectionDash> light;
+    if (!outline_unchanged) {
+        for (const Outline& outline : outlines) {
+            append_ant_runs(outline.points, outline.closed, m_ant_phase, clip ? &*clip : nullptr, dark,
+                            light);
+        }
+        state.set_ants_dark(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(dark)));
+        state.set_ants_light(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(light)));
+    }
 
     std::vector<SelectionGrip> grips;
     if (visible && bounds.width >= kMinHandleSpan && bounds.height >= kMinHandleSpan &&
@@ -1301,11 +1495,26 @@ void UiState::after_document_change() {
 
 void UiState::ask_unsaved(PendingAction action) {
     m_pending = action;
+    // A fresh window every time: a hidden one that is shown again can come back
+    // laid out wrong on Windows, with only the last button visible.
+    if (m_confirm_window) {
+        (*m_confirm_window)->hide();
+        m_confirm_window.reset();
+    }
     ensure_confirm_window();
+    // GCC loses the handle across the reset above and warns on the read below.
+#if defined(__GNUC__) && !defined(__clang__)
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
     (*m_confirm_window)
         ->set_message(slint::SharedString("Do you want to save changes to " +
                                           m_controller.display_name() + "?"));
+#if defined(__GNUC__) && !defined(__clang__)
+#    pragma GCC diagnostic pop
+#endif
     (*m_confirm_window)->show();
+    center_dialog((*m_confirm_window)->window());
 }
 
 void UiState::run_pending() {
@@ -1489,8 +1698,7 @@ void UiState::do_paste() {
     // cannot carry, so that one is pasted from the copy still in memory.
     std::string error;
     std::optional<PixelBuffer> held = Clipboard::get_image(&error);
-    const bool copied_here = held.has_value() && !m_controller.clipboard().empty() &&
-                             *held == m_controller.clipboard().pixels;
+    const bool copied_here = held.has_value() && m_controller.is_own_copy(*held);
     if (!held.has_value() || copied_here) {
         if (!m_controller.clipboard().empty()) {
             m_controller.paste_clipboard();
@@ -1530,29 +1738,95 @@ void UiState::show_message(const std::string& title, const std::string& text) {
     (*m_message_window)->set_heading(slint::SharedString(title));
     (*m_message_window)->set_text(slint::SharedString(text));
     (*m_message_window)->show();
+    center_dialog((*m_message_window)->window());
 }
 
 void UiState::do_open_resize_dialog() {
     ensure_resize_window();
-    (*m_resize_window)->set_width_text(
-        slint::SharedString(std::to_string(m_controller.document().width())));
-    (*m_resize_window)->set_height_text(
-        slint::SharedString(std::to_string(m_controller.document().height())));
-    (*m_resize_window)->show();
+    // The size the percentages are of: the selection when there is one, which is
+    // what the dialog then acts on, and the picture otherwise.
+    const CanvasDocument& document = m_controller.document();
+    const RectI selection = document.selection().bounds();
+    const bool on_selection = document.selection().active() && !selection.empty();
+    m_resize_base_width = on_selection ? selection.width : document.width();
+    m_resize_base_height = on_selection ? selection.height : document.height();
+
+    lsp_resize::ResizeDialog& dialog = **m_resize_window;
+    dialog.set_by_percentage(true);
+    dialog.set_horizontal_text("100");
+    dialog.set_vertical_text("100");
+    dialog.set_keep_aspect(true);
+    dialog.set_skew_horizontal_text("0");
+    dialog.set_skew_vertical_text("0");
+    dialog.show();
+    center_dialog(dialog.window());
+}
+
+// Switching between percentages and pixels keeps the size the fields describe.
+void UiState::do_resize_unit_changed() {
+    lsp_resize::ResizeDialog& dialog = resize_window();
+    const bool percentage = dialog.get_by_percentage();
+    const int horizontal = parse_resize_field(dialog.get_horizontal_text());
+    const int vertical = parse_resize_field(dialog.get_vertical_text());
+    dialog.set_horizontal_text(slint::SharedString(std::to_string(
+        horizontal == 0 ? (percentage ? 100 : m_resize_base_width)
+                        : converted_field(horizontal, m_resize_base_width, percentage))));
+    dialog.set_vertical_text(slint::SharedString(std::to_string(
+        vertical == 0 ? (percentage ? 100 : m_resize_base_height)
+                      : converted_field(vertical, m_resize_base_height, percentage))));
+}
+
+// With the aspect ratio kept, the field that was not typed into follows the one
+// that was.
+void UiState::do_resize_link(bool from_horizontal) {
+    lsp_resize::ResizeDialog& dialog = resize_window();
+    if (!dialog.get_keep_aspect()) return;
+    const int field = parse_resize_field(from_horizontal ? dialog.get_horizontal_text()
+                                                         : dialog.get_vertical_text());
+    if (field == 0) return;  // not finished typing
+
+    int other = field;
+    if (!dialog.get_by_percentage()) {
+        const int from_base = from_horizontal ? m_resize_base_width : m_resize_base_height;
+        const int to_base = from_horizontal ? m_resize_base_height : m_resize_base_width;
+        other = static_cast<int>(std::clamp<long long>(
+            (static_cast<long long>(field) * to_base + from_base / 2) / std::max(from_base, 1), 1,
+            kMaxCanvasDimension));
+    }
+    const slint::SharedString text(std::to_string(other));
+    if (from_horizontal)
+        dialog.set_vertical_text(text);
+    else
+        dialog.set_horizontal_text(text);
 }
 
 void UiState::do_resize_ok() {
     lsp_resize::ResizeDialog& dialog = resize_window();
-    const int width = parse_canvas_size(dialog.get_width_text());
-    const int height = parse_canvas_size(dialog.get_height_text());
+    const bool percentage = dialog.get_by_percentage();
+    const int width = resized_extent(parse_resize_field(dialog.get_horizontal_text()),
+                                     m_resize_base_width, percentage);
+    const int height = resized_extent(parse_resize_field(dialog.get_vertical_text()),
+                                      m_resize_base_height, percentage);
     if (width == 0 || height == 0) {
-        show_message("Resize image", "Enter a whole number of pixels between 1 and " +
-                                          std::to_string(kMaxCanvasDimension) + ".");
+        show_message("Resize and Skew",
+                     percentage ? "Enter a whole percentage that keeps the size between 1 and " +
+                                      std::to_string(kMaxCanvasDimension) + " pixels."
+                                : "Enter a whole number of pixels between 1 and " +
+                                      std::to_string(kMaxCanvasDimension) + ".");
+        return;
+    }
+    const std::optional<float> skew_horizontal = parse_skew_field(dialog.get_skew_horizontal_text());
+    const std::optional<float> skew_vertical = parse_skew_field(dialog.get_skew_vertical_text());
+    if (!skew_horizontal || !skew_vertical) {
+        show_message("Resize and Skew", "Enter a whole number of degrees between -" +
+                                            std::to_string(kMaxSkewDegrees) + " and " +
+                                            std::to_string(kMaxSkewDegrees) + ".");
         return;
     }
     close_resize_window();
-    m_controller.resize_canvas(width, height,
-                               to_rgba(m_window.global<UserState>().get_secondary_color()));
+    sync_colors();
+    m_controller.resize_and_skew(width, height, *skew_horizontal, *skew_vertical,
+                                 to_rgba(m_window.global<UserState>().get_secondary_color()));
     refresh();
 }
 

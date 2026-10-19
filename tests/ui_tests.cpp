@@ -977,27 +977,38 @@ int run_ui_tests() {
     CHECK(plain_ink > calligraphy_ink);
 
 
-    // 28. The Resize dialog takes a new canvas size as one edit, and one undo
-    //     gives the old size back.
+    // 28. The Resize and Skew dialog stretches the picture as one edit, and one
+    //     undo gives the old size back.
+    h.user().invoke_clear_selection();
     const int before_w = h.controller().document().width();
     const int before_h = h.controller().document().height();
     h.user().invoke_resize_dialog();
     CHECK(h.resize_open());
-    h.resize().set_width_text(slint::SharedString("1200"));
-    h.resize().set_height_text(slint::SharedString("900"));
+    h.resize().set_keep_aspect(false);
+    h.resize().set_horizontal_text(slint::SharedString("200"));
+    h.resize().set_vertical_text(slint::SharedString("50"));
     h.resize().invoke_accepted();
     CHECK(!h.resize_open());
-    CHECK(h.controller().document().width() == 1200);
-    CHECK(h.controller().document().height() == 900);
+    CHECK(h.controller().document().width() == before_w * 2);
+    CHECK(h.controller().document().height() == (before_h + 1) / 2);
     h.controller().history().undo();
     (void)h.controller().document().flush();
     CHECK(h.controller().document().width() == before_w);
     CHECK(h.controller().document().height() == before_h);
 
+    // ... a skew grows the picture by the room the lean needs ...
+    h.user().invoke_resize_dialog();
+    h.resize().set_skew_horizontal_text(slint::SharedString("30"));
+    h.resize().invoke_accepted();
+    CHECK(h.controller().document().width() > before_w);
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
+    CHECK(h.controller().document().width() == before_w);
+
     // ... and a size the canvas cannot take is refused with a reason, leaving
     // the dialog up so it can be corrected.
     h.user().invoke_resize_dialog();
-    h.resize().set_width_text(slint::SharedString(""));
+    h.resize().set_horizontal_text(slint::SharedString(""));
     h.resize().invoke_accepted();
     CHECK(h.resize_open());
     CHECK(h.message_open());

@@ -368,8 +368,10 @@ export component HomeBar inherits Bar {
                         clicked => { UserState.clear-selection(); }
                     }
                     BarDropdownItem {
-                        icon: @image-url("../../icons/transparent-selection.png"); text: "Transparent selection";
-                        clicked => { UserState.transparent-selection(); }
+                        text: "Transparent selection";
+                        checkable: true;
+                        checked: UserState.transparent-selection;
+                        clicked => { UserState.toggle-transparent-selection(); }
                     }
                 }
             }
@@ -424,8 +426,10 @@ export component HomeBar inherits Bar {
                         clicked => { UserState.clear-selection(); }
                     }
                     BarDropdownItem {
-                        icon: @image-url("../../icons/transparent-selection.png"); text: "Transparent selection";
-                        clicked => { UserState.transparent-selection(); }
+                        text: "Transparent selection";
+                        checkable: true;
+                        checked: UserState.transparent-selection;
+                        clicked => { UserState.toggle-transparent-selection(); }
                     }
 
                     BarDropdownDivider {}
@@ -821,7 +825,7 @@ export component HomeBar inherits Bar {
             }
 
             outline-dropdown := PopupWindow {
-                y: modes.y + outline-btn.y + outline-btn.arrow-y + outline-btn.arrow-height + Styles.bar-dropdown-gap + 15px;
+                y: modes.y + outline-btn.y + outline-btn.arrow-y + outline-btn.arrow-height + Styles.bar-dropdown-gap + 3px;
                 x: modes.x + outline-btn.x;
 
                 TextureMenu {
@@ -834,7 +838,7 @@ export component HomeBar inherits Bar {
             }
 
             fill-dropdown := PopupWindow {
-                y: modes.y + fill-btn.y + fill-btn.arrow-y + fill-btn.arrow-height + Styles.bar-dropdown-gap + 15px;
+                y: modes.y + fill-btn.y + fill-btn.arrow-y + fill-btn.arrow-height + Styles.bar-dropdown-gap + 3px;
                 x: modes.x + fill-btn.x;
 
                 TextureMenu {

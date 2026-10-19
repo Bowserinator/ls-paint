@@ -75,13 +75,15 @@ export component AppWindow inherits Window {
     in property <int> tile-size: 512;
     property <int> tile-columns: max(1, ceil(DocumentState.canvas-width / root.tile-size));
 
-    // How many times the tiles are halved for the current zoom, so a zoomed-out
-    // view shows an averaged image instead of a sparse sample of the pixels.
-    property <int> zoom-level: UserState.zoom >= 1.0 ? 0 : max(0, floor(-log(UserState.zoom, 2.0) + 0.5));
-    // Pixels each tile image shows past its edge, in document pixels. It matches
-    // the overlap the backend builds in.
-    property <float> tile-overlap: 2.0 * pow(2.0, root.zoom-level);
-    callback zoom-level-changed(int);
+    // Pixels each tile image shows past its edge, in document pixels, and
+    // whether the images are drawn as crisp blocks. Both come from the backend,
+    // which makes the images.
+    in property <float> tile-overlap: 2.0;
+    in property <bool> tile-pixelated: true;
+
+    // The zoom, reported so the backend can make the images that suit it.
+    property <float> canvas-zoom: UserState.zoom;
+    callback canvas-zoom-changed(float);
 
     // What the window shows of the document, so only the tiles near it are built.
     in-out property <ViewArea> view-area: {
@@ -102,7 +104,7 @@ export component AppWindow inherits Window {
             root.last-brush-tool = root.current-tool;
         }
     }
-    changed zoom-level => { root.zoom-level-changed(root.zoom-level); }
+    changed canvas-zoom => { root.canvas-zoom-changed(root.canvas-zoom); }
 
     // Where a tile edge falls on screen. Edges sit on whole pixels and each tile
     // runs a little under its neighbour, so no gap shows between the two; the
@@ -145,6 +147,15 @@ export component AppWindow inherits Window {
         : UserState.zoom >= 0.5 ? 16.0
         : UserState.zoom >= 0.25 ? 32.0
         : 64.0;
+    // The grid lines that can be seen: first line and how many. A zoomed-in
+    // view of a large paper would otherwise carry thousands of lines that are
+    // far off screen.
+    property <float> grid-first-col: max(0.0, floor(root.view-area.x / root.grid-spacing));
+    property <float> grid-last-col: min(floor((root.doc-w - 1px) / (root.grid-spacing * 1px)),
+        floor((root.view-area.x + root.view-area.width) / root.grid-spacing) + 1.0);
+    property <float> grid-first-row: max(0.0, floor(root.view-area.y / root.grid-spacing));
+    property <float> grid-last-row: min(floor((root.doc-h - 1px) / (root.grid-spacing * 1px)),
+        floor((root.view-area.y + root.view-area.height) / root.grid-spacing) + 1.0);
     property <length> resize-dx;
     property <length> resize-dy;
 
@@ -361,16 +372,19 @@ export component AppWindow inherits Window {
 
                                     CanvasMenuItem {
                                         caption: @tr("Cut");
+                                        icon: @image-url("../icons/cut.png");
                                         enabled: DocumentState.has-selection;
                                         activated => { canvas-menu.close(); UserState.cut-selection(); }
                                     }
                                     CanvasMenuItem {
                                         caption: @tr("Copy");
+                                        icon: @image-url("../icons/copy.png");
                                         enabled: DocumentState.has-selection;
                                         activated => { canvas-menu.close(); UserState.copy-selection(); }
                                     }
                                     CanvasMenuItem {
                                         caption: @tr("Paste");
+                                        icon: @image-url("../icons/paste.png");
                                         enabled: DocumentState.has-clipboard;
                                         activated => { canvas-menu.close(); UserState.paste-selection(); }
                                     }
@@ -378,17 +392,52 @@ export component AppWindow inherits Window {
                                     CanvasMenuDivider { }
 
                                     CanvasMenuItem {
+                                        caption: @tr("Crop");
+                                        icon: @image-url("../icons/crop.png");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.crop-to-selection(); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Select all");
+                                        icon: @image-url("../icons/select-all.png");
+                                        activated => { canvas-menu.close(); UserState.select-all(); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Invert selection");
+                                        icon: @image-url("../icons/invert-selection.png");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.invert-selection(); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Delete");
+                                        icon: @image-url("../icons/clear-selection.png");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.delete-selection(); }
+                                    }
+                                    CanvasMenuItem {
+                                        caption: @tr("Deselect");
+                                        icon: @image-url("../icons/selection.png");
+                                        enabled: DocumentState.has-selection;
+                                        activated => { canvas-menu.close(); UserState.clear-selection(); }
+                                    }
+
+                                    CanvasMenuDivider { }
+
+                                    CanvasMenuItem {
                                         caption: @tr("Rotate 90° right");
+                                        icon: @image-url("../icons/rotate.png");
                                         enabled: DocumentState.has-selection;
                                         activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.ROTATE_CW90); }
                                     }
                                     CanvasMenuItem {
                                         caption: @tr("Rotate 90° left");
+                                        icon: @image-url("../icons/rotate.png");
                                         enabled: DocumentState.has-selection;
                                         activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.ROTATE_CCW90); }
                                     }
                                     CanvasMenuItem {
                                         caption: @tr("Rotate 180°");
+                                        icon: @image-url("../icons/rotate.png");
                                         enabled: DocumentState.has-selection;
                                         activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.ROTATE_180); }
                                     }
@@ -397,11 +446,13 @@ export component AppWindow inherits Window {
 
                                     CanvasMenuItem {
                                         caption: @tr("Flip horizontal");
+                                        icon: @image-url("../icons/rotate.png");
                                         enabled: DocumentState.has-selection;
                                         activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.FLIP_HORIZONTAL); }
                                     }
                                     CanvasMenuItem {
                                         caption: @tr("Flip vertical");
+                                        icon: @image-url("../icons/rotate.png");
                                         enabled: DocumentState.has-selection;
                                         activated => { canvas-menu.close(); UserState.transform-selection-content(EContentTransform.FLIP_VERTICAL); }
                                     }
@@ -409,13 +460,14 @@ export component AppWindow inherits Window {
                                     CanvasMenuDivider { }
 
                                     CanvasMenuItem {
-                                        caption: @tr("Select all");
-                                        activated => { canvas-menu.close(); UserState.select-all(); }
+                                        caption: @tr("Invert color");
+                                        icon: @image-url("../icons/edit-colors.png");
+                                        activated => { canvas-menu.close(); UserState.invert-selection-colors(); }
                                     }
                                     CanvasMenuItem {
-                                        caption: @tr("Deselect");
-                                        enabled: DocumentState.has-selection;
-                                        activated => { canvas-menu.close(); UserState.clear-selection(); }
+                                        caption: @tr("Resize");
+                                        icon: @image-url("../icons/resize.png");
+                                        activated => { canvas-menu.close(); UserState.resize-dialog(); }
                                     }
                                 }
                             }
@@ -526,12 +578,9 @@ export component AppWindow inherits Window {
                             height: 100%;
 
                             for tile[i] in root.tiles : Image {
-                                // Shrunk pages are filtered linearly so zoomed-out
-                                // pixels blend instead of aliasing; at 1x and above
-                                // every document pixel stays a crisp block.
-                                image-rendering: UserState.zoom < 1.0
-                                    ? ImageRendering.smooth
-                                    : ImageRendering.pixelated;
+                                image-rendering: root.tile-pixelated
+                                    ? ImageRendering.pixelated
+                                    : ImageRendering.smooth;
                                 source: tile;
                                 x: root.edge-x(mod(i, root.tile-columns) * root.tile-size);
                                 y: root.edge-y(floor(i / root.tile-columns) * root.tile-size);
@@ -555,15 +604,15 @@ export component AppWindow inherits Window {
                         background: transparent;
                         clip: true;
 
-                        for i in floor((root.doc-w - 1px) / (root.grid-spacing * 1px)) + 1 : Rectangle {
-                            x: i * root.grid-spacing * UserState.zoom * 1px;
+                        for i in max(0.0, root.grid-last-col - root.grid-first-col + 1.0) : Rectangle {
+                            x: (root.grid-first-col + i) * root.grid-spacing * UserState.zoom * 1px;
                             width: 1px;
                             height: 100%;
                             background: Styles.canvas-grid-color;
                         }
 
-                        for i in floor((root.doc-h - 1px) / (root.grid-spacing * 1px)) + 1 : Rectangle {
-                            y: i * root.grid-spacing * UserState.zoom * 1px;
+                        for i in max(0.0, root.grid-last-row - root.grid-first-row + 1.0) : Rectangle {
+                            y: (root.grid-first-row + i) * root.grid-spacing * UserState.zoom * 1px;
                             width: 100%;
                             height: 1px;
                             background: Styles.canvas-grid-color;
@@ -699,20 +748,19 @@ export component AppWindow inherits Window {
                     // The outline of an active selection: alternating light and
                     // dark runs covering its border, rebuilt from C++ as the
                     // phase advances so the pattern crawls around it.
-                    // Each run is a single border cell. Its home follows the
-                    // zoom, but its size does not: the ants stay one screen
-                    // pixel at every magnification instead of thickening.
+                    // Runs are laid out in screen pixels, so the ants keep the
+                    // same dash length and weight at every magnification.
                     for dash in DocumentState.ants-light : Rectangle {
-                        x: root.canvas-origin + dash.x * UserState.zoom * 1px;
-                        y: root.canvas-origin + dash.y * UserState.zoom * 1px;
+                        x: root.canvas-origin + dash.x * 1px;
+                        y: root.canvas-origin + dash.y * 1px;
                         width: dash.w * 1px;
                         height: dash.h * 1px;
                         background: white;
                     }
 
                     for dash in DocumentState.ants-dark : Rectangle {
-                        x: root.canvas-origin + dash.x * UserState.zoom * 1px;
-                        y: root.canvas-origin + dash.y * UserState.zoom * 1px;
+                        x: root.canvas-origin + dash.x * 1px;
+                        y: root.canvas-origin + dash.y * 1px;
                         width: dash.w * 1px;
                         height: dash.h * 1px;
                         background: black;

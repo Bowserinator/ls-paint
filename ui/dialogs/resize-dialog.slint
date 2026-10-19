@@ -1,24 +1,99 @@
-import { Win10, WinButton, WinFieldLabel, WinNumberBox } from "../win10.slint";
+import { Win10, WinButton, WinCheckBox, WinFieldLabel, WinGroupBox, WinNumberBox, WinRadio } from "../win10.slint";
 
-// Canvas size in pixels. A real window, so the window manager draws the title
-// bar and its close button; the face, the fields and the two answers wear the
-// Windows 10 colors and controls the other dialogs use. Only the size changes:
-// what is already on the paper keeps its place and the new area is filled with
-// the secondary color.
+// A double arrow along one axis, the mark that says which direction a field
+// acts on.
+component AxisGlyph inherits Rectangle {
+    in property <bool> vertical: false;
+
+    width: 34px;
+    height: 26px;
+    background: transparent;
+
+    if (!root.vertical) : Path {
+        x: 2px;
+        y: 7px;
+        width: 30px;
+        height: 12px;
+        viewbox-width: 30;
+        viewbox-height: 12;
+        commands: "M 1 6 L 29 6 M 1 6 L 6 1 M 1 6 L 6 11 M 29 6 L 24 1 M 29 6 L 24 11";
+        stroke: #d32f2f;
+        stroke-width: 1.5px;
+    }
+    if (root.vertical) : Path {
+        x: 11px;
+        y: -2px;
+        width: 12px;
+        height: 30px;
+        viewbox-width: 12;
+        viewbox-height: 30;
+        commands: "M 6 1 L 6 29 M 6 1 L 1 6 M 6 1 L 11 6 M 6 29 L 1 24 M 6 29 L 11 24";
+        stroke: #d32f2f;
+        stroke-width: 1.5px;
+    }
+}
+
+// One line of a group: the axis mark, its caption and the box that takes the
+// value.
+component AxisRow inherits Rectangle {
+    in property <string> caption;
+    in property <bool> vertical: false;
+    in-out property <string> value;
+    callback edited();
+    callback accepted();
+
+    height: 30px;
+
+    HorizontalLayout {
+        spacing: 8px;
+        alignment: start;
+
+        AxisGlyph { vertical: root.vertical; }
+        WinFieldLabel {
+            text: root.caption;
+            width: 82px;
+            y: 3px;
+        }
+        WinNumberBox {
+            width: 70px;
+            y: 3px;
+            text <=> root.value;
+            edited => { root.edited(); }
+            accepted => { root.accepted(); }
+        }
+    }
+}
+
+// Stretches and shears the selection, or the whole picture when nothing is
+// selected. A real window, so the window manager draws the title bar and its
+// close button; the face, the fields and the two answers wear the Windows 10
+// colors and controls the other dialogs use.
 export component ResizeDialog inherits Window {
-    title: "Resize image";
+    title: "Resize and Skew";
     width: 340px;
     height: body.preferred-height + 2 * Win10.frame-width;
     always-on-top: true;
     default-font-family: "Selawik";
 
+    // Whether the resize fields are percentages of the current size or pixels.
+    in-out property <bool> by-percentage: true;
     // The fields are text so the user can clear them while typing; the entries
-    // are checked before anything is resized.
-    in-out property <string> width-text: "800";
-    in-out property <string> height-text: "600";
+    // are checked before anything is changed.
+    in-out property <string> horizontal-text: "100";
+    in-out property <string> vertical-text: "100";
+    // While on, a change to one resize field carries over to the other so the
+    // proportions stay.
+    in-out property <bool> keep-aspect: true;
+    in-out property <string> skew-horizontal-text: "0";
+    in-out property <string> skew-vertical-text: "0";
 
     callback accepted();
     callback cancelled();
+    // The percentage / pixels choice changed.
+    callback unit-changed();
+    // A resize field was typed into.
+    callback horizontal-edited();
+    callback vertical-edited();
 
     Rectangle {
         width: parent.width;
@@ -29,45 +104,78 @@ export component ResizeDialog inherits Window {
 
         body := VerticalLayout {
             padding: 14px;
-            spacing: 10px;
+            spacing: 12px;
 
-            HorizontalLayout {
-                spacing: 8px;
+            WinGroupBox {
+                title: "Resize";
+                height: 178px;
 
-                WinFieldLabel {
-                    text: "Width:";
-                    width: 60px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+                    height: 24px;
+
+                    WinFieldLabel {
+                        text: "By:";
+                        width: 28px;
+                    }
+                    WinRadio {
+                        text: "Percentage";
+                        checked: root.by-percentage;
+                        clicked => {
+                            if (!root.by-percentage) {
+                                root.by-percentage = true;
+                                root.unit-changed();
+                            }
+                        }
+                    }
+                    WinRadio {
+                        text: "Pixels";
+                        width: 80px;
+                        checked: !root.by-percentage;
+                        clicked => {
+                            if (root.by-percentage) {
+                                root.by-percentage = false;
+                                root.unit-changed();
+                            }
+                        }
+                    }
                 }
-                WinNumberBox {
-                    width: 90px;
-                    text <=> root.width-text;
+
+                AxisRow {
+                    caption: "Horizontal:";
+                    value <=> root.horizontal-text;
+                    edited => { root.horizontal-edited(); }
                     accepted => { root.accepted(); }
                 }
-                Text {
-                    text: "px";
-                    vertical-alignment: center;
-                    font-size: Win10.font-size;
-                    color: Win10.text-color;
+                AxisRow {
+                    caption: "Vertical:";
+                    vertical: true;
+                    value <=> root.vertical-text;
+                    edited => { root.vertical-edited(); }
+                    accepted => { root.accepted(); }
+                }
+
+                WinCheckBox {
+                    text: "Maintain aspect ratio";
+                    checked <=> root.keep-aspect;
                 }
             }
 
-            HorizontalLayout {
-                spacing: 8px;
+            WinGroupBox {
+                title: "Skew (Degrees)";
+                height: 124px;
 
-                WinFieldLabel {
-                    text: "Height:";
-                    width: 60px;
-                }
-                WinNumberBox {
-                    width: 90px;
-                    text <=> root.height-text;
+                AxisRow {
+                    caption: "Horizontal:";
+                    value <=> root.skew-horizontal-text;
                     accepted => { root.accepted(); }
                 }
-                Text {
-                    text: "px";
-                    vertical-alignment: center;
-                    font-size: Win10.font-size;
-                    color: Win10.text-color;
+                AxisRow {
+                    caption: "Vertical:";
+                    vertical: true;
+                    value <=> root.skew-vertical-text;
+                    accepted => { root.accepted(); }
                 }
             }
 

@@ -80,6 +80,12 @@ private:
     void do_commit_text(const std::string& text);
     void do_cancel_text();
     void refresh();
+    // Makes the canvas images that suit the view's zoom, with a quick version
+    // at once and the exact one once the zoom stops changing.
+    void apply_zoom(float zoom);
+    void rebuild_tiles();
+    // Tells the window how the images are laid out and drawn.
+    void publish_tile_style();
 
     // What the store holds: the window geometry and the settings the app
     // remembers, as one comparable set.
@@ -149,6 +155,11 @@ private:
     void ensure_resize_window();
     void close_resize_window();
 
+    // Puts a dialog in the middle of the main window. A dialog is a window of
+    // its own, so its place on screen comes from here. The size it has is only
+    // known once it is on screen, so call this after showing it.
+    void center_dialog(slint::Window& dialog) const;
+
     // File actions, each of which may ask a question first.
     enum class PendingAction { None, Exit, New, Open, OpenRecent };
 
@@ -183,10 +194,13 @@ private:
     // False, after saying so, when the system has no file dialog to show.
     bool ensure_file_dialogs();
 
-    // The canvas size dialog: the current size is offered, and only a size
-    // inside the canvas limits is applied.
+    // The Resize and Skew dialog: only a size inside the canvas limits and a
+    // shear the picture can take are applied.
     void do_open_resize_dialog();
     void do_resize_ok();
+    void do_resize_unit_changed();
+    // `from_horizontal` says which resize field was typed into.
+    void do_resize_link(bool from_horizontal);
 
     void show_message(const std::string& title, const std::string& text);
     // Pushes the file name and the unsaved marker into the window title.
@@ -200,6 +214,7 @@ private:
     AppWindow& m_window;
     AppController& m_controller;
     SlintBridge m_bridge;
+    slint::Timer m_zoom_timer;
     // The dialogs are windows of their own, made on first use and kept for the
     // life of the application.
     std::optional<slint::ComponentHandle<lsp_colors::EditColorsWindow>>
@@ -211,6 +226,9 @@ private:
             m_message_window;
     std::optional<slint::ComponentHandle<lsp_resize::ResizeDialog>>
             m_resize_window;
+    // The size the Resize and Skew percentages are of.
+    int m_resize_base_width = 0;
+    int m_resize_base_height = 0;
     // The settings the app carries from one run to the next, and the values it
     // was last given. An unopenable database leaves every setting at its default
     // and the app otherwise untouched.
@@ -226,6 +244,8 @@ private:
     std::shared_ptr<slint::VectorModel<slint::Color>> m_dialog_customs;
     slint::Timer m_ants_timer;
     int m_ant_phase = 0;
+    // What the outline on screen was last built from.
+    std::vector<float> m_ants_key;
     bool m_ants_visible = false;
     bool m_rotate_hover = false;
     bool m_rotate_active = false;

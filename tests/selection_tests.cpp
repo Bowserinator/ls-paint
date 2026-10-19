@@ -197,6 +197,44 @@ void test_paste_can_be_resized_before_it_lands() {
     CHECK(painted == 64);  // the block grew to the resized bounds
 }
 
+// A block larger than the canvas grows the canvas instead of being cut off.
+void test_paste_larger_than_canvas_grows_it() {
+    AppController app;
+    CanvasDocument& document = app.document();
+    document.active_layer().pixels.at(90, 45) = {10, 20, 30, 255};
+    document.selection().fill_rect({0, 0, 100, 50});
+    app.copy_selection();
+    app.clear_selection();
+    app.resize_canvas(40, 30, kWhite);
+    CHECK(document.width() == 40 && document.height() == 30);
+
+    app.paste_clipboard();
+    CHECK(document.width() == 100 && document.height() == 50);
+    CHECK(document.floating().has_value());
+    CHECK((document.selection().bounds() == RectI{0, 0, 100, 50}));
+
+    app.clear_selection();
+    CHECK((document.active_layer().pixels.at(90, 45) == Rgba8{10, 20, 30, 255}));
+
+    app.history().undo();  // undo applying it
+    app.history().undo();  // undo the paste, which also undoes the growth
+    CHECK(document.width() == 40 && document.height() == 30);
+    CHECK(!document.floating().has_value());
+}
+
+// Only the side the block overflows grows.
+void test_paste_taller_than_canvas_grows_only_height() {
+    AppController app;
+    CanvasDocument& document = app.document();
+    document.selection().fill_rect({0, 0, 20, 100});
+    app.copy_selection();
+    app.clear_selection();
+    app.resize_canvas(50, 30, kWhite);
+
+    app.paste_clipboard();
+    CHECK(document.width() == 50 && document.height() == 100);
+}
+
 void test_paste_without_a_clipboard_is_a_no_op() {
     AppController app;
     CanvasDocument& document = app.document();
@@ -927,6 +965,147 @@ void test_a_rotate_drag_that_never_moves_is_a_no_op() {
     CHECK((fixture.doc.active_layer().pixels == untouched));
 }
 
+// With the transparent selection on, the background color of the contents does
+// not paint where they land, so what was underneath shows through.
+void test_transparent_selection_leaves_the_background_color_out() {
+    for (const bool transparent : {false, true}) {
+        AppController app;
+        CanvasDocument& document = app.document();
+        app.set_transparent_selection(transparent);
+        document.active_layer().pixels.at(5, 5) = {0, 0, 0, 255};
+        document.active_layer().pixels.at(14, 4) = {200, 200, 200, 255};
+        document.selection().fill_rect({4, 4, 4, 4});
+
+        lift_contents(document.active_layer().pixels, document.selection(), document.floating(),
+                      {255, 255, 255, 255});
+        translate_contents(document.selection(), *document.floating(), 10, 0);
+        document.mark_dirty(document.bounds());
+        (void)document.flush();
+        // The picture on screen follows the option too, not only the commit.
+        CHECK((document.flattened().at(14, 4) ==
+               (transparent ? Rgba8{200, 200, 200, 255} : Rgba8{255, 255, 255, 255})));
+
+        app.context().commit_selection();
+        const PixelBuffer& pixels = document.active_layer().pixels;
+        CHECK((pixels.at(15, 5) == Rgba8{0, 0, 0, 255}));
+        CHECK((pixels.at(14, 4) == (transparent ? Rgba8{200, 200, 200, 255} : Rgba8{255, 255, 255, 255})));
+    }
+}
+
+void test_transparent_selection_follows_the_background_color() {
+    AppController app;
+    CHECK(!app.document().transparent_color().has_value());
+    app.set_transparent_selection(true);
+    CHECK((app.document().transparent_color() == Rgba8{255, 255, 255, 255}));
+    app.colors().secondary = {10, 20, 30, 255};
+    app.refresh_transparent_color();
+    CHECK((app.document().transparent_color() == Rgba8{10, 20, 30, 255}));
+    app.set_transparent_selection(false);
+    CHECK(!app.document().transparent_color().has_value());
+}
+
+void test_with_color_cleared_only_touches_that_color() {
+    PixelBuffer pixels(2, 1, {255, 255, 255, 255});
+    pixels.at(1, 0) = {1, 2, 3, 255};
+    const PixelBuffer cleared = with_color_cleared(pixels, {255, 255, 255, 255});
+    CHECK((cleared.at(0, 0) == kTransparent));
+    CHECK((cleared.at(1, 0) == Rgba8{1, 2, 3, 255}));
+    CHECK((pixels.at(0, 0) == Rgba8{255, 255, 255, 255}));
+}
+
+void test_resize_and_skew_the_whole_image_is_one_undo_step() {
+    AppController app;
+    CanvasDocument& document = app.document();
+    const int width = document.width();
+    const int height = document.height();
+
+    app.resize_and_skew(width / 2, height / 2, 0.0f, 0.0f, kWhite);
+    CHECK(document.width() == width / 2);
+    CHECK(document.height() == height / 2);
+    app.history().undo();
+    (void)document.flush();
+    CHECK(document.width() == width);
+    CHECK(document.height() == height);
+
+    app.resize_and_skew(width, height, 45.0f, 0.0f, kWhite);
+    CHECK(document.width() > width);
+    CHECK(document.height() == height);
+    app.history().undo();
+    (void)document.flush();
+    CHECK(document.width() == width);
+
+    app.resize_and_skew(width * 2, height, 0.0f, 30.0f, kWhite);
+    CHECK(document.width() == width * 2);
+    CHECK(document.height() > height);
+    app.history().undo();
+    (void)document.flush();
+    CHECK(document.width() == width);
+    CHECK(document.height() == height);
+}
+
+void test_resize_and_skew_without_a_change_is_a_no_op() {
+    AppController app;
+    app.resize_and_skew(app.document().width(), app.document().height(), 0.0f, 0.0f, kWhite);
+    CHECK(!app.history().is_modified());
+}
+
+void test_skewing_leans_each_row_by_its_height() {
+    PixelBuffer pixels(2, 3, {9, 9, 9, 255});
+    const PixelBuffer skewed = pixels.skewed_horizontal(45.0f, {1, 1, 1, 255});
+    CHECK(skewed.width() == 4);
+    CHECK(skewed.height() == 3);
+    CHECK((skewed.at(0, 0) == Rgba8{9, 9, 9, 255}));   // the top row stays put
+    CHECK((skewed.at(2, 0) == Rgba8{1, 1, 1, 255}));
+    CHECK((skewed.at(3, 2) == Rgba8{9, 9, 9, 255}));   // the bottom row is two to the right
+    CHECK((skewed.at(1, 2) == Rgba8{1, 1, 1, 255}));
+}
+
+void test_resizing_and_skewing_a_selection_works_on_its_contents() {
+    AppController app;
+    CanvasDocument& document = app.document();
+    document.selection().fill_rect({4, 4, 4, 4});
+
+    app.resize_and_skew(8, 8, 0.0f, 0.0f, kWhite);
+    CHECK((document.selection().bounds() == RectI{4, 4, 8, 8}));
+    CHECK(document.floating().has_value());
+    app.history().undo();
+    (void)document.flush();
+    CHECK((document.selection().bounds() == RectI{4, 4, 4, 4}));
+    CHECK(!document.floating().has_value());
+
+    app.resize_and_skew(8, 4, 45.0f, 0.0f, kWhite);
+    CHECK(document.selection().bounds().width > 8);
+    CHECK(document.selection().bounds().height == 4);
+    app.history().undo();
+    (void)document.flush();
+    CHECK((document.selection().bounds() == RectI{4, 4, 4, 4}));
+    CHECK(!document.floating().has_value());
+}
+
+void test_invert_colors_stays_inside_the_selection() {
+    AppController app;
+    CanvasDocument& document = app.document();
+    document.active_layer().pixels.at(5, 5) = {10, 20, 30, 255};
+    document.selection().fill_rect({4, 4, 4, 4});
+
+    app.invert_colors();
+    CHECK((document.active_layer().pixels.at(5, 5) == Rgba8{245, 235, 225, 255}));
+    CHECK((document.active_layer().pixels.at(4, 4) == Rgba8{0, 0, 0, 255}));
+    CHECK((document.active_layer().pixels.at(20, 20) == Rgba8{255, 255, 255, 255}));
+    app.history().undo();
+    CHECK((document.active_layer().pixels.at(5, 5) == Rgba8{10, 20, 30, 255}));
+    CHECK((document.active_layer().pixels.at(4, 4) == Rgba8{255, 255, 255, 255}));
+}
+
+void test_invert_colors_without_a_selection_takes_the_whole_layer() {
+    AppController app;
+    CanvasDocument& document = app.document();
+    app.invert_colors();
+    CHECK((document.active_layer().pixels.at(0, 0) == Rgba8{0, 0, 0, 255}));
+    CHECK((document.active_layer().pixels.at(document.width() - 1, document.height() - 1) ==
+           Rgba8{0, 0, 0, 255}));
+}
+
 int main() {
     test_degenerate_marquee_leaves_canvas_paintable();
     test_fewer_than_three_polygon_points_leaves_no_selection();
@@ -936,6 +1115,8 @@ int main() {
     test_cut_copy_paste_round_trip();
     test_paste_hovers_and_can_move_before_it_lands();
     test_paste_can_be_resized_before_it_lands();
+    test_paste_larger_than_canvas_grows_it();
+    test_paste_taller_than_canvas_grows_only_height();
     test_paste_without_a_clipboard_is_a_no_op();
     test_paste_landing_entirely_off_canvas_is_a_no_op();
     test_rotate_selection_contents_keeps_the_mask_aligned();
@@ -967,6 +1148,15 @@ int main() {
     test_a_rotate_drag_that_never_moves_is_a_no_op();
     test_freehand_gesture_publishes_its_path();
     test_polygon_gesture_previews_and_escape_abandons_it();
+    test_transparent_selection_leaves_the_background_color_out();
+    test_transparent_selection_follows_the_background_color();
+    test_with_color_cleared_only_touches_that_color();
+    test_resize_and_skew_the_whole_image_is_one_undo_step();
+    test_resize_and_skew_without_a_change_is_a_no_op();
+    test_skewing_leans_each_row_by_its_height();
+    test_resizing_and_skewing_a_selection_works_on_its_contents();
+    test_invert_colors_stays_inside_the_selection();
+    test_invert_colors_without_a_selection_takes_the_whole_layer();
 
     std::printf(failures == 0 ? "ALL OK\n" : "%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;

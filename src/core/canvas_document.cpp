@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <utility>
 
-#include "core/compositor.hpp"
-
 namespace lsp {
 
 namespace {
@@ -20,7 +18,7 @@ std::vector<PixelBuffer> map_layers(const LayerStack& layers, MakeFn make) {
 
 }  // namespace
 
-CanvasDocument::CanvasDocument(int width, int height) : m_flattened(width, height), m_selection(width, height) {
+CanvasDocument::CanvasDocument(int width, int height) : m_selection(width, height) {
     m_layers.add({"Background", PixelBuffer(width, height, kWhite)});
     mark_dirty(bounds());
 }
@@ -29,14 +27,31 @@ void CanvasDocument::mark_dirty(RectI region) {
     m_dirty = m_dirty.united(region.intersected(bounds()));
 }
 
+void CanvasDocument::set_transparent_color(std::optional<Rgba8> color) {
+    if (color == m_transparent_color) return;
+    m_transparent_color = color;
+    if (m_floating) mark_dirty(bounds());
+}
+
+const PixelBuffer& CanvasDocument::flattened() const noexcept {
+    // A block that has not been flushed yet is not in the picture either.
+    return m_floating && m_with_floating.width() > 0 ? m_with_floating : base();
+}
+
 std::optional<RectI> CanvasDocument::flush() {
     if (m_dirty.empty()) return std::nullopt;
     const RectI region = m_dirty;
     m_dirty = {};
-    composite(m_layers, region, m_flattened);
-    // Whatever is floating is painted over the freshly composited pixels, so a
-    // layer edit under the float still ends up showing the float on top.
-    if (m_floating) draw_floating(m_flattened, *m_floating, region);
+    if (!m_floating) {
+        m_with_floating = {};
+        return region;
+    }
+    // Starting from the layer's own bands, only the bands the block reaches are
+    // ever copied. Whatever the block covered before is put back from the layer
+    // first, so a block that moved leaves nothing behind.
+    if (m_with_floating.width() == 0) m_with_floating = base();
+    m_with_floating.copy_region_from(base(), region);
+    draw_floating(m_with_floating, *m_floating, region, m_transparent_color);
     return region;
 }
 
@@ -45,8 +60,7 @@ std::vector<PixelBuffer> CanvasDocument::snapshot() const {
 }
 
 void CanvasDocument::rebuild_flattened() {
-    const PixelBuffer& base = m_layers.at(0).pixels;
-    m_flattened = PixelBuffer(base.width(), base.height());
+    m_with_floating = {};
     m_dirty = {};
     mark_dirty(bounds());
 }
@@ -87,6 +101,20 @@ void CanvasDocument::crop_to(RectI region) {
     region = region.intersected(bounds());
     if (region.empty()) return;
     restore(map_layers(m_layers, [region](const PixelBuffer& pixels) { return pixels.copy_region(region); }));
+}
+
+void CanvasDocument::scale(int width, int height) {
+    restore(map_layers(m_layers, [width, height](const PixelBuffer& pixels) { return pixels.scaled(width, height); }));
+}
+
+void CanvasDocument::skew(float horizontal_degrees, float vertical_degrees, Rgba8 fill) {
+    std::vector<PixelBuffer> skewed;
+    for (const Layer& layer : m_layers.layers()) {
+        const Rgba8 uncovered = skewed.empty() ? fill : kTransparent;
+        skewed.push_back(layer.pixels.skewed_horizontal(horizontal_degrees, uncovered)
+                             .skewed_vertical(vertical_degrees, uncovered));
+    }
+    restore(std::move(skewed));
 }
 
 void CanvasDocument::rotate(Rotation rotation) {

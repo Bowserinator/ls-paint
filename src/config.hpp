@@ -29,6 +29,8 @@ inline constexpr int kCoverageChunkSize = 256;
 // The canvas is shown as squares of this many pixels a side, so a brush stroke
 // only refreshes the squares it touched.
 inline constexpr int kDisplayTileSize = 512;
+// How long the zoom must hold still before the canvas is resampled exactly.
+inline constexpr int kZoomSettleMilliseconds = 120;
 
 // The application's name, which is also the name of its config folder.
 inline constexpr std::string_view kAppId = "ls_paint";

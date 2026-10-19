@@ -11,8 +11,9 @@ export global Styles {
     // gap under the buttons.
     out property<length> bar-dropdown-gap: 0px;
     // The line every dropdown opens on, measured inside the ribbon group: the
-    // buttons' bottom edge (the row height less its padding) plus that gap.
-    out property<length> bar-dropdown-y: bar-button-height - bar-padding + bar-dropdown-gap + 8px;
+    // buttons' bottom edge (the row height less its padding) plus that gap, less
+    // the lift the shorter ribbon brought.
+    out property<length> bar-dropdown-y: bar-button-height - bar-padding + bar-dropdown-gap - 4px;
     out property<length> bar-vertical-btn-width: 54px;
 
     // Ribbon overflow. A group merges into a single dropdown button once the

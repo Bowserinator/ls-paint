@@ -18,8 +18,8 @@ FetchContent_Declare(
 
 set(SLINT_FEATURE_INTERPRETER OFF CACHE BOOL "" FORCE)
 set(SLINT_FEATURE_LIVE_PREVIEW OFF CACHE BOOL "" FORCE)
-set(SLINT_FEATURE_RENDERER_FEMTOVG OFF CACHE BOOL "" FORCE)
-set(SLINT_FEATURE_RENDERER_SOFTWARE ON CACHE BOOL "" FORCE)
+set(SLINT_FEATURE_RENDERER_FEMTOVG ON CACHE BOOL "" FORCE)
+set(SLINT_FEATURE_RENDERER_SOFTWARE OFF CACHE BOOL "" FORCE)
 set(SLINT_FEATURE_RENDERER_SKIA OFF CACHE BOOL "" FORCE)
 
 # Compile @image-url assets into the binary instead of reading them from disk
@@ -52,6 +52,8 @@ add_subdirectory(third_party/clip)
 add_library(sqlite3 STATIC third_party/sqlite3/sqlite3.c)
 target_include_directories(sqlite3 SYSTEM PUBLIC ${CMAKE_SOURCE_DIR}/third_party/sqlite3)
 
+find_package(Threads REQUIRED)
+
 # Everything that does not touch Slint, so tests can link it without the GUI.
 add_library(lsp_core STATIC
     src/app/app_controller.cpp
@@ -74,6 +76,7 @@ add_library(lsp_core STATIC
     src/io/clipboard.cpp
     src/io/document_io.cpp
     src/io/stb_impl.cpp
+    src/render/tile_resample.cpp
     src/selection/selection_mask.cpp
     src/selection/selection_ops.cpp
     src/store/store_sqlite.cpp
@@ -87,8 +90,10 @@ add_library(lsp_core STATIC
     src/tools/text_tool.cpp
     src/tools/tool_registry.cpp
     src/ui/shortcuts.cpp
+    src/utils/parallel.cpp
 )
 target_include_directories(lsp_core PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(lsp_core PUBLIC Threads::Threads)
 target_link_libraries(lsp_core PRIVATE clip sqlite3)
 # The text tool rasterizes glyphs with stb_truetype and reads the bundled
 # DejaVu faces; the image formats come from the same headers. SYSTEM keeps the

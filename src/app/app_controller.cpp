@@ -82,6 +82,43 @@ void AppController::flip_vertical() {
     edit_geometry([&] { m_document.flip_vertical(); });
 }
 
+void AppController::resize_and_skew(int width, int height, float horizontal_degrees,
+                                    float vertical_degrees, Rgba8 fill) {
+    if (width <= 0 || height <= 0) return;
+    const bool skewed = horizontal_degrees != 0.0f || vertical_degrees != 0.0f;
+
+    if (m_document.selection().active()) {
+        const RectI bounds = m_document.selection().bounds();
+        const Rgba8 vacated = m_colors.ink(PointerButton::Secondary);
+        SelectionEdit edit;
+        // Both steps work on the floating contents, so together they undo as one.
+        auto absorb = [&edit](SelectionEdit step) {
+            if (step.empty()) return;
+            if (edit.empty()) {
+                edit = std::move(step);
+                return;
+            }
+            edit.mask_after = std::move(step.mask_after);
+            edit.float_after = std::move(step.float_after);
+        };
+        if (width != bounds.width || height != bounds.height)
+            absorb(scale_contents(m_document.active_layer().pixels, m_document.selection(),
+                                  m_document.floating(), width, height, vacated));
+        if (skewed)
+            absorb(skew_contents(m_document.active_layer().pixels, m_document.selection(),
+                                 m_document.floating(), horizontal_degrees, vertical_degrees, vacated));
+        push_selection_edit(std::move(edit));
+        return;
+    }
+
+    const bool resized = width != m_document.width() || height != m_document.height();
+    if (!resized && !skewed) return;
+    edit_geometry([&] {
+        if (resized) m_document.scale(width, height);
+        if (skewed) m_document.skew(horizontal_degrees, vertical_degrees, fill);
+    });
+}
+
 // Whole-image geometry always ends deselected: the mask belongs to the old
 // geometry, so only undo has anything to put back.
 void AppController::push_geometry_edit(std::vector<PixelBuffer> before, SelectionMask selection_before) {
@@ -125,20 +162,15 @@ void AppController::clear_selection() {
     m_document.selection().clear();
 }
 
-void AppController::make_selection_transparent() {
-    commit_selection_contents();
-    const SelectionMask& selection = m_document.selection();
-    const RectI region = selection.active() ? selection.bounds() : m_document.bounds();
-    if (region.empty()) return;
+void AppController::set_transparent_selection(bool on) {
+    m_transparent_selection = on;
+    refresh_transparent_color();
+}
 
-    const std::size_t layer_index = m_document.layers().active_index();
-    PixelBuffer& pixels = m_document.active_layer().pixels;
-    const PixelBuffer before = pixels;
-    make_transparent(pixels, selection, region);
-    m_document.mark_dirty(region);
-    PixelDelta delta = PixelDelta::between(before, pixels, region);
-    if (delta.empty()) return;
-    m_history.push(std::make_unique<PaintStrokeCommand>(layer_index, std::move(delta)));
+void AppController::refresh_transparent_color() {
+    m_document.set_transparent_color(
+        m_transparent_selection ? std::optional<Rgba8>(m_colors.ink(PointerButton::Secondary))
+                                : std::nullopt);
 }
 
 void AppController::push_selection_edit(SelectionEdit edit) {
@@ -175,9 +207,37 @@ void AppController::delete_selection_contents() {
                                        m_colors.ink(PointerButton::Secondary)));
 }
 
+void AppController::invert_colors() {
+    commit_selection_contents();
+    const SelectionMask& selection = m_document.selection();
+    const RectI region = selection.active() ? selection.bounds().intersected(m_document.bounds())
+                                            : m_document.bounds();
+    if (region.empty()) return;
+
+    const std::size_t layer_index = m_document.layers().active_index();
+    PixelBuffer& pixels = m_document.active_layer().pixels;
+    const PixelBuffer before = pixels;
+    lsp::invert_colors(pixels, selection, region);
+    m_document.mark_dirty(region);
+    PixelDelta delta = PixelDelta::between(before, pixels, region);
+    if (delta.empty()) return;
+    m_history.push(std::make_unique<PaintStrokeCommand>(layer_index, std::move(delta)));
+}
+
 void AppController::paste_clipboard() {
     if (m_clipboard.empty()) return;
     commit_selection_contents();
+
+    // A block the canvas cannot hold grows the canvas, as pasting an image does.
+    const int width = std::max(m_document.width(), m_clipboard.width);
+    const int height = std::max(m_document.height(), m_clipboard.height);
+    if (width != m_document.width() || height != m_document.height()) {
+        edit_geometry([&] {
+            m_document.resize(width, height, kWhite);
+            install_floating(float_block(m_clipboard.pixels, m_clipboard.mask, 0, 0));
+        });
+        return;
+    }
 
     // The block hovers over the canvas until the paste is applied, so the
     // pixels it covers are left alone for now.
@@ -252,9 +312,18 @@ IoResult AppController::copy_to_clipboard() {
     (void)m_document.flush();
     const RectI region = copy_source_rect();
     if (region.empty()) return IoResult::failure("There is nothing to copy");
-    if (!Clipboard::set_image(m_document.flattened(), region))
+    // Other programs only see the picture, so the background color is made
+    // transparent in it.
+    m_system_copy = m_document.flattened().copy_region(region);
+    if (m_transparent_selection)
+        m_system_copy = with_color_cleared(m_system_copy, m_colors.ink(PointerButton::Secondary));
+    if (!Clipboard::set_image(m_system_copy, m_system_copy.bounds()))
         return IoResult::failure("The system clipboard is not available");
     return IoResult::success();
+}
+
+bool AppController::is_own_copy(const PixelBuffer& image) const {
+    return !m_clipboard.empty() && (image == m_clipboard.pixels || image == m_system_copy);
 }
 
 IoResult AppController::paste_from_clipboard() {

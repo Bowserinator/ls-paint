@@ -97,8 +97,8 @@ struct ToolContext {
     void commit_selection() {
         if (!document.floating()) return;
         const std::size_t layer_index = document.layers().active_index();
-        SelectionEdit edit =
-            commit_contents(document.active_layer().pixels, document.selection(), document.floating());
+        SelectionEdit edit = commit_contents(document.active_layer().pixels, document.selection(),
+                                             document.floating(), document.transparent_color());
         if (edit.empty()) return;
         document.mark_dirty(edit.region);
         history.push(make_selection_edit(layer_index, std::move(edit)));

@@ -48,20 +48,35 @@ public:
     void rotate(CanvasDocument::Rotation rotation);
     void flip_horizontal();
     void flip_vertical();
+    // Stretches the selection's contents to `width` x `height` and then shears
+    // them, or does the same to the whole image when nothing is selected. The
+    // two are one undo step. `fill` shows where a shear leaves the image bare.
+    void resize_and_skew(int width, int height, float horizontal_degrees, float vertical_degrees,
+                         Rgba8 fill);
 
     void select_all();
     void invert_selection();
     void clear_selection();
-    void make_selection_transparent();
+    // With this on, the background color does not paint when selection contents
+    // are placed or copied: what is under them shows through instead.
+    void set_transparent_selection(bool on);
+    [[nodiscard]] bool transparent_selection() const noexcept { return m_transparent_selection; }
+    // Re-reads the background color the transparent selection leaves out.
+    void refresh_transparent_color();
 
     // Selection content clipboard (cut/copy/paste/delete and friends). All of
     // these act on the active layer inside the current selection.
     void copy_selection();
     void cut_selection();
     void delete_selection_contents();
+    // Inverts the colors inside the selection, or of the whole layer when
+    // nothing is selected.
+    void invert_colors();
     void paste_clipboard();
     void transform_selection_contents(ContentTransform transform);
     [[nodiscard]] const ClipboardContent& clipboard() const noexcept { return m_clipboard; }
+    // Whether `image` is what the last copy put on the system clipboard.
+    [[nodiscard]] bool is_own_copy(const PixelBuffer& image) const;
     // Drops a block that is still hovering: the paste or lift never landed, so
     // nothing is written to the layer and no undo step is recorded.
     bool discard_floating();
@@ -109,6 +124,8 @@ private:
     Brush m_brush;
     ColorPair m_colors;
     ClipboardContent m_clipboard;
+    PixelBuffer m_system_copy;
+    bool m_transparent_selection = false;
     SelectionShape m_selection_shape = SelectionShape::Rectangular;
     // Declared before m_context: it binds references to these.
     ShapeOptions m_shape_options;
