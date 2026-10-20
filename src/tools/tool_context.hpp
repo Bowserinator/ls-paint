@@ -58,12 +58,23 @@ struct RotatePreview {
     bool rotating = false;
 };
 
+// The pointer shape that goes with a resize grip, by the line the grip drags
+// along.
+enum class ResizeCursor { None, Horizontal, Vertical, DiagonalNwSe, DiagonalNeSw };
+
+// What the selection tool tells the UI about resizing: the shape the pointer
+// takes over a grip, or while a resize drag runs.
+struct ResizePreview {
+    ResizeCursor cursor = ResizeCursor::None;
+};
+
 // What the active tool tells the UI about a gesture that is still running.
 struct ToolUiState {
     ShapePreview shape;
     TextOverlayState text;
     SelectionPreview selection;
     RotatePreview rotate;
+    ResizePreview resize;
 };
 
 // The active layer as a raster target that the selection holds back.
@@ -89,6 +100,9 @@ struct ToolContext {
 
     // Shift held during the pointer event being handled.
     bool shift = false;
+
+    // Screen pixels per document pixel of the view the pointer works in.
+    float zoom = 1.0f;
 
     // Applies a floating selection: the contents are stamped into the layer and
     // the background color they were lifted with becomes real pixels. Anything

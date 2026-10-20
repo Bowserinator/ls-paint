@@ -586,7 +586,8 @@ export component HomeBar inherits Bar {
             GridLayout {
                 visible: !collapsed-tools;
                 width: collapsed-tools ? 0px : Styles.ribbon-width-tools - 2 * Styles.ribbon-group-padding;
-                spacing: Styles.bar-padding;
+                spacing-horizontal: Styles.ribbon-tools-column-gap;
+                spacing-vertical: Styles.bar-padding;
                 padding-top: Styles.bar-padding;
 
                 Row {

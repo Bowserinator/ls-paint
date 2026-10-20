@@ -46,7 +46,12 @@ export global Styles {
     out property<length> ribbon-shape-mode-width: 90px;
     out property<length> ribbon-width-clipboard: 122px;
     out property<length> ribbon-width-image: 138px;
-    out property<length> ribbon-width-tools: 96px;
+    // The Tools group: three columns of buttons, set closer together than its
+    // two rows, with the group's own padding on both sides.
+    out property<length> ribbon-tools-column-gap: 2px;
+    out property<length> ribbon-width-tools:
+        3 * (bar-small-icon-size + 2 * bar-padding) + 2 * ribbon-tools-column-gap
+            + 2 * ribbon-group-padding;
     out property<length> ribbon-width-brushes: 68px;
     // The Shapes group holds eight columns of glyphs, the buttons beside them
     // and the group's own padding on both sides; one column less is one cell

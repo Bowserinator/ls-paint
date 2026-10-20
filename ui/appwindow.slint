@@ -5,10 +5,9 @@ import { Styles } from "styles.slint";
 import { CanvasResizeHandle } from "components/canvas-resize-handle.slint";
 import { CanvasMenuItem, CanvasMenuDivider, CanvasMenuFrame } from "components/canvas-menu.slint";
 import { CanvasRuler } from "components/canvas-ruler.slint";
-import { CanvasShadow } from "components/canvas-shadow.slint";
 import { CanvasCursor } from "components/canvas-cursor.slint";
 
-import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ToolOptions, ViewArea } from "globals.slint";
+import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ResizeOverlay, EResizeCursor, ToolOptions, ViewArea } from "globals.slint";
 export * from "globals.slint";
 
 import "../assets/weblysleek/weblysleekuil.ttf";
@@ -35,6 +34,23 @@ component RotateBadge inherits Rectangle {
               : root.corner == ERotateCorner.SE ? @image-url("../icons/rotate/rotate-se.png")
               : root.corner == ERotateCorner.SW ? @image-url("../icons/rotate/rotate-sw.png")
               : @image-url("../icons/rotate/rotate-ne.png");
+    }
+}
+
+// The badge shown at the pointer over a resize grip: a double arrow lying along
+// the line the grip drags.
+component ResizeBadge inherits Rectangle {
+    in property <EResizeCursor> shape: EResizeCursor.HORIZONTAL;
+    width: 24px;
+    height: 24px;
+
+    Image {
+        width: 24px;
+        height: 24px;
+        source: root.shape == EResizeCursor.VERTICAL ? @image-url("../icons/resize/resize-vertical.png")
+              : root.shape == EResizeCursor.NWSE ? @image-url("../icons/resize/resize-nwse.png")
+              : root.shape == EResizeCursor.NESW ? @image-url("../icons/resize/resize-nesw.png")
+              : @image-url("../icons/resize/resize-horizontal.png");
     }
 }
 
@@ -347,17 +363,6 @@ export component AppWindow inherits Window {
                     viewport-width: corner-handle.x + corner-handle.width + root.canvas-origin;
                     viewport-height: corner-handle.y + corner-handle.height + root.canvas-origin;
 
-                    // Fake drop shadow: stacked translucent frames around the
-                    // paper, deepest where they overlap next to the page.
-                    for layer in [9.0, 6.0, 4.0, 2.5] : CanvasShadow {
-                        x: root.canvas-origin - layer * 1px;
-                        y: root.canvas-origin - layer * 1px;
-                        width: root.canvas-w + 2.0 * layer * 1px;
-                        height: root.canvas-h + 2.5 * layer * 1px;
-                        spread: layer * 1px;
-                        drop: 1.5 * layer * 1px;
-                    }
-
                     // Ctrl+wheel over the gray around the paper zooms too, around
                     // the cursor like it does over the paper. Hovering here
                     // means the cursor is off the paper, which the status
@@ -388,6 +393,9 @@ export component AppWindow inherits Window {
                         width: root.canvas-w;
                         height: root.canvas-h;
                         background: transparent;
+                        drop-shadow-blur: 12px;
+                        drop-shadow-offset-y: 4px;
+                        drop-shadow-color: rgba(0, 0, 0, 0.28);
 
                         canvas-menu := PopupWindow {
                             x: root.menu-x;
@@ -507,6 +515,7 @@ export component AppWindow inherits Window {
                             // the pointer takes the cursor's place, so the system
                             // one is turned off while it shows.
                             mouse-cursor: (RotateOverlay.hover || RotateOverlay.rotating
+                                || ResizeOverlay.cursor != EResizeCursor.NONE
                                 || root.custom-cursor) ? MouseCursor.none : MouseCursor.default;
 
                             pointer-event(event) => {
@@ -839,9 +848,18 @@ export component AppWindow inherits Window {
                                 ? ERotateCorner.NE : ERotateCorner.SE);
                     }
 
+                    // The badge at the pointer, while it is over a resize grip.
+                    if UserState.selected-tool == ETool.SELECTION && UserState.cursor-on-canvas
+                        && ResizeOverlay.cursor != EResizeCursor.NONE : ResizeBadge {
+                        x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12px;
+                        y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12px;
+                        shape: ResizeOverlay.cursor;
+                    }
+
                     // The outline of the tip and the crosshair, over everything on
                     // the paper except the rotate badge's own pointer.
                     if UserState.cursor-on-canvas && root.custom-cursor
+                        && ResizeOverlay.cursor == EResizeCursor.NONE
                         && !(UserState.selected-tool == ETool.SELECTION
                             && (RotateOverlay.hover || RotateOverlay.rotating)) : CanvasCursor {
                         x: 0px;

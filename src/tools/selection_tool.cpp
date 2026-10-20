@@ -17,7 +17,8 @@ namespace {
 // A click this close to the polygon's first vertex closes the lasso.
 constexpr float kClosePolygonDistance = 6.0f;
 
-// How close a press has to be to a grip to take it.
+// How close, in screen pixels, a pointer has to be to a grip to take it: the
+// reach of the grip as drawn, whatever the zoom.
 constexpr float kHandleHitRadius = 3.5f;
 
 // How far from a corner a press still starts a turn, the steps Shift snaps a
@@ -41,22 +42,49 @@ RectI marquee_rect(Point2f a, Point2f b) {
     return rect_from_corners(a, b);
 }
 
-std::optional<SelectionHandle> handle_at(RectI bounds, Point2f position) {
+std::optional<SelectionHandle> handle_at(RectI bounds, Point2f position, float zoom) {
     if (bounds.width < kMinHandleSpan || bounds.height < kMinHandleSpan) return std::nullopt;
     for (const SelectionHandle handle : kSelectionHandles)
-        if (distance(handle_anchor(bounds, handle), position) <= kHandleHitRadius) return handle;
+        if (distance(handle_anchor(bounds, handle), position) * zoom <= kHandleHitRadius) return handle;
     return std::nullopt;
 }
 
 // True when a press at `position` would start a turn: near a corner, but not on
 // a resize grip or inside the selection, which take the press first.
-bool in_rotate_zone(RectI bounds, Point2f position) {
-    if (handle_at(bounds, position) || bounds.contains(position)) return false;
+bool in_rotate_zone(RectI bounds, Point2f position, float zoom) {
+    if (handle_at(bounds, position, zoom) || bounds.contains(position)) return false;
     constexpr std::array kCorners{SelectionHandle::Nw, SelectionHandle::Ne, SelectionHandle::Se,
                                   SelectionHandle::Sw};
     for (const SelectionHandle corner : kCorners)
         if (distance(handle_anchor(bounds, corner), position) <= kRotateHitRadius) return true;
     return false;
+}
+
+ResizeCursor resize_cursor_for(SelectionHandle handle) {
+    switch (handle) {
+        case SelectionHandle::N:
+        case SelectionHandle::S: return ResizeCursor::Vertical;
+        case SelectionHandle::E:
+        case SelectionHandle::W: return ResizeCursor::Horizontal;
+        case SelectionHandle::Nw:
+        case SelectionHandle::Se: return ResizeCursor::DiagonalNwSe;
+        case SelectionHandle::Ne:
+        case SelectionHandle::Sw: break;
+    }
+    return ResizeCursor::DiagonalNeSw;
+}
+
+// Records whether a press at the pointer would grab a grip, so the UI can show
+// the pointer for it.
+void update_resize_hover(ToolContext& context, Point2f position) {
+    const SelectionMask& selection = context.document.selection();
+    const RectI bounds = selection.bounds();
+    context.ui.resize.cursor = ResizeCursor::None;
+    if (!selection.active() || bounds.empty()) return;
+    // The turn pointer owns the space around a corner.
+    if (context.ui.rotate.hover) return;
+    if (const std::optional<SelectionHandle> handle = handle_at(bounds, position, context.zoom))
+        context.ui.resize.cursor = resize_cursor_for(*handle);
 }
 
 // Records whether a press at the pointer would start a turn, so the UI can
@@ -65,7 +93,7 @@ void update_rotate_hover(ToolContext& context, Point2f position) {
     const SelectionMask& selection = context.document.selection();
     const RectI bounds = selection.bounds();
     context.ui.rotate.hover =
-        selection.active() && !bounds.empty() && in_rotate_zone(bounds, position);
+        selection.active() && !bounds.empty() && in_rotate_zone(bounds, position, context.zoom);
 }
 
 Point2f rect_centre(RectI bounds) {
@@ -149,6 +177,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
     // it away, and a press that starts a turn raises it again.
     context.ui.rotate.hover = false;
     context.ui.rotate.rotating = false;
+    context.ui.resize = {};
     if (button == PointerButton::Secondary) return;  // reserved for the context menu
 
     const SelectionShape shape = context.shape;
@@ -170,9 +199,10 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
     if (selection.active() && !bounds.empty()) {
         // The grips sit on the border, which is also inside the selection, so
         // they win over "drag the contents around".
-        if (const std::optional<SelectionHandle> handle = handle_at(bounds, position)) {
+        if (const std::optional<SelectionHandle> handle = handle_at(bounds, position, context.zoom)) {
             m_drag = Drag::Resize;
             m_handle = *handle;
+            context.ui.resize.cursor = resize_cursor_for(*handle);
             m_resize_bounds = bounds;
             m_resize_applied = bounds;
             m_mask_before = selection;
@@ -194,7 +224,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
 
         // Just outside a corner the press starts a turn instead of a new
         // marquee.
-        if (in_rotate_zone(bounds, position)) {
+        if (in_rotate_zone(bounds, position, context.zoom)) {
             m_mask_before = selection;
             m_float_before = context.document.floating();
             m_rotate_centre = rotate_pivot(bounds, m_float_before);
@@ -232,6 +262,11 @@ void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
         update_rotate_hover(context, position);
     else
         context.ui.rotate.hover = false;
+
+    if (m_drag == Drag::None && m_polygon.empty())
+        update_resize_hover(context, position);
+    else if (m_drag != Drag::Resize)
+        context.ui.resize = {};
 
     if (m_drag == Drag::Contents) {
         const int dx = round_to_int(position.x - m_contents_start.x);
@@ -351,11 +386,16 @@ void SelectionTool::finish_resize_drag(ToolContext& context, Point2f position) {
 
     context.document.mark_dirty(context.document.bounds());
     m_drag = Drag::None;
+    update_resize_hover(context, position);
 }
 
 void SelectionTool::rotate_to(ToolContext& context, Point2f position) {
     float degrees = wrap_degrees(bearing_degrees(m_rotate_centre, position) - m_rotate_angle_start);
-    if (context.shift) degrees = wrap_degrees(std::round(degrees / kRotateStepDegrees) * kRotateStepDegrees);
+    if (context.shift) {
+        // Snap the angle the contents end up at, not the turn made in this drag.
+        const float held = m_float_before ? m_float_before->rotation : 0.0f;
+        degrees = wrap_degrees(std::round((held + degrees) / kRotateStepDegrees) * kRotateStepDegrees - held);
+    }
     if (degrees == m_rotate_degrees) return;
     m_rotate_degrees = degrees;
 
@@ -398,6 +438,7 @@ bool SelectionTool::on_cancel(ToolContext& context) {
     context.document.floating() = std::move(m_float_before);
     context.document.mark_dirty(context.document.bounds());
     context.ui.rotate = {};
+    context.ui.resize = {};
     context.ui.selection.points.clear();
     m_polygon.clear();
     m_drag = Drag::None;
@@ -412,6 +453,7 @@ void SelectionTool::on_deactivate(ToolContext& context) {
         return;
     }
     context.ui.rotate = {};
+    context.ui.resize = {};
 }
 
 void SelectionTool::push_drag_edit(ToolContext& context) {

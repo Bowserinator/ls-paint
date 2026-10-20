@@ -3,6 +3,7 @@ export enum ETool {
     PENCIL, BRUSH, FILL, SHAPE, TEXT, ERASER, DROPPER, MAGNIFY
 }
 export enum ESelectionType { RECTANGULAR, FREEHAND, POLYGON }
+export enum EResizeCursor { NONE, HORIZONTAL, VERTICAL, NWSE, NESW }
 export enum ERotation { CW90, CCW90, R180 }
 export enum EContentTransform { ROTATE_CW90, ROTATE_CCW90, ROTATE_180, FLIP_HORIZONTAL, FLIP_VERTICAL }
 
@@ -340,6 +341,11 @@ export global FontStyle {
 export global RotateOverlay {
     in-out property <bool> hover: false;
     in-out property <bool> rotating: false;
+}
+
+// The pointer shape the selection tool asks for over a resize grip.
+export global ResizeOverlay {
+    in-out property <EResizeCursor> cursor: EResizeCursor.NONE;
 }
 
 // The text box being edited. The content is written by the editor, and the

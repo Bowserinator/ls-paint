@@ -285,6 +285,17 @@ ContentTransform transform_from_slint(EContentTransform transform) {
     return ContentTransform::RotateCw90;
 }
 
+EResizeCursor resize_cursor_to_slint(ResizeCursor cursor) {
+    switch (cursor) {
+        case ResizeCursor::Horizontal: return EResizeCursor::HORIZONTAL;
+        case ResizeCursor::Vertical: return EResizeCursor::VERTICAL;
+        case ResizeCursor::DiagonalNwSe: return EResizeCursor::NWSE;
+        case ResizeCursor::DiagonalNeSw: return EResizeCursor::NESW;
+        case ResizeCursor::None: break;
+    }
+    return EResizeCursor::NONE;
+}
+
 ToolId tool_from_slint(ETool tool) {
     switch (tool) {
         case ETool::SELECTION: return ToolId::Selection;
@@ -473,6 +484,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
         m_last_press = now;
         m_last_press_position = {x, y};
 
+        m_controller.context().zoom = m_window.global<UserState>().get_zoom();
         m_controller.input().pointer_down(tool, {x, y},
                                           secondary ? PointerButton::Secondary : PointerButton::Primary);
         if (double_click) m_controller.input().double_click(tool);
@@ -486,12 +498,14 @@ UiState::UiState(AppWindow& window, AppController& controller)
     });
 
     m_window.global<UserState>().on_pointer_move([this](float x, float y, bool shift) {
+        m_controller.context().zoom = m_window.global<UserState>().get_zoom();
         m_controller.input().pointer_move(
             tool_from_slint(m_window.global<UserState>().get_selected_tool()), {x, y}, shift);
         refresh();
     });
 
     m_window.global<UserState>().on_pointer_up([this](float x, float y, bool secondary) {
+        m_controller.context().zoom = m_window.global<UserState>().get_zoom();
         m_controller.input().pointer_up(
             {x, y}, secondary ? PointerButton::Secondary : PointerButton::Primary);
         refresh();
@@ -1387,6 +1401,13 @@ void UiState::update_ants() {
     // from the path the tool has published so far.
     const SelectionPreview& preview = m_controller.tool_ui().selection;
     const bool drawing = preview.points.size() >= 2;
+
+    // The grip pointer only makes sense while there is a selection to grip.
+    const bool gripping = visible && m_window.global<UserState>().get_selected_tool() == ETool::SELECTION;
+    auto& resize_state = m_window.global<ResizeOverlay>();
+    const EResizeCursor resize_cursor =
+        gripping ? resize_cursor_to_slint(m_controller.tool_ui().resize.cursor) : EResizeCursor::NONE;
+    if (resize_state.get_cursor() != resize_cursor) resize_state.set_cursor(resize_cursor);
 
     if (!visible && !drawing) {
         // Written only when a selection actually disappears: this runs on a
