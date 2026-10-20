@@ -295,6 +295,7 @@ void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
         // lifted originals: no frame ever scales up what the last one thinned.
         selection = m_mask_before;
         context.document.floating() = m_float_before;
+        lift_for_resize(context);
         (void)resize_selection(selection, context.document.floating(), next);
         context.document.mark_dirty(context.document.bounds());
         return;
@@ -377,12 +378,12 @@ void SelectionTool::finish_resize_drag(ToolContext& context, Point2f position) {
     // entirely, and a drag that came back to the start has to end up pristine.
     selection = m_mask_before;
     floating = m_float_before;
-    if (next != m_resize_bounds) (void)resize_selection(selection, floating, next);
+    if (next != m_resize_bounds) {
+        lift_for_resize(context);
+        (void)resize_selection(selection, floating, next);
+    }
 
-    // Resizing a selection that never left the layer is geometry, like drawing
-    // the marquee in the first place — only a floating copy carries its own
-    // undo entry, because it is the only thing that changed.
-    if (m_float_before) push_drag_edit(context);
+    push_drag_edit(context);
 
     context.document.mark_dirty(context.document.bounds());
     m_drag = Drag::None;
@@ -412,6 +413,11 @@ void SelectionTool::rotate_to(ToolContext& context, Point2f position) {
 
     (void)rotate_contents(context.document.active_layer().pixels, selection, floating, degrees,
                           context.colors.ink(PointerButton::Secondary));
+}
+
+void SelectionTool::lift_for_resize(ToolContext& context) {
+    lift_contents(context.document.active_layer().pixels, context.document.selection(),
+                  context.document.floating(), context.colors.ink(PointerButton::Secondary));
 }
 
 void SelectionTool::finish_rotate_drag(ToolContext& context, Point2f position) {

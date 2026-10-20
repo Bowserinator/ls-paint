@@ -42,6 +42,8 @@ private:
 
     void finish_contents_drag(ToolContext& context);
     void finish_resize_drag(ToolContext& context, Point2f position);
+    // Scaling always applies to the contents, not just the outline.
+    void lift_for_resize(ToolContext& context);
     void rotate_to(ToolContext& context, Point2f position);
     void finish_rotate_drag(ToolContext& context, Point2f position);
 

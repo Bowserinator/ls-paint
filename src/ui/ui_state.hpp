@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -64,9 +65,9 @@ private:
     void sync_font_style();
     // Publishes the family list, narrowed to the names that contain `query`.
     void publish_font_families(std::string_view query);
-    // Publishes the width of every line of the text the box holds, so the
-    // overlay's underline and strikethrough rules stop at the end of their line.
-    void publish_line_widths(std::string_view text);
+    // Publishes how the text the box holds will look once committed, and where
+    // its cursor stands.
+    void publish_text_preview(std::string_view text);
     // Publishes the paper colour under the pointer for the status bar, blank
     // while the pointer is off the paper.
     void publish_hover_color();
@@ -251,6 +252,8 @@ private:
     bool m_rotate_hover = false;
     bool m_rotate_active = false;
     bool m_text_was_visible = false;
+    std::string m_text_preview_key;
+    std::uint64_t m_shape_preview_revision = 0;
     // Whether the system clipboard last offered an image, for the Paste commands.
     bool m_system_clipboard = false;
     // Timed here because Slint's pointer events carry no click count.

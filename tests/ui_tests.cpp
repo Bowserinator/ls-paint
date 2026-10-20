@@ -568,7 +568,7 @@ int run_ui_tests() {
     h.press(origin.x + 420, origin.y + 60);
     h.move(origin.x + 470, origin.y + 110);
     CHECK(h.controller().tool_ui().shape.visible);
-    CHECK(!h.controller().tool_ui().shape.commands.empty());
+    CHECK(h.controller().tool_ui().shape.pixels.width() > 0);
     CHECK(h.overlay().get_visible());
     CHECK(h.count_color(418, 58, 472, 112, 0, 0, 255) == 0);
     h.release(origin.x + 470, origin.y + 110);
@@ -776,13 +776,18 @@ int run_ui_tests() {
     h.press(origin.x + 420, origin.y + 380);
     h.move(origin.x + 500, origin.y + 440);
     CHECK(h.overlay().get_visible());
-    CHECK(h.overlay().get_draw_outline());
-    CHECK(h.overlay().get_draw_fill());
-    const slint::Color preview_outline = h.overlay().get_outline_color();
-    const slint::Color preview_fill = h.overlay().get_fill_color();
-    CHECK(preview_outline.red() == 0 && preview_outline.green() == 0 &&
-          preview_outline.blue() == 255);
-    CHECK(preview_fill.red() == 255 && preview_fill.green() == 255 && preview_fill.blue() == 0);
+    const PixelBuffer& sheet = h.controller().tool_ui().shape.pixels;
+    bool has_outline = false;
+    bool has_fill = false;
+    for (int y = 0; y < sheet.height(); ++y) {
+        for (int x = 0; x < sheet.width(); ++x) {
+            const Rgba8 pixel = sheet.at(x, y);
+            has_outline = has_outline || (pixel.a > 0 && pixel.r == 0 && pixel.g == 0 && pixel.b == 255);
+            has_fill = has_fill || (pixel.a > 0 && pixel.r == 255 && pixel.g == 255 && pixel.b == 0);
+        }
+    }
+    CHECK(has_outline);
+    CHECK(has_fill);
     CHECK(h.count_ink(418, 378, 502, 442) == 0);  // the preview never touches the paper
     h.release(origin.x + 500, origin.y + 440);
     CHECK(!h.overlay().get_visible());
@@ -794,8 +799,6 @@ int run_ui_tests() {
     h.set_shape_textures(EShapeTexture::NONE, EShapeTexture::NONE);
     h.press(origin.x + 560, origin.y + 380);
     h.move(origin.x + 640, origin.y + 440);
-    CHECK(!h.overlay().get_draw_outline());
-    CHECK(!h.overlay().get_draw_fill());
     h.release(origin.x + 640, origin.y + 440);
     CHECK(h.count_ink(558, 378, 642, 442) == 0);
     h.user().set_selected_tool(ETool::PENCIL);

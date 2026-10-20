@@ -441,7 +441,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
     });
     m_window.global<UserState>().on_cancel_text([this] { do_cancel_text(); });
     m_window.global<UserState>().on_measure_text([this](const slint::SharedString& text) {
-        publish_line_widths(std::string_view(text));
+        publish_text_preview(std::string_view(text));
     });
 
     m_window.global<FontStyle>().on_filter_families([this](const slint::SharedString& query) {
@@ -1211,15 +1211,43 @@ void UiState::publish_font_families(std::string_view query) {
     m_window.global<FontStyle>().set_families(families);
 }
 
-void UiState::publish_line_widths(std::string_view text) {
-    // The controls are read first: the widths belong to the face and size the
-    // preview is drawn with, whatever they are set to right now.
+void UiState::publish_text_preview(std::string_view text) {
+    // The controls are read first: the preview belongs to the face and size it
+    // is drawn with, whatever they are set to right now.
     sync_font_style();
-    auto widths = std::make_shared<slint::VectorModel<float>>();
-    for (const float width : text_line_widths(text, m_controller.text_options())) {
-        widths->push_back(width);
-    }
-    m_window.global<TextOverlay>().set_line_widths(widths);
+    const TextOptions& options = m_controller.text_options();
+    const Rgba8 color = m_controller.tool_ui().text.color;
+    auto& overlay = m_window.global<TextOverlay>();
+    const int cursor = overlay.get_cursor();
+
+    // Drawing the text is the expensive part, so it is only redone when
+    // something it depends on has changed.
+    std::string key = options.family;
+    key += '|' + std::to_string(options.size) + '|' + std::to_string(cursor);
+    key += options.bold ? 'b' : '-';
+    key += options.italic ? 'i' : '-';
+    key += options.underline ? 'u' : '-';
+    key += options.strikethrough ? 's' : '-';
+    key += options.opaque_background ? 'o' : '-';
+    key += '|' + std::to_string(color.r) + ',' + std::to_string(color.g) + ',' + std::to_string(color.b) + ',' +
+           std::to_string(color.a);
+    key += '|' + std::to_string(options.background.r) + ',' + std::to_string(options.background.g) + ',' +
+           std::to_string(options.background.b) + ',' + std::to_string(options.background.a);
+    key += '|';
+    key += text;
+    if (key == m_text_preview_key) return;
+    m_text_preview_key = std::move(key);
+
+    const TextPreview preview = render_text_preview(text, options, color);
+    overlay.set_preview(preview.pixels.width() > 0 ? image_from(preview.pixels) : slint::Image());
+    overlay.set_preview_margin(static_cast<float>(preview.margin));
+    overlay.set_box_width(static_cast<float>(preview.width));
+    overlay.set_box_height(static_cast<float>(preview.height));
+
+    const TextCaret caret = text_caret(text, static_cast<std::size_t>(std::max(cursor, 0)), options);
+    overlay.set_caret_x(static_cast<float>(caret.x));
+    overlay.set_caret_y(static_cast<float>(caret.y));
+    overlay.set_caret_height(static_cast<float>(caret.height));
 }
 
 void UiState::publish_hover_color() {
@@ -1367,11 +1395,13 @@ void UiState::refresh() {
     const ShapePreview& preview = m_controller.tool_ui().shape;
     auto& overlay = m_window.global<ShapeOverlay>();
     overlay.set_visible(preview.visible);
-    overlay.set_commands(slint::SharedString(preview.commands));
-    overlay.set_draw_fill(preview.draw_fill);
-    overlay.set_draw_outline(preview.draw_outline);
-    overlay.set_outline_color(to_slint(preview.outline_color));
-    overlay.set_fill_color(to_slint(preview.fill_color));
+    // The image is only rebuilt when the tool has painted a new one.
+    if (preview.revision != m_shape_preview_revision) {
+        m_shape_preview_revision = preview.revision;
+        overlay.set_preview(preview.pixels.width() > 0 ? image_from(preview.pixels) : slint::Image());
+        overlay.set_x(static_cast<float>(preview.region.x));
+        overlay.set_y(static_cast<float>(preview.region.y));
+    }
 
     const TextOverlayState& text = m_controller.tool_ui().text;
     auto& text_box = m_window.global<TextOverlay>();
@@ -1382,10 +1412,9 @@ void UiState::refresh() {
     text_box.set_x(text.origin.x);
     text_box.set_y(text.origin.y);
     text_box.set_color(to_slint(text.color));
-    // A box that has just opened has no rules to draw yet, and one that has
+    // A box that has just opened has nothing to draw yet, and one that has
     // closed must not keep the last box's.
-    publish_line_widths(text.visible ? std::string_view(text_box.get_content())
-                                     : std::string_view{});
+    publish_text_preview(text.visible ? std::string_view(text_box.get_content()) : std::string_view{});
 
     set_title();
     update_ants();

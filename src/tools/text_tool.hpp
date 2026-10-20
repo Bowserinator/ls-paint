@@ -47,10 +47,38 @@ struct TextOverlayState {
 [[nodiscard]] float text_preview_scale(std::string_view family);
 
 // The width in document pixels of every line of the text, in the order the
-// lines are drawn and counting the one after a trailing newline. The overlay
-// draws the underline and strikethrough previews with these, so a rule is as
-// long as the line it decorates.
+// lines are drawn and counting the one after a trailing newline.
 [[nodiscard]] std::vector<float> text_line_widths(std::string_view text, const TextOptions& options);
+
+// The distance in pixels from one line of text to the next.
+[[nodiscard]] int text_line_height(const TextOptions& options);
+
+// What a block of text will look like once committed: the pixels draw_text
+// paints for it, on a transparent sheet. The text starts `margin` pixels in
+// from the top left of the sheet, so glyphs that overhang their line box are
+// not cut off. `width` and `height` are the size of the text's line boxes.
+struct TextPreview {
+    PixelBuffer pixels;
+    int margin = 0;
+    int width = 0;
+    int height = 0;
+};
+
+// The sheet is empty for empty text, but the size of the line boxes is still
+// reported.
+[[nodiscard]] TextPreview render_text_preview(std::string_view text, const TextOptions& options,
+                                              Rgba8 color);
+
+// Where the text cursor sits, in pixels from the top left of the first line box,
+// when it stands before byte `byte_offset` of the text.
+struct TextCaret {
+    int x = 0;
+    int y = 0;
+    int height = 0;
+};
+
+[[nodiscard]] TextCaret text_caret(std::string_view text, std::size_t byte_offset,
+                                   const TextOptions& options);
 
 // Draws the UTF-8 text with the top left of its first line box at `origin`,
 // which is where the overlay shows it. Newlines start a new line below, and the

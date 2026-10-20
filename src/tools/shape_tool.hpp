@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -13,9 +14,10 @@
 // Shape tool: the whole shape vocabulary of mspaint, its outline geometry, and
 // the rasterizer that turns a finished drag into pixels.
 //
-// `shape::outline()` is the single source of geometry: the ribbon glyphs, the
-// drag preview and the committed raster all read the same point list, so what
-// the user sees while dragging is what lands on the canvas.
+// `shape::outline()` is the single source of geometry: the ribbon glyphs and
+// the committed raster read the same point list, and the drag preview is
+// painted by the committed raster itself, so what the user sees while dragging
+// is what lands on the canvas.
 namespace lsp {
 
 struct ToolContext;
@@ -75,11 +77,12 @@ struct ShapeOptions {
 // Written by ShapeTool, read by UiState when it synchronizes the canvas overlay.
 struct ShapePreview {
     bool visible = false;
-    bool draw_fill = false;
-    bool draw_outline = true;
-    Rgba8 outline_color{0, 0, 0, 255};
-    Rgba8 fill_color = kWhite;
-    std::string commands;  // SVG path data in canvas pixels
+    // The shape as the commit will paint it, on a transparent sheet, and where
+    // the sheet's top left sits in the document.
+    PixelBuffer pixels;
+    RectI region;
+    // Differs whenever the pixels do.
+    std::uint64_t revision = 0;
 };
 
 namespace shape {

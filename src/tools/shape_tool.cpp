@@ -313,19 +313,6 @@ RectI shape_bounds(ShapeId kind, Point2f a, Point2f b, std::span<const Point2f> 
     return raster::bounds_points(shape::outline(kind, a, b, polygon), thickness);
 }
 
-void publish(ToolContext& context, const std::vector<Point2f>& points, bool closed,
-             PointerButton button) {
-    ShapePreview& preview = context.ui.shape;
-    const ShapeOptions& options = context.shape_options;
-    const bool open = !shape::is_closed(options.kind);
-    preview.visible = true;
-    preview.draw_fill = !open && options.fill != ShapeTexture::None;
-    preview.draw_outline = options.outline != ShapeTexture::None;
-    preview.outline_color = context.colors.ink(button);
-    preview.fill_color = context.colors.other_ink(button);
-    preview.commands = shape::svg_commands(points, closed);
-}
-
 // Paints the finished shape into the active layer as one history entry.
 void commit_shape(ToolContext& context, ShapeId kind, Point2f a, Point2f b,
                   std::span<const Point2f> polygon, PointerButton button) {
@@ -628,6 +615,61 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
     }
 }
 
+namespace {
+
+// Paints the preview with the same code the commit runs: on a transparent sheet
+// laid over the document, held back by the same selection. The sheet only
+// costs memory where it is painted.
+template <typename Paint>
+void publish_preview(ToolContext& context, RectI area, Paint paint) {
+    static std::uint64_t revision = 0;
+    ShapePreview& preview = context.ui.shape;
+    preview.visible = true;
+    preview.pixels = PixelBuffer();
+    preview.region = {};
+    preview.revision = ++revision;
+    if (area.empty()) return;
+
+    // Textured edges reach a little past the geometry.
+    const int pad = 2 * clamped_thickness(context.shape_options) + 2;
+    preview.region = RectI{area.x - pad, area.y - pad, area.width + 2 * pad, area.height + 2 * pad}
+                         .intersected(context.document.bounds());
+    if (preview.region.empty()) return;
+
+    PixelBuffer sheet(context.document.width(), context.document.height(), kTransparent);
+    const LayerTarget layer = context.layer_target();
+    paint(raster::Target{sheet, &layer.clip});
+    preview.pixels = sheet.copy_region(preview.region);
+}
+
+void publish_shape(ToolContext& context, ShapeId kind, Point2f a, Point2f b,
+                   std::span<const Point2f> polygon, PointerButton button) {
+    const ShapeOptions& options = context.shape_options;
+    const Rgba8 outline_color = context.colors.ink(button);
+    const Rgba8 fill_color = context.colors.other_ink(button);
+    publish_preview(context, shape_bounds(kind, a, b, polygon, clamped_thickness(options)),
+                    [&](raster::Target target) {
+                        rasterize_shape(target, kind, a, b, polygon, options, outline_color, fill_color);
+                    });
+}
+
+// A polygon still being laid out is only its edges so far.
+void publish_open_polygon(ToolContext& context, std::span<const Point2f> points, PointerButton button) {
+    const ShapeOptions& options = context.shape_options;
+    const int thickness = clamped_thickness(options);
+    const Rgba8 color = context.colors.ink(button);
+    publish_preview(context, raster::bounds_points(points, thickness), [&](raster::Target target) {
+        if (options.outline == ShapeTexture::None || points.size() < 2) return;
+        if (options.outline == ShapeTexture::Solid) {
+            raster::draw_polyline(target, points, thickness, color, false);
+        } else {
+            stroke_texture(target, points, thickness, options.outline, color, false);
+        }
+    });
+}
+
+}  // namespace
+
 void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerButton button) {
     if (m_curve_pending) {
         if (context.shape_options.kind == ShapeId::Curve) {
@@ -745,7 +787,7 @@ void ShapeTool::update_preview(ToolContext& context, Point2f cursor) {
     if (m_polygon_open) {
         std::vector<Point2f> points = m_polygon;
         points.push_back(cursor);
-        publish(context, points, false, m_button);
+        publish_open_polygon(context, points, m_button);
         return;
     }
     // A curve is a straight baseline until it is bent.
@@ -753,13 +795,11 @@ void ShapeTool::update_preview(ToolContext& context, Point2f cursor) {
     const std::span<const Point2f> bend = context.shape_options.kind == ShapeId::Curve
                                               ? std::span<const Point2f>(&middle, 1)
                                               : std::span<const Point2f>();
-    publish(context, shape::outline(context.shape_options.kind, m_origin, cursor, bend),
-            shape::is_closed(context.shape_options.kind), m_button);
+    publish_shape(context, context.shape_options.kind, m_origin, cursor, bend, m_button);
 }
 
 void ShapeTool::update_curve_preview(ToolContext& context) {
-    publish(context, shape::outline(ShapeId::Curve, m_origin, m_curve_end, {&m_curve_control, 1}),
-            false, m_button);
+    publish_shape(context, ShapeId::Curve, m_origin, m_curve_end, {&m_curve_control, 1}, m_button);
 }
 
 void ShapeTool::commit_drag(ToolContext& context, Point2f end) {

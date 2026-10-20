@@ -99,8 +99,8 @@ export global UserState  {
     callback commit-text(string);
     // Escape abandons the box: it closes without writing anything.
     callback cancel-text;
-    // Raised as the text changes, so the backend can measure what to draw the
-    // preview's rules against.
+    // Raised as the text or its styling changes, so the backend can redraw the
+    // preview.
     callback measure-text(text: string);
 
     // File tab.
@@ -299,17 +299,13 @@ export global BrushGallery {
     ];
 }
 
-// The shape being dragged, as an outline the view draws over the paper. The
-// commands are document-space path data, so the raster commit and the preview
-// share one geometry.
+// The shape being dragged, as the pixels the commit will paint, and where their
+// top left sits in the document.
 export global ShapeOverlay {
     in-out property <bool> visible: false;
-    in-out property <string> commands: "";
-    in-out property <bool> draw-fill: false;
-    in-out property <bool> draw-outline: true;
-    // The preview carries the same two colors the commit rasterizes with.
-    in-out property <color> outline-color: black;
-    in-out property <color> fill-color: white;
+    in-out property <image> preview;
+    in-out property <float> x: 0;
+    in-out property <float> y: 0;
 }
 
 // Text tool settings, set by the font controls in the Text tab.
@@ -356,10 +352,19 @@ export global TextOverlay {
     in-out property <length> y: 0px;
     in-out property <color> color: black;
     in-out property <string> content: "";
-    // The width of each line in document pixels, published by the backend, so
-    // the preview's underline and strikethrough rules stop at the end of their
-    // line instead of running to the edge of the box.
-    in-out property <[float]> line-widths: [];
+    // The text as it will be committed, drawn by the backend, and the room
+    // around the text the image leaves, in document pixels.
+    in-out property <image> preview;
+    in-out property <float> preview-margin: 0;
+    // The size of the text's line boxes and where the cursor stands in them,
+    // in document pixels from the top left of the box.
+    in-out property <float> box-width: 0;
+    in-out property <float> box-height: 0;
+    in-out property <float> caret-x: 0;
+    in-out property <float> caret-y: 0;
+    in-out property <float> caret-height: 0;
+    // The byte offset of the cursor in the content.
+    in-out property <int> cursor: 0;
 }
 
 // Paint's Edit Colors surface. The picker works in HSV: the ring picks the hue

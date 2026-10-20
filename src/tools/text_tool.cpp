@@ -346,6 +346,52 @@ std::vector<float> text_line_widths(std::string_view text, const TextOptions& op
     return widths;
 }
 
+int text_line_height(const TextOptions& options) {
+    const LoadedFont* font = load_font(options.family);
+    if (font == nullptr || options.size <= 0) return 0;
+    const float scale = stbtt_ScaleForPixelHeight(&font->info, options.size);
+    int ascent = 0;
+    int descent = 0;
+    int line_gap = 0;
+    stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &line_gap);
+    return std::max(1, round_to_int(static_cast<float>(ascent - descent + line_gap) * scale));
+}
+
+TextPreview render_text_preview(std::string_view text, const TextOptions& options, Rgba8 color) {
+    TextPreview preview;
+    const int line_height = text_line_height(options);
+    if (line_height <= 0) return preview;
+
+    const std::vector<float> widths = text_line_widths(text, options);
+    const float widest = widths.empty() ? 0.0f : *std::max_element(widths.begin(), widths.end());
+    preview.width = ceil_to_int(widest);
+    preview.height = line_height * static_cast<int>(std::max<std::size_t>(widths.size(), 1));
+    if (text.empty()) return preview;
+
+    // A glyph can lean or thicken past its line box by a fraction of the size.
+    const int margin = static_cast<int>(options.size / 2.0f) + 4;
+    const long long sheet_width = static_cast<long long>(preview.width) + 2 * margin;
+    const long long sheet_height = static_cast<long long>(preview.height) + 2 * margin;
+    constexpr long long kMaxSheetPixels = 16'000'000;
+    if (sheet_width * sheet_height > kMaxSheetPixels) return preview;
+
+    preview.margin = margin;
+    preview.pixels = PixelBuffer(static_cast<int>(sheet_width), static_cast<int>(sheet_height), kTransparent);
+    (void)draw_text(raster::Target{preview.pixels}, {static_cast<float>(margin), static_cast<float>(margin)},
+                    text, options, color);
+    return preview;
+}
+
+TextCaret text_caret(std::string_view text, std::size_t byte_offset, const TextOptions& options) {
+    TextCaret caret;
+    caret.height = text_line_height(options);
+    const std::vector<float> widths = text_line_widths(text.substr(0, std::min(byte_offset, text.size())), options);
+    if (widths.empty()) return caret;
+    caret.x = round_to_int(widths.back());
+    caret.y = caret.height * static_cast<int>(widths.size() - 1);
+    return caret;
+}
+
 RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
                 const TextOptions& options, Rgba8 color) {
     const LoadedFont* font = load_font(options.family);
@@ -356,7 +402,7 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
     int descent = 0;
     int line_gap = 0;
     stbtt_GetFontVMetrics(&font->info, &ascent, &descent, &line_gap);
-    const int line_height = std::max(1, round_to_int(static_cast<float>(ascent - descent + line_gap) * scale));
+    const int line_height = text_line_height(options);
 
     // The press marks the top left of the first line box.
     const int left = round_to_int(origin.x);
