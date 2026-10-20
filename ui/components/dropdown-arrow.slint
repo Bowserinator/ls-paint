@@ -1,0 +1,17 @@
+import { Styles } from "../styles.slint";
+
+export component DropdownArrow inherits Rectangle {
+    in property <length> arrow-width: 6.3px;
+    in property <length> arrow-height: 3.5px;
+    in property <color> arrow-color: Styles.bar-text-color;
+
+    width: root.arrow-width;
+    height: root.arrow-height;
+
+    Image {
+        width: 100%;
+        height: 100%;
+        source: @image-url("../../icons/dropdown-arrow.png");
+        colorize: root.arrow-color;
+    }
+}

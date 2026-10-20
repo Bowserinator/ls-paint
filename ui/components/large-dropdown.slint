@@ -1,8 +1,6 @@
 import { Styles } from "../styles.slint";
 
-// A caption with one letter underlined, the keyboard mnemonic Windows menus
-// draw. Underline-less text has no per-letter form in Slint, so the letter
-// sits in its own box with a line under it.
+// A caption made of a leading part, a key letter and a trailing part.
 export component MnemonicLabel {
     in property <string> before;
     in property <string> key;
@@ -31,13 +29,6 @@ export component MnemonicLabel {
                 font-size: root.font-size;
                 vertical-alignment: center;
                 wrap: no-wrap;
-            }
-
-            Rectangle {
-                y: (parent.height + letter.preferred-height) / 2 - 1px;
-                width: 100%;
-                height: 1px;
-                background: root.color;
             }
         }
 

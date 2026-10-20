@@ -44,10 +44,8 @@ private:
     // Turns the tip towards the way the stroke is heading.
     void steer(float dx, float dy);
 
-    // Stamps the tip at `center`, `path` along the stroke and having moved
-    // `move` since the stroke began: the pushing kind displaces what it covers
-    // by that much.
-    RectI stamp(PixelBuffer& target, Point2f center, Point2f move, float path);
+    // Stamps the tip at `center`, `path` along the stroke.
+    RectI stamp(PixelBuffer& target, Point2f center, float path);
 
     // Mixes the paint on the tip with the colours it is passing over.
     void pick_up(const PixelBuffer& canvas, float cx, float cy, float radius);
@@ -62,6 +60,7 @@ private:
     BrushProfile m_profile;
     std::optional<Point2f> m_last;
     Point2f m_start;
+    std::optional<Point2f> m_last_stamp;
     float m_carry = 0.0f;
     float m_path = 0.0f;
     Point2f m_dir{1.0f, 0.0f};

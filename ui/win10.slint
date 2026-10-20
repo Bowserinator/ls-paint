@@ -1,3 +1,5 @@
+import { Styles } from "styles.slint";
+
 // The look of the Windows 10 common dialogs: the flat gray face, the sunken
 // swatch edge, the blue-edged push button. The values were measured from a
 // Windows 10 color dialog (ref10.PNG) and are that screenshot's own pixels. Any
@@ -9,7 +11,7 @@ export global Win10 {
     out property<color> focus-color: #000000;
 
     // Text
-    out property<length> font-size: 14px;
+    out property<length> font-size: Styles.dialog-font-size;
     out property<color> text-color: #000000;
 
     // The window: a one pixel frame around a gray face. The window managers of

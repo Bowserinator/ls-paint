@@ -11,8 +11,12 @@ import { CanvasCursor } from "components/canvas-cursor.slint";
 import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ToolOptions, ViewArea } from "globals.slint";
 export * from "globals.slint";
 
-import "../assets/selawik.regular.ttf";
-import "../assets/selawik.bold.ttf";
+import "../assets/weblysleek/weblysleekuil.ttf";
+import "../assets/weblysleek/weblysleekuisl.ttf";
+import "../assets/weblysleek/weblysleekuisb.ttf";
+import "../assets/weblysleek/weblysleekuili.ttf";
+import "../assets/weblysleek/weblysleekuisli.ttf";
+import "../assets/weblysleek/weblysleekuisbi.ttf";
 
 // Which quadrant of the rotation centre the pointer is in, as seen on screen.
 enum ERotateCorner { NE, NW, SE, SW }
@@ -132,7 +136,6 @@ export component AppWindow inherits Window {
 
     property <bool> zoom-armed: false;
     property <bool> zoom-dragging: false;
-    property <length> zoom-drag-start: 0px;
     property <float> zoom-drag-from: 1.0;
     property <length> zoom-drag-anchor-x: 0px;
     property <length> zoom-drag-anchor-y: 0px;
@@ -178,7 +181,7 @@ export component AppWindow inherits Window {
     public function focus-app() { focus-scope.focus(); }
 
     // Global styles
-    default-font-family: "Selawik";
+    default-font-family: "WeblySleek UI";
     title: (DocumentState.modified ? DocumentState.title + " *" : DocumentState.title) + " - LS Paint";
 
     function resize-canvas(dx: length, dy: length) {
@@ -522,7 +525,6 @@ export component AppWindow inherits Window {
                                     if (root.zoom-armed
                                         && (event.modifiers.control || event.modifiers.meta)) {
                                         root.zoom-dragging = true;
-                                        root.zoom-drag-start = touch.mouse-x;
                                         root.zoom-drag-from = UserState.zoom;
                                         root.zoom-drag-anchor-x = touch.mouse-x + root.canvas-origin + scroll.viewport-x;
                                         root.zoom-drag-anchor-y = touch.mouse-y + root.canvas-origin + scroll.viewport-y;
@@ -576,8 +578,13 @@ export component AppWindow inherits Window {
                                     UserState.pointer-cancel();
                                 } else if (event.kind == PointerEventKind.move) {
                                     if (root.zoom-dragging) {
-                                        root.set-zoom(root.zoom-drag-from
-                                                      + (touch.mouse-x - root.zoom-drag-start) / 400px,
+                                        // Scales by the same factor per pixel as the
+                                        // wheel, so zooming in and out feels even. The
+                                        // travel is the pointer's place in the view, as
+                                        // the paper's own coordinates shift with the zoom.
+                                        root.set-zoom(root.zoom-drag-from * pow(ZoomScale.step,
+                                                          (touch.mouse-x + root.canvas-origin + scroll.viewport-x
+                                                           - root.zoom-drag-anchor-x) / 60px),
                                                       root.zoom-drag-anchor-x, root.zoom-drag-anchor-y);
                                     } else if (root.size-dragging) {
                                         // The drag distance is measured on the

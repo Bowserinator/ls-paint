@@ -1,3 +1,4 @@
+import { DropdownArrow } from "dropdown-arrow.slint";
 import { Styles } from "../styles.slint";
 
 component ImageButtonBase inherits Rectangle {
@@ -173,9 +174,10 @@ export component ImageButtonVerticalDropdown {
                     // Styles.bar-padding * 2 on each side.
                     max-width: root.width - 4 * Styles.bar-padding;
                 }
-                ButtonText {
-                    text: "▼";
-                    font-size: 6px;
+                HorizontalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    DropdownArrow { }
                 }
             }
         }
@@ -237,13 +239,18 @@ export component ImageButtonHorizontalDropdown inherits ImageButtonBase {
             }
         }
 
-        txt := ButtonText { font-size: root.font-size; }
-
-        arrow := Text {
-            text: "▾";
+        txt := ButtonText {
             font-size: root.font-size;
-            color: Styles.bar-text-color;
-            vertical-alignment: center;
+            horizontal-stretch: 1;
+            horizontal-alignment: start;
+        }
+
+        arrow := Rectangle {
+            width: 6.3px;
+
+            DropdownArrow {
+                y: (parent.height - self.height) / 2;
+            }
         }
     }
 }

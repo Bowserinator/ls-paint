@@ -268,8 +268,7 @@ RectI BrushEngine::stroke_to(PixelBuffer& target, Point2f to) {
                          static_cast<std::uint32_t>(round_to_int(to.y * 13.0f)), 0x9Eu);
         // A tip that faces the way the stroke goes waits until that is known.
         if (m_profile.follows_stroke) return {};
-        // Nothing has moved yet, so a pushing tip has nothing to displace.
-        return stamp(target, to, {0.0f, 0.0f}, 0.0f);
+        return stamp(target, to, 0.0f);
     }
 
     RectI dirty;
@@ -278,13 +277,10 @@ RectI BrushEngine::stroke_to(PixelBuffer& target, Point2f to) {
         m_dir = {0.0f, 0.0f};
         steer(to.x - m_start.x, to.y - m_start.y);
         m_oriented = true;
-        dirty = stamp(target, m_start, {0.0f, 0.0f}, 0.0f);
+        dirty = stamp(target, m_start, 0.0f);
     }
 
     const Point2f from = *m_last;
-    // How far the tip has already come: the pushing kind displaces by this much
-    // rather than by the last step alone.
-    const Point2f offset{from.x - m_start.x, from.y - m_start.y};
     const float dx = to.x - from.x;
     const float dy = to.y - from.y;
     const float length = std::hypot(dx, dy);
@@ -295,8 +291,7 @@ RectI BrushEngine::stroke_to(PixelBuffer& target, Point2f to) {
     for (; travelled <= length; travelled += step) {
         const float t = travelled / length;
         const Point2f center{from.x + dx * t, from.y + dy * t};
-        dirty = dirty.united(
-            stamp(target, center, {offset.x + dx * t, offset.y + dy * t}, m_path + travelled));
+        dirty = dirty.united(stamp(target, center, m_path + travelled));
     }
 
     m_carry = travelled - length;
@@ -309,7 +304,7 @@ RectI BrushEngine::finish(PixelBuffer& target) {
     if (!m_last || !m_profile.follows_stroke || m_oriented) return {};
     m_oriented = true;
     m_dab = true;
-    return stamp(target, m_start, {0.0f, 0.0f}, 0.0f);
+    return stamp(target, m_start, 0.0f);
 }
 
 void BrushEngine::pick_up(const PixelBuffer& canvas, float cx, float cy, float radius) {
@@ -345,7 +340,7 @@ void BrushEngine::pick_up(const PixelBuffer& canvas, float cx, float cy, float r
     m_loaded.b = blend_channel(m_loaded.b, blue);
 }
 
-RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move, float path) {
+RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, float path) {
     const int size = std::max(1, m_brush.size);
     const float radius = static_cast<float>(size) * 0.5f;
     const bool odd = size % 2 == 1;
@@ -387,9 +382,22 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move, floa
                             m_source->width() >= target.width() &&
                             m_source->height() >= target.height();
     if (blur_stamp) ensure_blurred(area);
-    const bool warp_stamp = m_brush.kind == BrushKind::Liquify && m_source != nullptr &&
-                            m_source->width() >= target.width() &&
-                            m_source->height() >= target.height();
+    const bool warp_stamp = m_brush.kind == BrushKind::Liquify;
+
+    // The pushing kind carries what is already on the canvas along by the tip's
+    // latest step, so it reads from the canvas as it stood before this stamp.
+    PixelBuffer before;
+    RectI before_area;
+    Point2f push{0.0f, 0.0f};
+    if (warp_stamp) {
+        if (m_last_stamp) push = {center.x - m_last_stamp->x, center.y - m_last_stamp->y};
+        m_last_stamp = center;
+        const int pad = ceil_to_int(std::max(std::abs(push.x), std::abs(push.y))) + 2;
+        before_area =
+            RectI{area.x - pad, area.y - pad, area.width + 2 * pad, area.height + 2 * pad}.intersected(
+                target.bounds());
+        before = target.copy_region(before_area);
+    }
 
     if (m_profile.pickup > 0.0f) {
         const bool sourced = m_source != nullptr && m_source->width() >= target.width() &&
@@ -408,11 +416,14 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, Point2f move, floa
             if (ink <= 0.0f) continue;
             Rgba8 color = shaded(paint, sample.shade);
             if (warp_stamp) {
-                // The pixel comes from where the tip was, less and less near the
-                // rim, so the drag pulls the picture along with it.
-                color = warp::sample_bilinear(*m_source, static_cast<float>(x) + 0.5f - move.x * ink,
-                                              static_cast<float>(y) + 0.5f - move.y * ink);
-            } else if (blur_stamp) {
+                // Each pixel takes what lay just behind it, less and less near
+                // the rim, so the picture follows the tip without being copied.
+                out[static_cast<std::size_t>(x)] = warp::sample_bilinear(
+                    before, static_cast<float>(x - before_area.x) + 0.5f - push.x * ink,
+                    static_cast<float>(y - before_area.y) + 0.5f - push.y * ink);
+                continue;
+            }
+            if (blur_stamp) {
                 color = blurred_at(x, y);
             }
             if (m_profile.flat) {

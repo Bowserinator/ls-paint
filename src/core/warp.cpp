@@ -1,7 +1,6 @@
 #include "core/warp.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdint>
 
 #include "utils/math.hpp"

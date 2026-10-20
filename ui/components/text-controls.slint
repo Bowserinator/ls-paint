@@ -1,3 +1,4 @@
+import { DropdownArrow } from "dropdown-arrow.slint";
 import { Styles } from "../styles.slint";
 
 // A plain ribbon button that shows its current value and drops a list of the
@@ -30,11 +31,13 @@ export component ValueButton inherits Rectangle {
             horizontal-stretch: 1;
         }
 
-        Text {
-            text: "▾";
-            font-size: Styles.bar-font-size;
-            color: #555;
-            vertical-alignment: center;
+        Rectangle {
+            width: 6.3px;
+
+            DropdownArrow {
+                y: (parent.height - self.height) / 2;
+                arrow-color: #555;
+            }
         }
     }
 

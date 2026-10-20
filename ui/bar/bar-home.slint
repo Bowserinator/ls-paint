@@ -516,8 +516,8 @@ export component HomeBar inherits Bar {
                         icon: @image-url("../../icons/resize.png");
                         clicked => { UserState.resize-dialog(); }
                     }
-                    rotate-btn := ImageButtonHorizontal {
-                        text: "Rotate ▾";
+                    rotate-btn := ImageButtonHorizontalDropdown {
+                        text: "Rotate";
                         icon: @image-url("../../icons/rotate.png");
                         clicked => { rotate-dropdown.show(); }
                     }
