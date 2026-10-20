@@ -34,6 +34,13 @@ RectI rect_from_corners(Point2f a, Point2f b) {
     return {left, top, right - left, bottom - top};
 }
 
+// The marquee between two corners. A press that never left its pixel selects
+// nothing, so a plain click deselects.
+RectI marquee_rect(Point2f a, Point2f b) {
+    if (floor_to_int(a.x) == floor_to_int(b.x) && floor_to_int(a.y) == floor_to_int(b.y)) return {};
+    return rect_from_corners(a, b);
+}
+
 std::optional<SelectionHandle> handle_at(RectI bounds, Point2f position) {
     if (bounds.width < kMinHandleSpan || bounds.height < kMinHandleSpan) return std::nullopt;
     for (const SelectionHandle handle : kSelectionHandles)
@@ -273,7 +280,7 @@ void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
 
     if (m_drag != Drag::Marquee) return;
     if (context.shape == SelectionShape::Rectangular)
-        context.document.selection().fill_rect(rect_from_corners(m_marquee_anchor, position));
+        context.document.selection().fill_rect(marquee_rect(m_marquee_anchor, position));
     else
         m_polygon.push_back(position);
     context.ui.selection.points = m_polygon;
@@ -295,7 +302,7 @@ void SelectionTool::on_pointer_up(ToolContext& context, Point2f position) {
     if (m_drag != Drag::Marquee) return;
 
     if (context.shape == SelectionShape::Rectangular)
-        context.document.selection().fill_rect(rect_from_corners(m_marquee_anchor, position));
+        context.document.selection().fill_rect(marquee_rect(m_marquee_anchor, position));
     else
         context.document.selection().fill_polygon(m_polygon);
 
