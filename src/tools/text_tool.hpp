@@ -34,7 +34,7 @@ struct TextOptions {
 struct TextOverlayState {
     bool visible = false;
     Point2f origin;
-    Rgba8 color{0, 0, 0, 255};
+    Rgba8 color{0, 0, 0, kChannelMax};
 };
 
 // Every family the text tool can draw with, sorted by name: the installed ones

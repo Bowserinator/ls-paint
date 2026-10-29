@@ -55,36 +55,41 @@ component ResizeBadge inherits Rectangle {
 }
 
 // The frame the open text box wears: the run pattern the selection outline is
-// made of, held still instead of crawling. Each run is one screen pixel, so the
-// frame stays one pixel thick at every zoom.
+// made of, held still instead of crawling. Each run is one device pixel thick,
+// so the frame stays one pixel thick at every zoom and on every screen.
 component AntsFrame inherits Rectangle {
-    for i in floor(root.width / 3px) : Rectangle {
-        x: i * 3px;
+    // Device pixels per logical pixel.
+    in property <float> device-ratio: 1.0;
+    property <length> hair: 1px / root.device-ratio;
+    property <length> run: max(1.0, round(3.0 * root.device-ratio)) * root.hair;
+
+    for i in floor(root.width / root.run) : Rectangle {
+        x: i * root.run;
         y: 0px;
-        width: min(3px, root.width - i * 3px);
-        height: 1px;
-        background: mod(i, 2) == 0 ? black : white;
+        width: min(root.run, root.width - i * root.run);
+        height: root.hair;
+        background: mod(i, 2) == 0 ? Styles.ants-dark : Styles.ants-light;
     }
-    for i in floor(root.width / 3px) : Rectangle {
-        x: i * 3px;
-        y: root.height - 1px;
-        width: min(3px, root.width - i * 3px);
-        height: 1px;
-        background: mod(i, 2) == 0 ? black : white;
+    for i in floor(root.width / root.run) : Rectangle {
+        x: i * root.run;
+        y: root.height - root.hair;
+        width: min(root.run, root.width - i * root.run);
+        height: root.hair;
+        background: mod(i, 2) == 0 ? Styles.ants-dark : Styles.ants-light;
     }
-    for i in floor(root.height / 3px) : Rectangle {
+    for i in floor(root.height / root.run) : Rectangle {
         x: 0px;
-        y: i * 3px;
-        width: 1px;
-        height: min(3px, root.height - i * 3px);
-        background: mod(i, 2) == 0 ? black : white;
+        y: i * root.run;
+        width: root.hair;
+        height: min(root.run, root.height - i * root.run);
+        background: mod(i, 2) == 0 ? Styles.ants-dark : Styles.ants-light;
     }
-    for i in floor(root.height / 3px) : Rectangle {
-        x: root.width - 1px;
-        y: i * 3px;
-        width: 1px;
-        height: min(3px, root.height - i * 3px);
-        background: mod(i, 2) == 0 ? black : white;
+    for i in floor(root.height / root.run) : Rectangle {
+        x: root.width - root.hair;
+        y: i * root.run;
+        width: root.hair;
+        height: min(root.run, root.height - i * root.run);
+        background: mod(i, 2) == 0 ? Styles.ants-dark : Styles.ants-light;
     }
 }
 
@@ -100,6 +105,7 @@ export component AppWindow inherits Window {
     // which makes the images.
     in property <float> tile-overlap: 2.0;
     in property <bool> tile-pixelated: true;
+    in property <float> device-ratio: 1.0;
 
     // The zoom, reported so the backend can make the images that suit it.
     property <float> canvas-zoom: UserState.zoom;
@@ -126,16 +132,33 @@ export component AppWindow inherits Window {
     }
     changed canvas-zoom => { root.canvas-zoom-changed(root.canvas-zoom); }
 
-    // Where a tile edge falls on screen. Edges sit on whole pixels and each tile
-    // runs a little under its neighbour, so no gap shows between the two; the
-    // paper's own edge stays exact.
+    // Where a tile edge falls on screen. Edges sit on whole device pixels, the
+    // same ones the backend cuts the tile images to, and each tile runs a little
+    // under its neighbour, so no gap shows between the two; the paper's own edge
+    // stays exact.
     pure function edge-x(doc: float) -> length {
-        return doc >= DocumentState.canvas-width ? DocumentState.canvas-width * UserState.zoom * 1px
-            : round(doc * UserState.zoom) * 1px;
+        return (doc >= DocumentState.canvas-width ? DocumentState.canvas-width * UserState.zoom * root.device-ratio
+            : round(doc * UserState.zoom * root.device-ratio)) / root.device-ratio * 1px;
     }
     pure function edge-y(doc: float) -> length {
-        return doc >= DocumentState.canvas-height ? DocumentState.canvas-height * UserState.zoom * 1px
-            : round(doc * UserState.zoom) * 1px;
+        return (doc >= DocumentState.canvas-height ? DocumentState.canvas-height * UserState.zoom * root.device-ratio
+            : round(doc * UserState.zoom * root.device-ratio)) / root.device-ratio * 1px;
+    }
+
+    // The nearest whole device pixel. Anything one device pixel thick that is
+    // not on one would cover two of them, which draws it twice as heavy.
+    pure function snap(value: length) -> length {
+        return round(value / 1px * root.device-ratio) / root.device-ratio * 1px;
+    }
+    // One device pixel.
+    property <length> hairline: 1px / root.device-ratio;
+    // Side of a selection grip in device pixels.
+    property <float> grip-size: max(3.0, round(7.0 * root.device-ratio / 1.7));
+    // Moves a view offset to a whole device pixel. The tiles, the outline and
+    // the grips all sit on the offset, so one that lands between pixels shifts
+    // each of them by a different amount.
+    function settled(offset: length, lowest: length) -> length {
+        return min(0px, max(min(0px, lowest), root.snap(offset)));
     }
 
     // Where the canvas right click menu is asked to open.
@@ -152,11 +175,18 @@ export component AppWindow inherits Window {
 
     property <bool> zoom-armed: false;
     property <bool> zoom-dragging: false;
+    property <bool> pan-held: false;
+    property <bool> panning: false;
+    property <length> pan-from-x;
+    property <length> pan-from-y;
+    property <length> pan-viewport-x;
+    property <length> pan-viewport-y;
+    property <bool> pan-cursor: root.pan-held || root.panning;
     property <float> zoom-drag-from: 1.0;
     property <length> zoom-drag-anchor-x: 0px;
     property <length> zoom-drag-anchor-y: 0px;
 
-    property <length> canvas-origin: 4px;
+    property <length> canvas-origin: round(4.0 * root.device-ratio) / root.device-ratio * 1px;
     // Document size: canvas-w/h are what the screen shows at the current
     // zoom, doc-w/h the pixels the document actually owns.
     property <length> doc-w: DocumentState.canvas-width * 1px;
@@ -220,8 +250,8 @@ export component AppWindow inherits Window {
         let next-x = scroll.viewport-x + paper-x * shift;
         let next-y = scroll.viewport-y + paper-y * shift;
         UserState.zoom = z;
-        scroll.viewport-x = min(0px, max(min(0px, scroll.visible-width - scroll.viewport-width), next-x));
-        scroll.viewport-y = min(0px, max(min(0px, scroll.visible-height - scroll.viewport-height), next-y));
+        scroll.viewport-x = root.settled(next-x, scroll.visible-width - scroll.viewport-width);
+        scroll.viewport-y = root.settled(next-y, scroll.visible-height - scroll.viewport-height);
     }
 
     // Ctrl+wheel zooms the view around the point under the cursor, whether the
@@ -258,11 +288,26 @@ export component AppWindow inherits Window {
         } else {
             let dx = event.modifiers.shift ? event.delta-y : event.delta-x;
             let dy = event.modifiers.shift ? event.delta-x : event.delta-y;
-            scroll.viewport-x = min(0px, max(min(0px, scroll.visible-width - scroll.viewport-width),
-                                             scroll.viewport-x + dx));
-            scroll.viewport-y = min(0px, max(min(0px, scroll.visible-height - scroll.viewport-height),
-                                             scroll.viewport-y + dy));
+            scroll.viewport-x = root.settled(scroll.viewport-x + dx,
+                                             scroll.visible-width - scroll.viewport-width);
+            scroll.viewport-y = root.settled(scroll.viewport-y + dy,
+                                             scroll.visible-height - scroll.viewport-height);
         }
+    }
+
+    function pan-start(px: length, py: length) {
+        root.panning = true;
+        root.pan-from-x = px;
+        root.pan-from-y = py;
+        root.pan-viewport-x = scroll.viewport-x;
+        root.pan-viewport-y = scroll.viewport-y;
+    }
+
+    function pan-move(px: length, py: length) {
+        scroll.viewport-x = root.settled(root.pan-viewport-x + px - root.pan-from-x,
+                                         scroll.visible-width - scroll.viewport-width);
+        scroll.viewport-y = root.settled(root.pan-viewport-y + py - root.pan-from-y,
+                                         scroll.visible-height - scroll.viewport-height);
     }
 
     // Whether the window draws the pointer over the paper instead of the system.
@@ -291,6 +336,8 @@ export component AppWindow inherits Window {
             let plain = !event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt;
             if (event.text == " " && (event.modifiers.control || event.modifiers.meta)) {
                 root.zoom-armed = true;
+            } else if (plain && !typing && event.text == " ") {
+                root.pan-held = true;
             } else if (plain && !typing && event.text == "e") {
                 UserState.selected-tool = ETool.ERASER;
             } else if (plain && !typing && event.text == "p") {
@@ -305,6 +352,7 @@ export component AppWindow inherits Window {
         key-released(event) => {
             if (event.text == " ") {
                 root.zoom-armed = false;
+                root.pan-held = false;
             }
             accept
         }
@@ -362,6 +410,17 @@ export component AppWindow inherits Window {
                     height: parent.height - (UserState.show-rulers ? Styles.ruler-size : 0px);
                     viewport-width: corner-handle.x + corner-handle.width + root.canvas-origin;
                     viewport-height: corner-handle.y + corner-handle.height + root.canvas-origin;
+                    // The scroll bars can leave the offset between pixels.
+                    changed viewport-x => {
+                        if (self.viewport-x != root.snap(self.viewport-x)) {
+                            self.viewport-x = root.snap(self.viewport-x);
+                        }
+                    }
+                    changed viewport-y => {
+                        if (self.viewport-y != root.snap(self.viewport-y)) {
+                            self.viewport-y = root.snap(self.viewport-y);
+                        }
+                    }
 
                     // Ctrl+wheel over the gray around the paper zooms too, around
                     // the cursor like it does over the paper. Hovering here
@@ -373,8 +432,22 @@ export component AppWindow inherits Window {
                         width: max(scroll.visible-width, scroll.viewport-width);
                         height: max(scroll.visible-height, scroll.viewport-height);
 
+                        mouse-cursor: root.pan-cursor
+                            ? (root.panning ? MouseCursor.grabbing : MouseCursor.grab) : MouseCursor.default;
+
                         pointer-event(event) => {
                             UserState.cursor-on-canvas = false;
+                            if (event.kind == PointerEventKind.down && root.pan-held) {
+                                focus-scope.focus();
+                                root.pan-start(workspace-touch.mouse-x + scroll.viewport-x,
+                                               workspace-touch.mouse-y + scroll.viewport-y);
+                            } else if (event.kind == PointerEventKind.move && root.panning) {
+                                root.pan-move(workspace-touch.mouse-x + scroll.viewport-x,
+                                              workspace-touch.mouse-y + scroll.viewport-y);
+                            } else if (event.kind == PointerEventKind.up
+                                || event.kind == PointerEventKind.cancel) {
+                                root.panning = false;
+                            }
                         }
 
                         scroll-event(event) => {
@@ -514,9 +587,11 @@ export component AppWindow inherits Window {
                             // Over the rotate zone the arrow the window draws at
                             // the pointer takes the cursor's place, so the system
                             // one is turned off while it shows.
-                            mouse-cursor: (RotateOverlay.hover || RotateOverlay.rotating
-                                || ResizeOverlay.cursor != EResizeCursor.NONE
-                                || root.custom-cursor) ? MouseCursor.none : MouseCursor.default;
+                            mouse-cursor: root.pan-cursor
+                                ? (root.panning ? MouseCursor.grabbing : MouseCursor.grab)
+                                : (RotateOverlay.hover || RotateOverlay.rotating
+                                    || ResizeOverlay.cursor != EResizeCursor.NONE
+                                    || root.custom-cursor) ? MouseCursor.none : MouseCursor.default;
 
                             pointer-event(event) => {
                                 // Every hover or press over the paper pins
@@ -531,7 +606,10 @@ export component AppWindow inherits Window {
                                 }
                                 if (event.kind == PointerEventKind.down) {
                                     focus-scope.focus();
-                                    if (root.zoom-armed
+                                    if (root.pan-held && !(event.modifiers.control || event.modifiers.meta)) {
+                                        root.pan-start(touch.mouse-x + root.canvas-origin + scroll.viewport-x,
+                                                       touch.mouse-y + root.canvas-origin + scroll.viewport-y);
+                                    } else if (root.zoom-armed
                                         && (event.modifiers.control || event.modifiers.meta)) {
                                         root.zoom-dragging = true;
                                         root.zoom-drag-from = UserState.zoom;
@@ -570,7 +648,9 @@ export component AppWindow inherits Window {
                                                                event.button == PointerEventButton.right);
                                     }
                                 } else if (event.kind == PointerEventKind.up) {
-                                    if (root.zoom-dragging) {
+                                    if (root.panning) {
+                                        root.panning = false;
+                                    } else if (root.zoom-dragging) {
                                         root.zoom-dragging = false;
                                     } else if (root.size-dragging) {
                                         root.size-dragging = false;
@@ -584,9 +664,16 @@ export component AppWindow inherits Window {
                                     // cannot be finished, so it is abandoned.
                                     root.zoom-dragging = false;
                                     root.size-dragging = false;
-                                    UserState.pointer-cancel();
+                                    if (root.panning) {
+                                        root.panning = false;
+                                    } else {
+                                        UserState.pointer-cancel();
+                                    }
                                 } else if (event.kind == PointerEventKind.move) {
-                                    if (root.zoom-dragging) {
+                                    if (root.panning) {
+                                        root.pan-move(touch.mouse-x + root.canvas-origin + scroll.viewport-x,
+                                                      touch.mouse-y + root.canvas-origin + scroll.viewport-y);
+                                    } else if (root.zoom-dragging) {
                                         // Scales by the same factor per pixel as the
                                         // wheel, so zooming in and out feels even. The
                                         // travel is the pointer's place in the view, as
@@ -607,7 +694,7 @@ export component AppWindow inherits Window {
                                         UserState.pointer-move(root.size-drag-doc-x,
                                                                root.size-drag-doc-y,
                                                                event.modifiers.shift);
-                                    } else {
+                                    } else if (!root.pan-held) {
                                         // Every hover as well as every drag: the tools
                                         // follow the pointer and the status bar reads
                                         // the colour under it.
@@ -636,6 +723,11 @@ export component AppWindow inherits Window {
                                     ? ImageRendering.pixelated
                                     : ImageRendering.smooth;
                                 source: tile;
+                                // A tile draws over the ones to its right and below
+                                // it. Where the screen places a tile between two
+                                // device pixels its first row and column come out
+                                // wrong, and those lie under its neighbour's overlap.
+                                z: -1.0;
                                 x: root.edge-x(mod(i, root.tile-columns) * root.tile-size);
                                 y: root.edge-y(floor(i / root.tile-columns) * root.tile-size);
                                 width: root.edge-x((mod(i, root.tile-columns) + 1) * root.tile-size + root.tile-overlap)
@@ -659,16 +751,16 @@ export component AppWindow inherits Window {
                         clip: true;
 
                         for i in max(0.0, root.grid-last-col - root.grid-first-col + 1.0) : Rectangle {
-                            x: (root.grid-first-col + i) * root.grid-spacing * UserState.zoom * 1px;
-                            width: 1px;
+                            x: root.snap((root.grid-first-col + i) * root.grid-spacing * UserState.zoom * 1px);
+                            width: root.hairline;
                             height: 100%;
                             background: Styles.canvas-grid-color;
                         }
 
                         for i in max(0.0, root.grid-last-row - root.grid-first-row + 1.0) : Rectangle {
-                            y: (root.grid-first-row + i) * root.grid-spacing * UserState.zoom * 1px;
+                            y: root.snap((root.grid-first-row + i) * root.grid-spacing * UserState.zoom * 1px);
                             width: 100%;
-                            height: 1px;
+                            height: root.hairline;
                             background: Styles.canvas-grid-color;
                         }
                     }
@@ -702,10 +794,10 @@ export component AppWindow inherits Window {
                     // are the pixels the commit will paint, drawn by the backend;
                     // the input underneath only takes the typing.
                     if TextOverlay.visible : Rectangle {
-                        x: root.canvas-origin + TextOverlay.x * UserState.zoom;
-                        y: root.canvas-origin + TextOverlay.y * UserState.zoom;
-                        width: max(24px, TextOverlay.box-width * UserState.zoom * 1px);
-                        height: max(1px, TextOverlay.box-height * UserState.zoom * 1px);
+                        x: root.canvas-origin + root.snap(TextOverlay.x * UserState.zoom);
+                        y: root.canvas-origin + root.snap(TextOverlay.y * UserState.zoom);
+                        width: root.snap(max(24px, TextOverlay.box-width * UserState.zoom * 1px));
+                        height: root.snap(max(1px, TextOverlay.box-height * UserState.zoom * 1px));
                         // The backend draws the text again whenever the text,
                         // the cursor or the way it is set changes.
                         private property <string> mark-text: TextOverlay.content;
@@ -722,7 +814,7 @@ export component AppWindow inherits Window {
                         background: transparent;
                         // The frame is drawn as runs, so the solid border only
                         // holds the text one pixel clear of it.
-                        border-width: 1px;
+                        border-width: root.hairline;
                         border-color: transparent;
 
                         Image {
@@ -781,32 +873,34 @@ export component AppWindow inherits Window {
                         // Over the text, where the selection's own outline sits:
                         // on the box's edge, one pixel clear of the glyphs.
                         AntsFrame {
-                            x: -1px;
-                            y: -1px;
-                            width: parent.width + 2px;
-                            height: parent.height + 2px;
+                            x: -root.hairline;
+                            y: -root.hairline;
+                            width: parent.width + 2 * root.hairline;
+                            height: parent.height + 2 * root.hairline;
+                            device-ratio: root.device-ratio;
                         }
                     }
 
                     // The outline of an active selection: alternating light and
                     // dark runs covering its border, rebuilt from C++ as the
                     // phase advances so the pattern crawls around it.
-                    // Runs are laid out in screen pixels, so the ants keep the
-                    // same dash length and weight at every magnification.
+                    // Runs are laid out in device pixels, so the ants keep the
+                    // same dash length and weight at every magnification and
+                    // every screen scale, each covering whole pixels.
                     for dash in DocumentState.ants-light : Rectangle {
-                        x: root.canvas-origin + dash.x * 1px;
-                        y: root.canvas-origin + dash.y * 1px;
-                        width: dash.w * 1px;
-                        height: dash.h * 1px;
-                        background: white.with-alpha(0.7);
+                        x: root.canvas-origin + dash.x / root.device-ratio * 1px;
+                        y: root.canvas-origin + dash.y / root.device-ratio * 1px;
+                        width: dash.w / root.device-ratio * 1px;
+                        height: dash.h / root.device-ratio * 1px;
+                        background: Styles.ants-light;
                     }
 
                     for dash in DocumentState.ants-dark : Rectangle {
-                        x: root.canvas-origin + dash.x * 1px;
-                        y: root.canvas-origin + dash.y * 1px;
-                        width: dash.w * 1px;
-                        height: dash.h * 1px;
-                        background: black.with-alpha(0.7);
+                        x: root.canvas-origin + dash.x / root.device-ratio * 1px;
+                        y: root.canvas-origin + dash.y / root.device-ratio * 1px;
+                        width: dash.w / root.device-ratio * 1px;
+                        height: dash.h / root.device-ratio * 1px;
+                        background: Styles.ants-dark;
                     }
 
                     // Resize grips sit on the selection's border. They are pure
@@ -815,18 +909,19 @@ export component AppWindow inherits Window {
                     // not grab it. Their position follows the zoom but their
                     // size stays put: a grip is a control, not a marking.
                     for grip in DocumentState.grips : Rectangle {
-                        x: root.canvas-origin + grip.x * UserState.zoom * 1px - 3.5px;
-                        y: root.canvas-origin + grip.y * UserState.zoom * 1px - 3.5px;
-                        width: 7px;
-                        height: 7px;
+                        x: root.canvas-origin + round(grip.x - root.grip-size / 2.0) / root.device-ratio * 1px;
+                        y: root.canvas-origin + round(grip.y - root.grip-size / 2.0) / root.device-ratio * 1px;
+                        width: root.grip-size / root.device-ratio * 1px;
+                        height: root.grip-size / root.device-ratio * 1px;
                         background: white;
-                        border-width: 1px;
+                        border-width: root.hairline;
                         border-color: black;
                     }
 
                     // The badge at the pointer, while it is over the rotate zone
                     // or turning the contents.
                     if UserState.selected-tool == ETool.SELECTION && UserState.cursor-on-canvas
+                        && !root.pan-cursor
                         && (RotateOverlay.hover || RotateOverlay.rotating) : RotateBadge {
                         x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12px;
                         y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12px;
@@ -839,6 +934,7 @@ export component AppWindow inherits Window {
 
                     // The badge at the pointer, while it is over a resize grip.
                     if UserState.selected-tool == ETool.SELECTION && UserState.cursor-on-canvas
+                        && !root.pan-cursor
                         && ResizeOverlay.cursor != EResizeCursor.NONE : ResizeBadge {
                         x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12px;
                         y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12px;
@@ -847,7 +943,7 @@ export component AppWindow inherits Window {
 
                     // The outline of the tip and the crosshair, over everything on
                     // the paper except the rotate badge's own pointer.
-                    if UserState.cursor-on-canvas && root.custom-cursor
+                    if UserState.cursor-on-canvas && root.custom-cursor && !root.pan-cursor
                         && ResizeOverlay.cursor == EResizeCursor.NONE
                         && !(UserState.selected-tool == ETool.SELECTION
                             && (RotateOverlay.hover || RotateOverlay.rotating)) : CanvasCursor {

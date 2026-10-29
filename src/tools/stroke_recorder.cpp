@@ -5,13 +5,17 @@
 
 #include "config.hpp"
 #include "history/commands/paint_stroke_command.hpp"
+#include "utils/tiles.hpp"
 
 namespace lsp {
 
 namespace {
 
+// A tile's column sits in the low half of its key and its row in the high half.
+constexpr unsigned kTileKeyShift = 32;
+
 constexpr std::uint64_t tile_key(int column, int row) noexcept {
-    return (static_cast<std::uint64_t>(row) << 32) | static_cast<std::uint32_t>(column);
+    return (static_cast<std::uint64_t>(row) << kTileKeyShift) | static_cast<std::uint32_t>(column);
 }
 
 }  // namespace
@@ -25,9 +29,7 @@ void StrokeRecorder::touch(RectI region) {
     m_document.mark_dirty(region);
     region = region.intersected(m_document.bounds());
     if (region.empty()) return;
-    for (int row = region.y / kUndoTileSize; row <= (region.bottom() - 1) / kUndoTileSize; ++row)
-        for (int column = region.x / kUndoTileSize; column <= (region.right() - 1) / kUndoTileSize; ++column)
-            m_touched.insert(tile_key(column, row));
+    for_each_tile(region, kUndoTileSize, [this](int column, int row) { m_touched.insert(tile_key(column, row)); });
 }
 
 template <typename VisitFn>
@@ -35,7 +37,7 @@ void StrokeRecorder::for_each_touched(VisitFn visit) const {
     const RectI bounds = m_document.bounds();
     for (const std::uint64_t key : m_touched) {
         const int column = static_cast<int>(key & 0xffffffffu);
-        const int row = static_cast<int>(key >> 32);
+        const int row = static_cast<int>(key >> kTileKeyShift);
         visit(RectI{column * kUndoTileSize, row * kUndoTileSize, kUndoTileSize, kUndoTileSize}
                   .intersected(bounds));
     }
@@ -60,13 +62,16 @@ void StrokeRecorder::commit(HistoryStack& history) {
     // itself, which is cheaper than the same pixels copied square by square.
     const int band_count = current.band_count();
     const int band_height = band_count > 0 ? current.band_rows(0).height : 1;
+    const auto for_each_band = [band_height](const RectI& area, const auto& visit) {
+        for (int band = area.y / band_height; band <= (area.bottom() - 1) / band_height; ++band) visit(band);
+    };
     std::vector<long long> covered(static_cast<std::size_t>(band_count), 0);
     for (const RectI& area : areas) {
-        for (int band = area.y / band_height; band <= (area.bottom() - 1) / band_height; ++band) {
+        for_each_band(area, [&](int band) {
             const RectI rows = current.band_rows(band);
             const int overlap = std::min(area.bottom(), rows.bottom()) - std::max(area.y, rows.y);
             covered[static_cast<std::size_t>(band)] += static_cast<long long>(area.width) * overlap;
-        }
+        });
     }
     std::vector<bool> whole(static_cast<std::size_t>(band_count), false);
     PixelDelta delta;
@@ -79,8 +84,7 @@ void StrokeRecorder::commit(HistoryStack& history) {
     }
     for (const RectI& area : areas) {
         bool inside_whole = true;
-        for (int band = area.y / band_height; band <= (area.bottom() - 1) / band_height; ++band)
-            inside_whole = inside_whole && whole[static_cast<std::size_t>(band)];
+        for_each_band(area, [&](int band) { inside_whole = inside_whole && whole[static_cast<std::size_t>(band)]; });
         if (!inside_whole) delta.append(PixelDelta::between(m_snapshot, current, area));
     }
     // A stroke that never reached a pixel — clipped away by the selection, for

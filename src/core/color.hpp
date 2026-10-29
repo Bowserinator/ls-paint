@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -7,6 +8,10 @@
 #include "core/types.hpp"
 
 namespace lsp {
+
+// The digits of a colour written in the short "rgb" and the long "rrggbb" hex form.
+inline constexpr std::size_t kShortHexDigits = 3;
+inline constexpr std::size_t kLongHexDigits = 6;
 
 // A colour as hue, saturation and value: hue in degrees, the other two in [0, 1].
 // The Edit Colors picker arranges its ring and square in this space.

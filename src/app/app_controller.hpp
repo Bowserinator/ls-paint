@@ -94,7 +94,6 @@ public:
     // The system clipboard. Copy and cut also feed the selection clipboard, so
     // the pixels can leave the application and come back.
     IoResult copy_to_clipboard();
-    IoResult paste_from_clipboard();
     IoResult paste_from_file(const std::filesystem::path& path);
     // Pastes pixels the caller has already read, such as one off the system
     // clipboard.
@@ -115,8 +114,7 @@ private:
         change();
         push_geometry_edit(std::move(before), std::move(selection_before));
     }
-    // The region Copy and Cut take: the selection when there is one, otherwise
-    // the whole canvas.
+    // The selection's bounds, or the whole canvas when nothing is selected.
     [[nodiscard]] RectI copy_source_rect() const;
 
     CanvasDocument m_document;

@@ -11,7 +11,7 @@ void DropperTool::on_pointer_down(ToolContext& context, Point2f position, Pointe
     const int y = floor_to_int(position.y);
     if (!flattened.contains(x, y)) return;
     Rgba8 picked = flattened.at(x, y);
-    picked.a = 255;  // picking must not yield invisible ink
+    picked.a = kChannelMax;
     context.colors.for_button(button) = picked;
 }
 

@@ -29,11 +29,11 @@ PixelBuffer apply_transform(const PixelBuffer& source, ContentTransform transfor
 // 0/1 mask bytes packed one per pixel so the mask can travel through the same
 // PixelBuffer transform as the pixels it masks.
 PixelBuffer bytes_to_pixels(const std::vector<std::uint8_t>& bytes, int width, int height) {
-    PixelBuffer pixels(width, height, {0, 0, 0, 255});
+    PixelBuffer pixels(width, height, {0, 0, 0, kChannelMax});
     for (int y = 0; y < height; ++y)
         for (int x = 0; x < width; ++x) {
-            const std::uint8_t value = bytes[grid_index(x, y, width)] ? 255 : 0;
-            pixels.at(x, y) = {value, value, value, 255};
+            const std::uint8_t value = bytes[grid_index(x, y, width)] ? kChannelMax : 0;
+            pixels.at(x, y) = {value, value, value, kChannelMax};
         }
     return pixels;
 }
@@ -44,21 +44,6 @@ std::vector<std::uint8_t> pixels_to_bytes(const PixelBuffer& pixels) {
         for (int x = 0; x < pixels.width(); ++x)
             bytes[grid_index(x, y, pixels.width())] = pixels.at(x, y).r != 0 ? 1 : 0;
     return bytes;
-}
-
-// Writes only the masked pixels of `source`, so unselected destinations survive.
-void paste_masked(PixelBuffer& target, const PixelBuffer& source, int x, int y,
-                  const std::vector<std::uint8_t>& mask) {
-    for (int j = 0; j < source.height(); ++j) {
-        const int target_y = y + j;
-        if (target_y < 0 || target_y >= target.height()) continue;
-        for (int i = 0; i < source.width(); ++i) {
-            if (mask[grid_index(i, j, source.width())] == 0) continue;
-            const int target_x = x + i;
-            if (target_x < 0 || target_x >= target.width()) continue;
-            target.at(target_x, target_y) = source.at(i, j);
-        }
-    }
 }
 
 // The background color is what shows through wherever a selection used to be,
@@ -101,33 +86,15 @@ void stamp_from_bytes(PixelBuffer& target, RectI rect, const PixelBuffer& conten
         }
 }
 
-// The source cell that the cell at `index` of a `size` long axis takes its
-// value from when the axis is stretched or squashed from `source_size`.
-int nearest_source(int index, int source_size, int size) {
-    return std::min(source_size - 1, index * source_size / size);
-}
-
-PixelBuffer resample(const PixelBuffer& source, int width, int height) {
-    if (width <= 0 || height <= 0 || source.width() <= 0 || source.height() <= 0) return {};
-    PixelBuffer result(width, height);
-    for (int y = 0; y < height; ++y) {
-        const int source_y = nearest_source(y, source.height(), height);
-        for (int x = 0; x < width; ++x) {
-            result.at(x, y) = source.at(nearest_source(x, source.width(), width), source_y);
-        }
-    }
-    return result;
-}
-
 std::vector<std::uint8_t> resample(const std::vector<std::uint8_t>& source, int source_width, int source_height,
                                    int width, int height) {
     if (width <= 0 || height <= 0 || source_width <= 0 || source_height <= 0 || source.empty()) return {};
     std::vector<std::uint8_t> result(static_cast<std::size_t>(width) * height, 0);
     for (int y = 0; y < height; ++y) {
-        const int source_y = nearest_source(y, source_height, height);
+        const int source_y = nearest_source_index(y, source_height, height);
         for (int x = 0; x < width; ++x) {
             result[grid_index(x, y, width)] =
-                source[grid_index(nearest_source(x, source_width, width), source_y, source_width)];
+                source[grid_index(nearest_source_index(x, source_width, width), source_y, source_width)];
         }
     }
     return result;
@@ -166,8 +133,8 @@ TurnedBlock turned_block(const PixelBuffer& source, const std::vector<std::uint8
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             // Back from a turned pixel to the pixel its centre came from.
-            const float dx = static_cast<float>(x) + 0.5f - centre_x;
-            const float dy = static_cast<float>(y) + 0.5f - centre_y;
+            const float dx = pixel_center(x) - centre_x;
+            const float dy = pixel_center(y) - centre_y;
             const int source_x = floor_to_int(dx * straight + dy * square + source_centre_x);
             const int source_y = floor_to_int(-dx * square + dy * straight + source_centre_y);
             if (!source.contains(source_x, source_y)) continue;
@@ -178,6 +145,26 @@ TurnedBlock turned_block(const PixelBuffer& source, const std::vector<std::uint8
         }
     }
     return result;
+}
+
+bool has_selection(const SelectionMask& mask) { return mask.active() && !mask.bounds().empty(); }
+
+// Starts an edit of the floating contents, lifting them first when needed.
+// False when there is nothing selected to edit.
+bool begin_float_edit(const PixelBuffer& pixels, SelectionMask& mask,
+                      std::optional<FloatingContents>& floating, Rgba8 fill, SelectionEdit& edit) {
+    if (!has_selection(mask)) return false;
+    edit.mask_before = mask;
+    edit.float_before = floating;
+    lift_contents(pixels, mask, floating, fill);
+    return floating.has_value();
+}
+
+SelectionEdit finish_float_edit(SelectionEdit edit, const SelectionMask& mask,
+                                const std::optional<FloatingContents>& floating) {
+    edit.mask_after = mask;
+    edit.float_after = floating;
+    return edit;
 }
 
 // Rebuilds the document mask from a floating selection's local mask, which is
@@ -199,9 +186,9 @@ void bake_turn(FloatingContents& contents) {
 }  // namespace
 
 float wrap_degrees(float degrees) {
-    float wrapped = std::fmod(degrees + 180.0f, 360.0f);
-    if (wrapped < 0.0f) wrapped += 360.0f;
-    return wrapped - 180.0f;
+    float wrapped = std::fmod(degrees + kHalfTurnDegrees, kFullTurnDegrees);
+    if (wrapped < 0.0f) wrapped += kFullTurnDegrees;
+    return wrapped - kHalfTurnDegrees;
 }
 
 void invert_colors(PixelBuffer& pixels, const SelectionMask& mask, RectI region) {
@@ -210,8 +197,7 @@ void invert_colors(PixelBuffer& pixels, const SelectionMask& mask, RectI region)
         for (int x = region.x; x < region.right(); ++x) {
             if (mask.active() && !mask.contains(x, y)) continue;
             Rgba8& pixel = pixels.at(x, y);
-            pixel = {static_cast<std::uint8_t>(255 - pixel.r), static_cast<std::uint8_t>(255 - pixel.g),
-                     static_cast<std::uint8_t>(255 - pixel.b), pixel.a};
+            pixel = inverted(pixel);
         }
 }
 
@@ -224,7 +210,7 @@ PixelBuffer with_color_cleared(const PixelBuffer& pixels, Rgba8 color) {
 }
 
 ClipboardContent capture_clipboard(const PixelBuffer& pixels, const SelectionMask& mask) {
-    if (!mask.active() || mask.bounds().empty()) return {};
+    if (!has_selection(mask)) return {};
     const RectI region = mask.bounds().intersected(pixels.bounds());
     if (region.empty()) return {};
 
@@ -286,28 +272,6 @@ SelectionEdit erase_contents(PixelBuffer& pixels, SelectionMask& mask,
     return edit;
 }
 
-SelectionEdit paste_clipboard(PixelBuffer& pixels, SelectionMask& mask, const ClipboardContent& clip,
-                              int x, int y) {
-    if (clip.empty()) return {};
-    const RectI target{x, y, clip.width, clip.height};
-    const RectI region = target.intersected(pixels.bounds());
-    if (region.empty()) return {};
-
-    SelectionEdit edit;
-    edit.region = region;
-    const PixelBuffer before = pixels;
-    edit.mask_before = mask;
-
-    paste_masked(pixels, clip.pixels, x, y, clip.mask);
-
-    mask.clear();
-    mask.replace_region(target, clip.mask);
-
-    edit.mask_after = mask;
-    edit.pixels = PixelDelta::between(before, pixels, region);
-    return edit;
-}
-
 FloatingContents float_block(PixelBuffer content, std::vector<std::uint8_t> mask, int x, int y) {
     FloatingContents contents;
     if (content.width() <= 0 || content.height() <= 0) return contents;
@@ -354,14 +318,8 @@ void translate_contents(SelectionMask& mask, FloatingContents& contents, int dx,
 SelectionEdit transform_contents(const PixelBuffer& pixels, SelectionMask& mask,
                                  std::optional<FloatingContents>& floating, ContentTransform transform,
                                  Rgba8 fill) {
-    if (!mask.active() || mask.bounds().empty()) return {};
-
     SelectionEdit edit;
-    edit.mask_before = mask;
-    edit.float_before = floating;  // before the lift: undo drops the float
-
-    lift_contents(pixels, mask, floating, fill);
-    if (!floating) return {};
+    if (!begin_float_edit(pixels, mask, floating, fill, edit)) return {};
 
     FloatingContents& contents = *floating;
     const RectI old_position = contents.position;
@@ -384,25 +342,17 @@ SelectionEdit transform_contents(const PixelBuffer& pixels, SelectionMask& mask,
     contents.position = {old_position.x + (old_position.width - transformed_content.width()) / 2,
                          old_position.y + (old_position.height - transformed_content.height()) / 2,
                          transformed_content.width(), transformed_content.height()};
-    contents.content = resample(contents.source, contents.position.width, contents.position.height);
+    contents.content = contents.source.scaled(contents.position.width, contents.position.height);
     contents.mask = resample(contents.source_mask, contents.source.width(), contents.source.height(),
                              contents.position.width, contents.position.height);
     sync_mask(mask, contents);
-
-    edit.mask_after = mask;
-    edit.float_after = floating;
-    return edit;
+    return finish_float_edit(std::move(edit), mask, floating);
 }
 
 SelectionEdit rotate_contents(const PixelBuffer& pixels, SelectionMask& mask,
                               std::optional<FloatingContents>& floating, float degrees, Rgba8 fill) {
-    if (!mask.active() || mask.bounds().empty()) return {};
-
     SelectionEdit edit;
-    edit.mask_before = mask;
-    edit.float_before = floating;
-    lift_contents(pixels, mask, floating, fill);
-    if (!floating) return {};
+    if (!begin_float_edit(pixels, mask, floating, fill, edit)) return {};
 
     FloatingContents& contents = *floating;
     if (contents.rotation == 0.0f) contents.turn_bounds = contents.position;
@@ -418,7 +368,7 @@ SelectionEdit rotate_contents(const PixelBuffer& pixels, SelectionMask& mask,
     const bool laid_out =
         contents.source.width() == base_width && contents.source.height() == base_height;
     const PixelBuffer base_pixels =
-        laid_out ? contents.source : resample(contents.source, base_width, base_height);
+        laid_out ? contents.source : contents.source.scaled(base_width, base_height);
     const std::vector<std::uint8_t> base_mask =
         laid_out ? contents.source_mask
                  : resample(contents.source_mask, contents.source.width(), contents.source.height(),
@@ -436,16 +386,13 @@ SelectionEdit rotate_contents(const PixelBuffer& pixels, SelectionMask& mask,
     // fresh one.
     if (contents.rotation == 0.0f) contents.turn_bounds = {};
     sync_mask(mask, contents);
-
-    edit.mask_after = mask;
-    edit.float_after = floating;
-    return edit;
+    return finish_float_edit(std::move(edit), mask, floating);
 }
 
 SelectionEdit scale_contents(const PixelBuffer& pixels, SelectionMask& mask,
                              std::optional<FloatingContents>& floating, int width, int height,
                              Rgba8 fill) {
-    if (width <= 0 || height <= 0 || !mask.active() || mask.bounds().empty()) return {};
+    if (width <= 0 || height <= 0 || !has_selection(mask)) return {};
 
     const std::optional<FloatingContents> float_before = floating;  // before the lift: undo drops it
     lift_contents(pixels, mask, floating, fill);
@@ -460,20 +407,14 @@ SelectionEdit scale_contents(const PixelBuffer& pixels, SelectionMask& mask,
 SelectionEdit skew_contents(const PixelBuffer& pixels, SelectionMask& mask,
                             std::optional<FloatingContents>& floating, float horizontal_degrees,
                             float vertical_degrees, Rgba8 fill) {
-    if (!mask.active() || mask.bounds().empty()) return {};
-
     SelectionEdit edit;
-    edit.mask_before = mask;
-    edit.float_before = floating;  // before the lift: undo drops the float
-
-    lift_contents(pixels, mask, floating, fill);
-    if (!floating) return {};
+    if (!begin_float_edit(pixels, mask, floating, fill, edit)) return {};
 
     FloatingContents& contents = *floating;
     const int width = contents.content.width();
     const int height = contents.content.height();
     const PixelBuffer shape = bytes_to_pixels(contents.mask, width, height);
-    const Rgba8 outside{0, 0, 0, 255};
+    const Rgba8 outside{0, 0, 0, kChannelMax};
 
     contents.content = contents.content.skewed_horizontal(horizontal_degrees, kTransparent)
                            .skewed_vertical(vertical_degrees, kTransparent);
@@ -489,15 +430,12 @@ SelectionEdit skew_contents(const PixelBuffer& pixels, SelectionMask& mask,
     contents.rotation = 0.0f;
     contents.turn_bounds = {};
     sync_mask(mask, contents);
-
-    edit.mask_after = mask;
-    edit.float_after = floating;
-    return edit;
+    return finish_float_edit(std::move(edit), mask, floating);
 }
 
 SelectionEdit resize_selection(SelectionMask& mask, std::optional<FloatingContents>& floating,
                                RectI new_bounds) {
-    if (new_bounds.empty() || !mask.active() || mask.bounds().empty()) return {};
+    if (new_bounds.empty() || !has_selection(mask)) return {};
 
     SelectionEdit edit;
     edit.mask_before = mask;
@@ -512,7 +450,7 @@ SelectionEdit resize_selection(SelectionMask& mask, std::optional<FloatingConten
         const PixelBuffer& sample = contents.source.width() > 0 ? contents.source : contents.content;
         const std::vector<std::uint8_t>& sample_mask =
             contents.source_mask.empty() ? contents.mask : contents.source_mask;
-        contents.content = resample(sample, new_bounds.width, new_bounds.height);
+        contents.content = sample.scaled(new_bounds.width, new_bounds.height);
         contents.mask = resample(sample_mask, sample.width(), sample.height(), new_bounds.width,
                                  new_bounds.height);
         contents.position = new_bounds;
@@ -526,9 +464,7 @@ SelectionEdit resize_selection(SelectionMask& mask, std::optional<FloatingConten
         mask.replace_region(new_bounds, bytes);
     }
 
-    edit.mask_after = mask;
-    edit.float_after = floating;
-    return edit;
+    return finish_float_edit(std::move(edit), mask, floating);
 }
 
 SelectionEdit commit_contents(PixelBuffer& pixels, SelectionMask& mask,

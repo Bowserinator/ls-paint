@@ -18,7 +18,7 @@ namespace lsp {
 
 struct ColorPair {
     Rgba8 primary{0, 0, 0};
-    Rgba8 secondary{255, 255, 255};
+    Rgba8 secondary = kWhite;
 
     [[nodiscard]] Rgba8& for_button(PointerButton button) noexcept {
         return button == PointerButton::Primary ? primary : secondary;
@@ -33,7 +33,7 @@ struct ColorPair {
     // stays the raw write path for the dropper and the UI.
     [[nodiscard]] Rgba8 ink(PointerButton button) const noexcept {
         Rgba8 color = for_button(button);
-        color.a = 255;
+        color.a = kChannelMax;
         return color;
     }
 

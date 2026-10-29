@@ -200,9 +200,6 @@ void test_glyph_skips_pixels_off_canvas() {
 }
 
 void test_bounds_helpers_round_outward() {
-    const RectI line = raster::bounds_line({1, 1}, {5, 5}, 3);
-    CHECK(line.width == 7 && line.height == 7);
-    CHECK(line.x == 0 && line.y == 0);
     const RectI points = raster::bounds_points(std::vector<Point2f>{{2, 3}, {8, 9}}, 1);
     CHECK(points.x <= 2 && points.y <= 3);
     CHECK(points.right() >= 8 && points.bottom() >= 9);

@@ -7,6 +7,7 @@
 #include <slint.h>
 
 #include "core/pixel_buffer.hpp"
+#include "render/tile_resample.hpp"
 
 namespace lsp {
 
@@ -16,7 +17,7 @@ namespace lsp {
 // shown.
 class SlintBridge {
 public:
-    SlintBridge(int width, int height);
+    SlintBridge();
 
     void upload(const PixelBuffer& source, RectI region);
 
@@ -32,6 +33,8 @@ public:
     // Document pixels each tile image shows past its edge. The window lays the
     // tiles out with the same value.
     [[nodiscard]] float tile_overlap() const;
+    // Device pixels per logical pixel, which the window lays the tiles out with.
+    [[nodiscard]] float device_ratio() const { return m_dpr; }
     // Whether the window should show tile pixels as crisp blocks.
     [[nodiscard]] bool pixelated() const;
 
@@ -60,6 +63,10 @@ private:
     // Makes the images of the tiles at `indices`, spreading the work over the
     // machine's cores.
     void build(const PixelBuffer& source, const std::vector<std::size_t>& indices);
+    // The screen pixels of the tiles at `indices`, with each run of tiles that
+    // sit side by side in a row filtered as one picture.
+    [[nodiscard]] std::vector<PixelGrid> screen_grid_tiles(const PixelBuffer& source,
+                                                           const std::vector<std::size_t>& indices) const;
     // Builds the tiles near the view that are missing and drops the far ones.
     void show_range(const PixelBuffer& source);
 
@@ -71,6 +78,7 @@ private:
     float m_zoom = 1.0f;
     float m_dpr = 1.0f;
     bool m_resampled = false;
+    bool m_device = true;
     RectI m_view;
     bool m_has_view = false;
     std::vector<bool> m_present;  // whether each tile holds its image

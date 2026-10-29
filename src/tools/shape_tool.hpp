@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <span>
 #include <string>
@@ -48,16 +47,6 @@ enum class ShapeId {
     Lightning,
 };
 
-// Every kind in ribbon order.
-inline constexpr std::array<ShapeId, 23> kShapeIds{
-    ShapeId::Line,      ShapeId::Curve,          ShapeId::Oval,          ShapeId::Rectangle,
-    ShapeId::RoundedRect, ShapeId::Polygon,      ShapeId::Triangle,      ShapeId::RightTriangle,
-    ShapeId::Diamond,   ShapeId::Pentagon,       ShapeId::Hexagon,       ShapeId::ArrowRight,
-    ShapeId::ArrowLeft, ShapeId::ArrowUp,        ShapeId::ArrowDown,     ShapeId::Star4,
-    ShapeId::Star5,     ShapeId::Star6,          ShapeId::CalloutRounded, ShapeId::CalloutOval,
-    ShapeId::CalloutCloud, ShapeId::Heart,       ShapeId::Lightning,
-};
-
 // How the outline or the fill of a shape is painted. `None` leaves that part
 // out, `Solid` paints it in one color, the rest lay down a brush texture.
 enum class ShapeTexture { None, Solid, Crayon, Marker, Oil, NaturalPencil, Watercolor };
@@ -74,7 +63,7 @@ struct ShapeOptions {
     int corner_radius = kDefaultCornerRadius;
 };
 
-// Written by ShapeTool, read by UiState when it synchronizes the canvas overlay.
+// What the shape tool shows while a gesture is running.
 struct ShapePreview {
     bool visible = false;
     // The shape as the commit will paint it, on a transparent sheet, and where

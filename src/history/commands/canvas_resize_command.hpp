@@ -11,9 +11,8 @@
 namespace lsp {
 
 // Undo entry for a whole-image geometry change (resize, crop, rotate, flip, or
-// a paste that grew the canvas). It keeps the state the document had before
-// the change, and every undo or redo exchanges that with the document's, so no
-// layer is copied and one state is held instead of two.
+// a paste that grew the canvas). Undo and redo swap the document's state with
+// the one kept here.
 class CanvasResizeCommand final : public ICommand {
 public:
     CanvasResizeCommand(std::vector<PixelBuffer> before, SelectionMask selection_before,
@@ -27,7 +26,7 @@ public:
 
     [[nodiscard]] std::size_t memory_bytes() const noexcept override {
         std::size_t total = 0;
-        for (const PixelBuffer& pixels : m_before) total += pixel_bytes(pixels);
+        for (const PixelBuffer& pixels : m_before) total += pixels.storage_bytes();
         total += m_selection.memory_bytes();
         if (m_floating) total += m_floating->memory_bytes();
         return total;

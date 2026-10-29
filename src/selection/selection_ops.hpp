@@ -23,11 +23,8 @@ struct ClipboardContent {
 };
 
 // The selection's contents while they float above the layer. Rotate, flip,
-// move and resize only transform this copy, so the canvas underneath stays
-// exactly as it was until the selection is committed (deselect, paste, another
-// tool taking over, ...) — rotating 90° twice really is a 180° rotation of the
-// untouched originals instead of two lifts that pile background color into the
-// corners.
+// move and resize only transform this copy, so the layer underneath is
+// unchanged until the selection is committed.
 struct FloatingContents {
     PixelBuffer content;                    // pixels, laid out for `position`
     RectI position;                         // document rect `content` sits in
@@ -52,7 +49,7 @@ struct FloatingContents {
     [[nodiscard]] bool empty() const noexcept { return content.width() <= 0; }
 
     [[nodiscard]] std::size_t memory_bytes() const noexcept {
-        return pixel_bytes(content) + pixel_bytes(source) + mask.size() + origin_mask.size() +
+        return content.storage_bytes() + source.storage_bytes() + mask.size() + origin_mask.size() +
                source_mask.size();
     }
 
@@ -100,11 +97,6 @@ void invert_colors(PixelBuffer& pixels, const SelectionMask& mask, RectI region)
 // instead: only their origin is filled, everything they hovered over survives.
 [[nodiscard]] SelectionEdit erase_contents(PixelBuffer& pixels, SelectionMask& mask,
                                            std::optional<FloatingContents>& floating, Rgba8 fill);
-
-// Writes `clip` at (x, y) and makes the pasted block the new selection. The
-// edit is empty when the block would land entirely off-canvas.
-[[nodiscard]] SelectionEdit paste_clipboard(PixelBuffer& pixels, SelectionMask& mask,
-                                            const ClipboardContent& clip, int x, int y);
 
 // A floating copy of a block that did not come from the layer — a pasted image
 // or a pasted selection. The contents hover above the canvas until the

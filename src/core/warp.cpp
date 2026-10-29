@@ -7,6 +7,12 @@
 
 namespace lsp::warp {
 
+namespace {
+
+constexpr int kTaps = 4;
+
+}  // namespace
+
 Rgba8 sample_bilinear(const PixelBuffer& source, float x, float y) noexcept {
     if (source.width() <= 0 || source.height() <= 0) return kTransparent;
 
@@ -19,16 +25,16 @@ Rgba8 sample_bilinear(const PixelBuffer& source, float x, float y) noexcept {
     const float tx = fx - static_cast<float>(x0);
     const float ty = fy - static_cast<float>(y0);
 
-    const Rgba8 taps[4] = {source.at(x0, y0), source.at(x1, y0), source.at(x0, y1),
+    const Rgba8 taps[kTaps] = {source.at(x0, y0), source.at(x1, y0), source.at(x0, y1),
                            source.at(x1, y1)};
-    const float weights[4] = {(1.0f - tx) * (1.0f - ty), tx * (1.0f - ty),
+    const float weights[kTaps] = {(1.0f - tx) * (1.0f - ty), tx * (1.0f - ty),
                               (1.0f - tx) * ty, tx * ty};
 
     float red = 0.0f;
     float green = 0.0f;
     float blue = 0.0f;
     float alpha = 0.0f;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < kTaps; ++i) {
         const float weight = weights[i];
         const float tap_alpha = unit_from_byte(taps[i].a);
         red += weight * static_cast<float>(taps[i].r) * tap_alpha;
@@ -39,10 +45,10 @@ Rgba8 sample_bilinear(const PixelBuffer& source, float x, float y) noexcept {
     if (alpha <= 0.0f) return kTransparent;
 
     const auto channel = [alpha](float value) {
-        return static_cast<std::uint8_t>(std::clamp(value / alpha + 0.5f, 0.0f, 255.0f));
+        return static_cast<std::uint8_t>(std::clamp(value / alpha + 0.5f, 0.0f, kChannelMaxFloat));
     };
     return Rgba8{channel(red), channel(green), channel(blue),
-                 static_cast<std::uint8_t>(std::clamp(alpha * 255.0f + 0.5f, 0.0f, 255.0f))};
+                 static_cast<std::uint8_t>(std::clamp(alpha * kChannelMaxFloat + 0.5f, 0.0f, kChannelMaxFloat))};
 }
 
 }  // namespace lsp::warp

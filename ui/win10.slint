@@ -139,7 +139,7 @@ export component WinFocusDots inherits Rectangle {
 }
 
 // A push button as Windows 10 draws it: a flat gray face and a thin gray edge
-// that turn blue under the pointer. The default button keeps a thick blue edge.
+// that turn blue under the pointer. The default button keeps the blue edge.
 export component WinButton inherits Rectangle {
     in property <string> text: "";
     in property <bool> is-default: false;
@@ -152,7 +152,7 @@ export component WinButton inherits Rectangle {
         : touch.pressed ? Win10.button-pressed
         : touch.has-hover ? Win10.button-hover
         : Win10.button-face;
-    border-width: (root.is-default && !root.disabled) ? 2px : 1px;
+    border-width: 1px;
     border-color: root.disabled ? Win10.button-off-border
         : touch.pressed ? Win10.accent-pressed
         : (touch.has-hover || root.is-default) ? Win10.accent

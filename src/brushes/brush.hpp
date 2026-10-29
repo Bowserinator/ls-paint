@@ -6,6 +6,8 @@ namespace lsp {
 
 enum class BrushShape { Round, Square };
 
+inline constexpr float kDefaultBrushSpacing = 0.25f;
+
 // The brush types the Brushes picker offers.
 enum class BrushKind {
     Brush,
@@ -35,7 +37,7 @@ struct BrushProfile {
     BrushShape shape = BrushShape::Round;
     float angle = 0;      // degrees, for the chisel tips
     float nib_width = 1;  // across the tip, as a fraction of its length
-    float spacing = 0.25f;
+    float spacing = kDefaultBrushSpacing;
     float coverage = 1;
     float alpha = 1;
     float grain = 0;
@@ -60,7 +62,7 @@ namespace brush {
 
 struct Brush {
     int size = 8;
-    float spacing = 0.25f;
+    float spacing = kDefaultBrushSpacing;
     BrushShape shape = BrushShape::Round;
     BrushKind kind = BrushKind::Brush;
 };

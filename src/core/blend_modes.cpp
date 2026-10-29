@@ -36,16 +36,11 @@ Rgba8 blend_multiply(Rgba8 base, Rgba8 top, float opacity) {
     return blend_with(base, top, opacity, [](float cb, float cs) { return cb * cs; });
 }
 
-Rgba8 blend_screen(Rgba8 base, Rgba8 top, float opacity) {
-    return blend_with(base, top, opacity, [](float cb, float cs) { return cb + cs - cb * cs; });
-}
-
 }  // namespace
 
 BlendFn blend_fn_for(BlendMode mode) {
     switch (mode) {
         case BlendMode::Multiply: return &blend_multiply;
-        case BlendMode::Screen: return &blend_screen;
         case BlendMode::Normal: break;
     }
     return &blend_normal;

@@ -4,6 +4,7 @@
 #include <unordered_set>
 
 #include "config.hpp"
+#include "utils/math.hpp"
 #include "utils/parallel.hpp"
 
 namespace lsp {
@@ -20,7 +21,7 @@ PixelBuffer::PixelBuffer(int width, int height, Rgba8 fill) : m_width(width), m_
     m_band_mask = band_rows - 1;
 
     const auto row_count = static_cast<std::size_t>(height);
-    const std::size_t band_count = (row_count + band_rows - 1) / band_rows;
+    const std::size_t band_count = ceil_div(row_count, band_rows);
     const auto make_band = [&](std::size_t rows) {
         return std::make_shared<std::vector<Rgba8>>(rows * static_cast<std::size_t>(width), fill);
     };
@@ -123,21 +124,24 @@ constexpr int kTransposeBlock = 32;
 
 }  // namespace
 
-// Both 90 degree turns are a transpose with one axis reversed. The result is
-// built a band at a time, each on its own thread, and only ever written once.
-PixelBuffer PixelBuffer::rotated_90_cw() const {
-    PixelBuffer result(m_height, m_width);
+// The result is built a band at a time, each on its own thread, and only ever
+// written once.
+template <typename ColumnFn, typename SourceXFn>
+PixelBuffer PixelBuffer::transposed(ColumnFn column_of, SourceXFn source_x_of) const {
+    const int source_height = m_height;
+    PixelBuffer result(source_height, m_width);
     result.allocate_all_bands();
     parallel_for(static_cast<std::size_t>(result.band_count()), [&](std::size_t index) {
         const RectI rows = result.band_rows(static_cast<int>(index));
         for (int r0 = rows.y; r0 < rows.bottom(); r0 += kTransposeBlock) {
             const int r1 = std::min(r0 + kTransposeBlock, rows.bottom());
-            for (int y0 = 0; y0 < m_height; y0 += kTransposeBlock) {
-                const int y1 = std::min(y0 + kTransposeBlock, m_height);
+            for (int y0 = 0; y0 < source_height; y0 += kTransposeBlock) {
+                const int y1 = std::min(y0 + kTransposeBlock, source_height);
                 for (int r = r0; r < r1; ++r) {
                     Rgba8* out = result.band(static_cast<int>(index))->data() +
-                                 static_cast<std::size_t>(r - rows.y) * static_cast<std::size_t>(m_height);
-                    for (int y = y0; y < y1; ++y) out[m_height - 1 - y] = row(y)[static_cast<std::size_t>(r)];
+                                 static_cast<std::size_t>(r - rows.y) * static_cast<std::size_t>(source_height);
+                    for (int y = y0; y < y1; ++y)
+                        out[column_of(y)] = row(y)[static_cast<std::size_t>(source_x_of(r))];
                 }
             }
         }
@@ -145,24 +149,12 @@ PixelBuffer PixelBuffer::rotated_90_cw() const {
     return result;
 }
 
+PixelBuffer PixelBuffer::rotated_90_cw() const {
+    return transposed([this](int y) { return m_height - 1 - y; }, [](int r) { return r; });
+}
+
 PixelBuffer PixelBuffer::rotated_90_ccw() const {
-    PixelBuffer result(m_height, m_width);
-    result.allocate_all_bands();
-    parallel_for(static_cast<std::size_t>(result.band_count()), [&](std::size_t index) {
-        const RectI rows = result.band_rows(static_cast<int>(index));
-        for (int r0 = rows.y; r0 < rows.bottom(); r0 += kTransposeBlock) {
-            const int r1 = std::min(r0 + kTransposeBlock, rows.bottom());
-            for (int y0 = 0; y0 < m_height; y0 += kTransposeBlock) {
-                const int y1 = std::min(y0 + kTransposeBlock, m_height);
-                for (int r = r0; r < r1; ++r) {
-                    Rgba8* out = result.band(static_cast<int>(index))->data() +
-                                 static_cast<std::size_t>(r - rows.y) * static_cast<std::size_t>(m_height);
-                    for (int y = y0; y < y1; ++y) out[y] = row(y)[static_cast<std::size_t>(m_width - 1 - r)];
-                }
-            }
-        }
-    });
-    return result;
+    return transposed([](int y) { return y; }, [this](int r) { return m_width - 1 - r; });
 }
 
 PixelBuffer PixelBuffer::rotated_180() const {
@@ -200,11 +192,11 @@ PixelBuffer PixelBuffer::scaled(int width, int height) const {
     if (width <= 0 || height <= 0 || m_width <= 0 || m_height <= 0) return {};
     PixelBuffer result(width, height);
     for (int y = 0; y < height; ++y) {
-        const int source_y = std::min(m_height - 1, static_cast<int>(static_cast<long long>(y) * m_height / height));
+        const int source_y = nearest_source_index(y, m_height, height);
         const std::span<const Rgba8> source = row(source_y);
         const std::span<Rgba8> out = result.row(y);
         for (int x = 0; x < width; ++x) {
-            const int source_x = std::min(m_width - 1, static_cast<int>(static_cast<long long>(x) * m_width / width));
+            const int source_x = nearest_source_index(x, m_width, width);
             out[static_cast<std::size_t>(x)] = source[static_cast<std::size_t>(source_x)];
         }
     }

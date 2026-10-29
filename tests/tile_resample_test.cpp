@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 
 #include "render/tile_resample.hpp"
 
@@ -148,6 +150,85 @@ void tiles_agree() {
     }
 }
 
+PixelBuffer noisy_source(int width, int height) {
+    PixelBuffer source(width, height, kWhite);
+    std::srand(11);
+    for (int y = 0; y < height; ++y)
+        for (int x = 0; x < width; ++x)
+            source.at(x, y) = Rgba8{static_cast<std::uint8_t>(std::rand()), static_cast<std::uint8_t>(std::rand()),
+                                    static_cast<std::uint8_t>(std::rand()), 255};
+    for (int x = 0; x < std::min(width, height); ++x) source.at(x, x) = Rgba8{0, 0, 0, 255};
+    return source;
+}
+
+void composite_matches(const PixelBuffer& source, float zoom, float dpr,
+                       const std::function<PixelGrid(DeviceBox)>& render) {
+    constexpr int kTile = 512;
+    const double scale = static_cast<double>(zoom) * static_cast<double>(dpr);
+    const float lap = resample_overlap(scale);
+    const int full_width = round_to_int(static_cast<float>(source.width()) * zoom * dpr);
+    const int full_height = round_to_int(static_cast<float>(source.height()) * zoom * dpr);
+    const PixelGrid reference = render(DeviceBox{0, 0, full_width, full_height});
+
+    std::vector<bool> covered(static_cast<std::size_t>(full_width) * static_cast<std::size_t>(full_height), false);
+    int mismatches = 0;
+    for (int row = 0; row * kTile < source.height(); ++row)
+        for (int column = 0; column * kTile < source.width(); ++column) {
+            const DeviceBox box = tile_device_box(column, row, kTile, lap, zoom, dpr, source.width(), source.height());
+            const PixelGrid tile = render(box);
+            for (int y = 0; y < tile.height; ++y)
+                for (int x = 0; x < tile.width; ++x) {
+                    const int dx = box.x + x;
+                    const int dy = box.y + y;
+                    if (dx >= full_width || dy >= full_height) continue;
+                    covered[grid_index(dx, dy, full_width)] = true;
+                    if (!(at(tile, x, y) == at(reference, dx, dy))) ++mismatches;
+                }
+        }
+    CHECK(mismatches == 0);
+    CHECK(std::all_of(covered.begin(), covered.end(), [](bool seen) { return seen; }));
+}
+
+void tiles_composite() {
+    const PixelBuffer source = noisy_source(1300, 1100);
+    const std::pair<float, float> views[] = {{0.12f, 1.0f}, {0.2f, 2.0f}, {0.3f, 1.0f}, {0.41f, 1.25f},
+                                             {0.45f, 1.25f}, {0.7f, 1.0f}, {0.99f, 1.0f}, {1.0f, 1.25f},
+                                             {1.0f, 1.0f}, {1.3f, 1.0f}, {1.5f, 1.25f}, {2.5f, 1.0f},
+                                             {3.7f, 1.0f}};
+    for (const auto& [zoom, dpr] : views) {
+        const double scale = static_cast<double>(zoom) * static_cast<double>(dpr);
+        const int level = quick_level(scale);
+        composite_matches(source, zoom, dpr,
+                          [&](DeviceBox box) { return sampled(source, box, scale, level); });
+        if (scale < 1.0)
+            composite_matches(source, zoom, dpr, [&](DeviceBox box) { return resampled(source, box, scale); });
+    }
+}
+
+// A row of tiles filtered as one picture and cut apart gives the pixels each
+// tile gets when filtered on its own.
+void rows_cut_apart() {
+    constexpr int kTile = 512;
+    const PixelBuffer source = noisy_source(1700, 600);
+    for (const auto& [zoom, dpr] : {std::pair{0.3f, 1.0f}, std::pair{0.2f, 2.0f}, std::pair{0.45f, 1.25f},
+                                    std::pair{0.7f, 1.0f}}) {
+        const double scale = static_cast<double>(zoom) * static_cast<double>(dpr);
+        const float lap = resample_overlap(scale);
+        const int columns = ceil_div(source.width(), kTile);
+        DeviceBox span = tile_device_box(0, 0, kTile, lap, zoom, dpr, source.width(), source.height());
+        for (int column = 1; column < columns; ++column)
+            span = united(span, tile_device_box(column, 0, kTile, lap, zoom, dpr, source.width(), source.height()));
+        const PixelGrid together = resampled(source, span, scale);
+        const PixelGrid together_quick = sampled(source, span, scale, quick_level(scale));
+        for (int column = 0; column < columns; ++column) {
+            const DeviceBox box = tile_device_box(column, 0, kTile, lap, zoom, dpr, source.width(), source.height());
+            CHECK(cropped(together, span, box).pixels == resampled(source, box, scale).pixels);
+            CHECK(cropped(together_quick, span, box).pixels ==
+                  sampled(source, box, scale, quick_level(scale)).pixels);
+        }
+    }
+}
+
 // A screenful at the smallest zoom is quick enough to redo when the zoom settles.
 void timing() {
     constexpr int kTile = 512;
@@ -168,6 +249,29 @@ void timing() {
     CHECK(ms.count() < 10000);
 }
 
+// Every row of an 8192 pixel square canvas at the scales that read the most,
+// filtered a row of tiles at a time as the window does.
+void large_canvas_timing() {
+    constexpr int kTile = 512;
+    constexpr int kSize = 8192;
+    const PixelBuffer source(kSize, kSize, kWhite);
+    for (const double scale : {0.5, 0.3, 0.2}) {
+        const float zoom = static_cast<float>(scale);
+        const float lap = resample_overlap(scale);
+        const int tiles = kSize / kTile;
+        const auto start = std::chrono::steady_clock::now();
+        for (int row = 0; row < tiles; ++row) {
+            DeviceBox span = tile_device_box(0, row, kTile, lap, zoom, 1.0f, kSize, kSize);
+            for (int column = 1; column < tiles; ++column)
+                span = united(span, tile_device_box(column, row, kTile, lap, zoom, 1.0f, kSize, kSize));
+            (void)resampled(source, span, scale);
+        }
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+        std::printf("8192 square canvas resampled at %.1f: %lld ms\n", scale, static_cast<long long>(ms.count()));
+        CHECK(ms.count() < 5000);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -177,7 +281,10 @@ int main() {
     checker();
     transparency();
     tiles_agree();
+    tiles_composite();
+    rows_cut_apart();
     timing();
+    large_canvas_timing();
     if (failures == 0) std::printf("all tile resample tests passed\n");
     return failures == 0 ? 0 : 1;
 }

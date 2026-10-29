@@ -40,7 +40,6 @@ void draw_polygon_fill(Target target, std::span<const Point2f> points, Rgba8 col
 void draw_glyph(Target target, int x, int y, int width, int height, int stride,
                 const std::uint8_t* coverage, Rgba8 color);
 
-[[nodiscard]] RectI bounds_line(Point2f a, Point2f b, int thickness);
 [[nodiscard]] RectI bounds_rect(RectI rect, int thickness);
 [[nodiscard]] RectI bounds_points(std::span<const Point2f> points, int thickness);
 

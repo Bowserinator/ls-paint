@@ -184,7 +184,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
     SelectionMask& selection = context.document.selection();
 
     if (shape == SelectionShape::Polygon && !m_polygon.empty()) {
-        if (m_polygon.size() >= 3 && distance(position, m_polygon.front()) <= kClosePolygonDistance) {
+        if (m_polygon.size() >= kMinPolygonPoints && distance(position, m_polygon.front()) <= kClosePolygonDistance) {
             context.commit_selection();
             selection.fill_polygon(m_polygon);
             m_polygon.clear();
@@ -205,8 +205,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
             context.ui.resize.cursor = resize_cursor_for(*handle);
             m_resize_bounds = bounds;
             m_resize_applied = bounds;
-            m_mask_before = selection;
-            m_float_before = context.document.floating();
+            remember_selection(context);
             return;
         }
 
@@ -216,8 +215,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
             m_contents_start = position;
             m_contents_dx = 0;
             m_contents_dy = 0;
-            m_mask_before = selection;
-            m_float_before = context.document.floating();
+            remember_selection(context);
             m_drag = Drag::Contents;
             return;
         }
@@ -225,8 +223,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
         // Just outside a corner the press starts a turn instead of a new
         // marquee.
         if (in_rotate_zone(bounds, position, context.zoom)) {
-            m_mask_before = selection;
-            m_float_before = context.document.floating();
+            remember_selection(context);
             m_rotate_centre = rotate_pivot(bounds, m_float_before);
             m_rotate_angle_start = bearing_degrees(m_rotate_centre, position);
             m_rotate_degrees = 0.0f;
@@ -258,12 +255,13 @@ void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
 
     // A drag in flight owns the badge, and so does a lasso being laid out; a
     // free pointer over the rotate zone raises it.
-    if (m_drag == Drag::None && m_polygon.empty())
+    const bool idle = m_drag == Drag::None && m_polygon.empty();
+    if (idle)
         update_rotate_hover(context, position);
     else
         context.ui.rotate.hover = false;
 
-    if (m_drag == Drag::None && m_polygon.empty())
+    if (idle)
         update_resize_hover(context, position);
     else if (m_drag != Drag::Resize)
         context.ui.resize = {};
@@ -355,6 +353,11 @@ void SelectionTool::on_key_pressed(ToolContext& context, std::string_view text) 
     m_polygon.clear();
     m_drag = Drag::None;
     context.ui.selection.points.clear();
+}
+
+void SelectionTool::remember_selection(ToolContext& context) {
+    m_mask_before = context.document.selection();
+    m_float_before = context.document.floating();
 }
 
 void SelectionTool::finish_contents_drag(ToolContext& context) {

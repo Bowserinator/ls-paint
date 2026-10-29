@@ -4,7 +4,7 @@
 
 namespace lsp {
 
-enum class BlendMode { Normal, Multiply, Screen };
+enum class BlendMode { Normal, Multiply };
 
 using BlendFn = Rgba8 (*)(Rgba8 base, Rgba8 top, float opacity);
 

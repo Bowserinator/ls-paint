@@ -27,7 +27,7 @@ Stamp stamp_for(int thickness) {
 
 void paint_pixel(Target target, int x, int y, Rgba8 color) {
     if (!target.allows(x, y)) return;
-    if (color.a == 255) {
+    if (color.a == kChannelMax) {
         target.pixels.at(x, y) = color;
         return;
     }
@@ -80,8 +80,8 @@ bool inside_ellipse(const Ellipse& ellipse, float x, float y, float inset) {
 bool inside_rounded_rect(int x, int y, RectI rect, int radius, int inset) {
     const RectI inner{rect.x + inset, rect.y + inset, rect.width - 2 * inset, rect.height - 2 * inset};
     if (inner.empty()) return false;
-    const float px = static_cast<float>(x) + 0.5f;
-    const float py = static_cast<float>(y) + 0.5f;
+    const float px = pixel_center(x);
+    const float py = pixel_center(y);
     const float r = std::min({static_cast<float>(radius), inner.width / 2.0f, inner.height / 2.0f});
     // Nearest corner center: the clamped point is the pixel itself on the
     // straight parts of the outline, which are then always inside.
@@ -183,7 +183,7 @@ void draw_ellipse_fill(Target target, RectI box, Rgba8 color) {
     if (box.empty()) return;
     const Ellipse ellipse = ellipse_in(box);
     paint_where(target, box, color, [&](int x, int y) {
-        return inside_ellipse(ellipse, static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, 0.0f);
+        return inside_ellipse(ellipse, pixel_center(x), pixel_center(y), 0.0f);
     });
 }
 
@@ -192,8 +192,8 @@ void draw_ellipse_outline(Target target, RectI box, int thickness, Rgba8 color) 
     const int t = std::max(1, thickness);
     const Ellipse ellipse = ellipse_in(box);
     paint_where(target, bounds_rect(box, t), color, [&](int x, int y) {
-        const float px = static_cast<float>(x) + 0.5f;
-        const float py = static_cast<float>(y) + 0.5f;
+        const float px = pixel_center(x);
+        const float py = pixel_center(y);
         return inside_ellipse(ellipse, px, py, 0.0f) &&
                !inside_ellipse(ellipse, px, py, static_cast<float>(t));
     });
@@ -212,11 +212,11 @@ void draw_polyline(Target target, std::span<const Point2f> points, int thickness
 }
 
 void draw_polygon_fill(Target target, std::span<const Point2f> points, Rgba8 color) {
-    if (points.size() < 3) return;
+    if (points.size() < kMinPolygonPoints) return;
     const RectI box = bounds_points(points, 0).intersected(target.pixels.bounds());
     std::vector<float> crossings;
     for (int y = box.y; y < box.bottom(); ++y) {
-        const float scan = static_cast<float>(y) + 0.5f;
+        const float scan = pixel_center(y);
         polygon_crossings(points, scan, crossings);
         for (std::size_t i = 0; i + 1 < crossings.size(); i += 2) {
             const int x0 = ceil_to_int(crossings[i] - 0.5f);
@@ -236,15 +236,6 @@ void draw_glyph(Target target, int x, int y, int width, int height, int stride,
             paint_pixel_with_coverage(target, x + column, y + row, color, unit_from_byte(line[column]));
         }
     }
-}
-
-RectI bounds_line(Point2f a, Point2f b, int thickness) {
-    const int x0 = round_to_int(a.x);
-    const int y0 = round_to_int(a.y);
-    const int x1 = round_to_int(b.x);
-    const int y1 = round_to_int(b.y);
-    return bounds_rect({std::min(x0, x1), std::min(y0, y1), std::abs(x1 - x0) + 1, std::abs(y1 - y0) + 1},
-                       thickness);
 }
 
 RectI bounds_rect(RectI rect, int thickness) {

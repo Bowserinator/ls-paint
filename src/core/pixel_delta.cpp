@@ -60,7 +60,7 @@ PixelDelta PixelDelta::between(const PixelBuffer& before, const PixelBuffer& aft
         }
         for (const RectI& area : changed) {
             Tile tile{area, before.copy_region(area), after.copy_region(area)};
-            delta.m_bytes += pixel_bytes(tile.before) + pixel_bytes(tile.after);
+            delta.m_bytes += tile.before.storage_bytes() + tile.after.storage_bytes();
             delta.m_tiles.push_back(std::move(tile));
             delta.m_bounds = delta.m_bounds.united(area);
         }

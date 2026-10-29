@@ -11,9 +11,8 @@
 
 namespace lsp {
 
-// A grid of pixels. Storage is split into horizontal bands that are shared
-// between copies until one of them is written to, so copying a buffer is cheap
-// and a fresh uniform buffer only costs memory where it is later painted.
+// A grid of pixels. Copying a buffer is cheap: copies share their pixels until
+// one of them is written to.
 //
 // Spans handed out by row() stay valid only until the buffer is copied or
 // assigned.
@@ -89,6 +88,11 @@ public:
 private:
     // Gives every band storage of its own, with nothing in it worth keeping.
     void allocate_all_bands();
+    // The transpose behind both 90 degree turns. Source row `y` lands in column
+    // `column_of(y)` of the result, and result row `r` reads source column
+    // `source_x_of(r)`.
+    template <typename ColumnFn, typename SourceXFn>
+    [[nodiscard]] PixelBuffer transposed(ColumnFn column_of, SourceXFn source_x_of) const;
 
     [[nodiscard]] std::size_t row_offset(int y) const noexcept {
         return (static_cast<std::size_t>(y) & m_band_mask) * static_cast<std::size_t>(m_width);
@@ -100,10 +104,5 @@ private:
     std::size_t m_band_mask = 0;
     std::vector<Band> m_bands;
 };
-
-// Bytes one buffer of this size holds.
-[[nodiscard]] inline std::size_t pixel_bytes(const PixelBuffer& pixels) noexcept {
-    return pixels.storage_bytes();
-}
 
 }  // namespace lsp

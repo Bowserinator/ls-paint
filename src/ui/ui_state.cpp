@@ -31,11 +31,11 @@ namespace lsp {
 
 namespace {
 
-const slint::Color kWhiteColor = slint::Color::from_rgb_uint8(255, 255, 255);
+const slint::Color kWhiteColor = slint::Color::from_rgb_uint8(kChannelMax, kChannelMax, kChannelMax);
 
 // The view's backdrop around the paper, which the pointer's marks read against
 // where the paper ends.
-constexpr Rgba8 kCanvasViewColor{0xc5, 0xcf, 0xdf, 255};
+constexpr Rgba8 kCanvasViewColor{0xc5, 0xcf, 0xdf, kChannelMax};
 
 slint::Color to_slint(Rgba8 color) {
     return slint::Color::from_argb_uint8(color.a, color.r, color.g, color.b);
@@ -44,7 +44,7 @@ slint::Color to_slint(Rgba8 color) {
 // Ink is always opaque: a color with alpha 0 would make every stroke invisible
 // while the pencil still appears to be drawing.
 Rgba8 to_rgba(slint::Color color) {
-    return {color.red(), color.green(), color.blue(), 255};
+    return {color.red(), color.green(), color.blue(), kChannelMax};
 }
 
 // A colour as it is stored: six hex digits, red first.
@@ -52,11 +52,13 @@ std::string color_text(const slint::Color& color) { return to_hex(to_rgba(color)
 
 // The colour a stored string names, or nothing when it is not six hex digits.
 std::optional<slint::Color> color_from_text(std::string_view text) {
-    if (text.size() != 6) return std::nullopt;
+    if (text.size() != kLongHexDigits) return std::nullopt;
     const std::optional<Rgba8> parsed = parse_color(text);
     if (!parsed) return std::nullopt;
     return to_slint(*parsed);
 }
+
+constexpr int kPercent = 100;
 
 // A resize field as a whole number of at least 1, or 0 when it is not one.
 [[nodiscard]] int parse_resize_field(const slint::SharedString& text) {
@@ -71,7 +73,7 @@ std::optional<slint::Color> color_from_text(std::string_view text) {
 // The pixels an axis of `base` takes from a resize field, or 0 when that is
 // not a size the canvas can have.
 [[nodiscard]] int resized_extent(int field, int base, bool percentage) {
-    const long long pixels = percentage ? (static_cast<long long>(base) * field + 50) / 100 : field;
+    const long long pixels = percentage ? (static_cast<long long>(base) * field + kPercent / 2) / kPercent : field;
     return pixels >= 1 && pixels <= kMaxCanvasDimension ? static_cast<int>(pixels) : 0;
 }
 
@@ -79,8 +81,8 @@ std::optional<slint::Color> color_from_text(std::string_view text) {
 // `base` pixels.
 [[nodiscard]] int converted_field(int value, int base, bool to_percentage) {
     if (base <= 0) return value;
-    const long long converted = to_percentage ? (static_cast<long long>(value) * 100 + base / 2) / base
-                                              : (static_cast<long long>(value) * base + 50) / 100;
+    const long long converted = to_percentage ? (static_cast<long long>(value) * kPercent + base / 2) / base
+                                              : (static_cast<long long>(value) * base + kPercent / 2) / kPercent;
     return static_cast<int>(std::clamp<long long>(converted, 1, 9999999));
 }
 
@@ -93,13 +95,14 @@ constexpr int kMaxSkewDegrees = 89;
     return static_cast<float>(*degrees);
 }
 
-// Marching ants: alternating light and dark runs three screen pixels long,
-// advanced one pixel per tick. The whole pattern is rebuilt on every tick, so
-// the animation is just the phase moving forward.
+// Marching ants: alternating light and dark runs three logical pixels long,
+// advanced one logical pixel per tick. The whole pattern is rebuilt on every
+// tick, so the animation is just the phase moving forward.
 constexpr int kAntSegment = 3;
-constexpr int kAntPeriod = kAntSegment * 2;
 constexpr auto kAntTick = std::chrono::milliseconds(80);
-// An outline longer than this many screen pixels is cut down to the window,
+// The phase counts up to this before starting over.
+constexpr int kAntPhaseWrap = 1 << 20;
+// An outline longer than this many device pixels is cut down to the window,
 // plus a margin so a scroll between two ticks shows no gap.
 constexpr float kAntClipLength = 4096.0f;
 constexpr int kAntClipMargin = 128;
@@ -122,15 +125,32 @@ constexpr std::array<EShapeKind, 23> kShapeGalleryOrder{
     EShapeKind::CALLOUTROUNDED, EShapeKind::CALLOUTOVAL, EShapeKind::CALLOUTCLOUD,
     EShapeKind::HEART,         EShapeKind::LIGHTNING};
 
-// Walks an outline given in screen pixels and emits the marching-ants runs:
-// alternating dark and light dashes of a fixed screen length, shifted by the
+// Whether a dialog that may never have been made is on screen.
+template <typename Handle>
+bool is_shown(const std::optional<Handle>& dialog) {
+    return dialog && (*dialog)->window().is_visible();
+}
+
+void set_hsv(lsp_colors::EditColorsWindow& picker, const Hsv& hsv) {
+    picker.set_hue(hsv.hue);
+    picker.set_saturation(hsv.saturation);
+    picker.set_value(hsv.value);
+}
+
+PointerButton button_from(bool secondary) {
+    return secondary ? PointerButton::Secondary : PointerButton::Primary;
+}
+
+// Walks an outline given in device pixels and emits the marching-ants runs:
+// alternating dark and light dashes of `segment` device pixels, shifted by the
 // phase. Dash length and weight depend only on the screen, so the outline looks
 // the same at every zoom. A closed outline joins its last point back to its
 // first. With a `clip`, only the dashes that reach it are made, so an outline
 // far larger than the window costs no more than the part that can be seen.
-void append_ant_runs(const std::vector<Point2f>& outline, bool closed, int phase, const RectI* clip,
+void append_ant_runs(const std::vector<Point2f>& outline, bool closed, int phase, int segment, const RectI* clip,
                      std::vector<SelectionDash>& dark, std::vector<SelectionDash>& light) {
     if (outline.empty()) return;
+    const int period = segment * 2;
 
     struct Run {
         int x = 0;
@@ -157,12 +177,12 @@ void append_ant_runs(const std::vector<Point2f>& outline, bool closed, int phase
         last_x = x;
         last_y = y;
         have_last = true;
-        const int offset = (((step++ - phase) % kAntPeriod) + kAntPeriod) % kAntPeriod;
+        const int offset = (((step++ - phase) % period) + period) % period;
         if (clip != nullptr && !clip->contains(x, y)) {
             flush();
             return;
         }
-        const bool is_dark = offset < kAntSegment;
+        const bool is_dark = offset < segment;
         if (run.open && run.dark == is_dark) {
             if (run.h == 1 && y == run.y && x == run.x + run.w) {
                 ++run.w;
@@ -229,29 +249,41 @@ void append_ant_runs(const std::vector<Point2f>& outline, bool closed, int phase
     flush();
 }
 
-// The outline of a selection box, in screen pixels at the given zoom. A box
+// The outline of a selection box, in device pixels at the given scale. A box
 // one pixel wide or tall collapses to a single line.
-std::vector<Point2f> border_outline(const RectI& bounds, float zoom) {
-    const float left = static_cast<float>(round_to_int(bounds.x * zoom));
-    const float top = static_cast<float>(round_to_int(bounds.y * zoom));
-    const float right = std::max(left, static_cast<float>(round_to_int(bounds.right() * zoom) - 1));
-    const float bottom =
-        std::max(top, static_cast<float>(round_to_int(bounds.bottom() * zoom) - 1));
+// The device pixels the selection's border runs along, as a box of its own.
+RectI border_box(const RectI& bounds, float scale) {
+    const int left = round_to_int(bounds.x * scale);
+    const int top = round_to_int(bounds.y * scale);
+    const int right = std::max(left, round_to_int(bounds.right() * scale) - 1);
+    const int bottom = std::max(top, round_to_int(bounds.bottom() * scale) - 1);
+    return {left, top, right - left + 1, bottom - top + 1};
+}
+
+std::vector<Point2f> border_outline(const RectI& bounds, float scale) {
+    const RectI box = border_box(bounds, scale);
+    const float left = static_cast<float>(box.x);
+    const float top = static_cast<float>(box.y);
+    const float right = static_cast<float>(box.right() - 1);
+    const float bottom = static_cast<float>(box.bottom() - 1);
     return {{left, top}, {right, top}, {right, bottom}, {left, bottom}};
 }
 
-std::vector<Point2f> scaled(const std::vector<Point2f>& points, float zoom) {
+std::vector<Point2f> scaled(const std::vector<Point2f>& points, float scale) {
     std::vector<Point2f> result;
     result.reserve(points.size());
-    for (const Point2f& point : points) result.push_back({point.x * zoom, point.y * zoom});
+    for (const Point2f& point : points) result.push_back({point.x * scale, point.y * scale});
     return result;
 }
 
-std::vector<SelectionGrip> grip_anchors(const RectI& bounds) {
+// The centres of the grips in device pixels, on the middle of the border's
+// line.
+std::vector<SelectionGrip> grip_centres(const RectI& bounds, float scale) {
+    const RectI box = border_box(bounds, scale);
     std::vector<SelectionGrip> grips;
     for (const SelectionHandle handle : kSelectionHandles) {
-        const Point2f anchor = handle_anchor(bounds, handle);
-        grips.push_back({anchor.x, anchor.y});
+        const Point2f anchor = handle_anchor(box, handle);
+        grips.push_back({anchor.x + 0.5f, anchor.y + 0.5f});
     }
     return grips;
 }
@@ -403,8 +435,7 @@ std::vector<Point2f> turned_corners(const FloatingContents& contents) {
 
 UiState::UiState(AppWindow& window, AppController& controller)
     : m_window(window),
-      m_controller(controller),
-      m_bridge(controller.document().width(), controller.document().height()) {
+      m_controller(controller) {
     m_window.set_tile_size(kDisplayTileSize);
     m_window.set_tiles(m_bridge.tiles());
     const auto show_view = [this](const ViewArea& area) {
@@ -485,8 +516,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
         m_last_press_position = {x, y};
 
         m_controller.context().zoom = m_window.global<UserState>().get_zoom();
-        m_controller.input().pointer_down(tool, {x, y},
-                                          secondary ? PointerButton::Secondary : PointerButton::Primary);
+        m_controller.input().pointer_down(tool, {x, y}, button_from(secondary));
         if (double_click) m_controller.input().double_click(tool);
 
         const ColorPair& colors = m_controller.colors();
@@ -506,8 +536,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
     m_window.global<UserState>().on_pointer_up([this](float x, float y, bool secondary) {
         m_controller.context().zoom = m_window.global<UserState>().get_zoom();
-        m_controller.input().pointer_up(
-            {x, y}, secondary ? PointerButton::Secondary : PointerButton::Primary);
+        m_controller.input().pointer_up({x, y}, button_from(secondary));
         refresh();
     });
 
@@ -657,7 +686,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
     // The outline crawls on its own: nothing else has to touch it.
     m_ants_timer.start(slint::TimerMode::Repeated, kAntTick, [this] {
-        m_ant_phase = (m_ant_phase + 1) % kAntPeriod;
+        m_ant_phase = (m_ant_phase + std::max(1, round_to_int(m_bridge.device_ratio()))) % kAntPhaseWrap;
         update_ants();
     });
 
@@ -747,6 +776,7 @@ void UiState::rebuild_tiles() {
 void UiState::publish_tile_style() {
     m_window.set_tile_overlap(m_bridge.tile_overlap());
     m_window.set_tile_pixelated(m_bridge.pixelated());
+    m_window.set_device_ratio(m_bridge.device_ratio());
 }
 
 UiState::SettingsSnapshot UiState::current_settings() const {
@@ -918,7 +948,7 @@ lsp_colors::EditColorsWindow& UiState::color_window() {
 }
 
 bool UiState::color_window_open() const noexcept {
-    return m_color_window && (*m_color_window)->window().is_visible();
+    return is_shown(m_color_window);
 }
 
 void UiState::do_open_color_dialog() {
@@ -929,10 +959,7 @@ void UiState::do_open_color_dialog() {
     // The dialog edits whichever of the two colors is active.
     const slint::Color active =
         state.get_color_idx() == 0 ? state.get_primary_color() : state.get_secondary_color();
-    const Hsv hsv = hsv_from_rgb(to_rgba(active));
-    picker->set_hue(hsv.hue);
-    picker->set_saturation(hsv.saturation);
-    picker->set_value(hsv.value);
+    set_hsv(*picker, hsv_from_rgb(to_rgba(active)));
     // Every open centers the window again.
     push_color_dialog();
     (*m_color_window)->show();
@@ -948,9 +975,7 @@ void UiState::push_color_dialog() {
                   std::clamp(picker->get_value(), 0.0f, 1.0f)};
     const Rgba8 color = rgb_from_hsv(hsv);
     const Rgba8 hue_color = rgb_from_hsv(Hsv{hsv.hue, 1.0f, 1.0f});
-    picker->set_hue(hsv.hue);
-    picker->set_saturation(hsv.saturation);
-    picker->set_value(hsv.value);
+    set_hsv(*picker, hsv);
     picker->set_current(to_slint(color));
     picker->set_hue_color(to_slint(hue_color));
     picker->set_red_text(slint::SharedString(std::to_string(color.r)));
@@ -959,8 +984,8 @@ void UiState::push_color_dialog() {
     // RRGGBB in capitals, with no leading hash: the box is labelled Hex.
     picker->set_hex_text(slint::SharedString(uppered(to_hex(color).substr(1))));
     picker->set_hue_text(slint::SharedString(std::to_string(round_to_int(hsv.hue))));
-    picker->set_sat_text(slint::SharedString(std::to_string(round_to_int(hsv.saturation * 100.0f))));
-    picker->set_lum_text(slint::SharedString(std::to_string(round_to_int(hsv.value * 100.0f))));
+    picker->set_sat_text(slint::SharedString(std::to_string(round_to_int(hsv.saturation * kPercent))));
+    picker->set_lum_text(slint::SharedString(std::to_string(round_to_int(hsv.value * kPercent))));
 }
 
 void UiState::do_color_accepted() {
@@ -985,9 +1010,14 @@ void UiState::do_color_accepted() {
     refresh();
 }
 
-void UiState::close_color_window() {
-    if (m_color_window) (*m_color_window)->hide();
+template <typename Handle>
+void UiState::hide_dialog(std::optional<Handle> dialog) {
+    if (dialog) (*dialog)->hide();
     m_window.invoke_focus_app();
+}
+
+void UiState::close_color_window() {
+    hide_dialog(m_color_window);
 }
 
 void UiState::do_color_add_custom() {
@@ -1002,10 +1032,7 @@ void UiState::do_color_add_custom() {
 void UiState::do_color_basic_picked(const slint::Color& color) {
     lsp_colors::EditColorsWindow* picker = color_picker();
     if (!picker) return;
-    const Hsv hsv = hsv_from_rgb(to_rgba(color));
-    picker->set_hue(hsv.hue);
-    picker->set_saturation(hsv.saturation);
-    picker->set_value(hsv.value);
+    set_hsv(*picker, hsv_from_rgb(to_rgba(color)));
     push_color_dialog();
 }
 
@@ -1043,10 +1070,7 @@ void UiState::do_color_entered(const slint::SharedString& text) {
         push_color_dialog();
         return;
     }
-    const Hsv hsv = hsv_from_rgb(*parsed);
-    picker->set_hue(hsv.hue);
-    picker->set_saturation(hsv.saturation);
-    picker->set_value(hsv.value);
+    set_hsv(*picker, hsv_from_rgb(*parsed));
     push_color_dialog();
 }
 
@@ -1057,7 +1081,7 @@ void UiState::do_color_hex_edited(const slint::SharedString& text) {
     if (cleaned != std::string_view(text)) {
         color_picker()->set_hex_text(slint::SharedString(cleaned));
     }
-    if (cleaned.size() == 6 && parse_color(cleaned)) {
+    if (cleaned.size() == kLongHexDigits && parse_color(cleaned)) {
         do_color_entered(slint::SharedString(cleaned));
     }
 }
@@ -1108,8 +1132,7 @@ void UiState::ensure_confirm_window() {
 }
 
 void UiState::close_confirm_window() {
-    if (m_confirm_window) (*m_confirm_window)->hide();
-    m_window.invoke_focus_app();
+    hide_dialog(m_confirm_window);
 }
 
 lsp_confirm::ConfirmDialog& UiState::confirm_window() {
@@ -1118,7 +1141,7 @@ lsp_confirm::ConfirmDialog& UiState::confirm_window() {
 }
 
 bool UiState::confirm_window_open() const noexcept {
-    return m_confirm_window && (*m_confirm_window)->window().is_visible();
+    return is_shown(m_confirm_window);
 }
 
 void UiState::ensure_message_window() {
@@ -1128,8 +1151,7 @@ void UiState::ensure_message_window() {
 }
 
 void UiState::close_message_window() {
-    if (m_message_window) (*m_message_window)->hide();
-    m_window.invoke_focus_app();
+    hide_dialog(m_message_window);
 }
 
 lsp_message::MessageDialog& UiState::message_window() {
@@ -1138,7 +1160,7 @@ lsp_message::MessageDialog& UiState::message_window() {
 }
 
 bool UiState::message_window_open() const noexcept {
-    return m_message_window && (*m_message_window)->window().is_visible();
+    return is_shown(m_message_window);
 }
 
 void UiState::ensure_resize_window() {
@@ -1159,8 +1181,7 @@ void UiState::ensure_resize_window() {
 }
 
 void UiState::close_resize_window() {
-    if (m_resize_window) (*m_resize_window)->hide();
-    m_window.invoke_focus_app();
+    hide_dialog(m_resize_window);
 }
 
 lsp_resize::ResizeDialog& UiState::resize_window() {
@@ -1169,7 +1190,7 @@ lsp_resize::ResizeDialog& UiState::resize_window() {
 }
 
 bool UiState::resize_window_open() const noexcept {
-    return m_resize_window && (*m_resize_window)->window().is_visible();
+    return is_shown(m_resize_window);
 }
 
 // A dialog is a window of its own, so it needs its own place on screen: this
@@ -1455,9 +1476,13 @@ void UiState::update_ants() {
     }
     m_ants_visible = true;
 
-    const float zoom = m_window.global<UserState>().get_zoom();
+    // The outline is laid out in device pixels, so every run covers whole
+    // pixels whatever the screen's scale.
+    const float ratio = m_bridge.device_ratio();
+    const float scale = m_window.global<UserState>().get_zoom() * ratio;
+    const int segment = std::max(1, round_to_int(static_cast<float>(kAntSegment) * ratio));
 
-    // Every outline to draw, in screen pixels.
+    // Every outline to draw, in device pixels.
     struct Outline {
         std::vector<Point2f> points;
         bool closed = false;
@@ -1468,12 +1493,12 @@ void UiState::update_ants() {
         // the shape its contents cover.
         const std::optional<FloatingContents>& floating = document.floating();
         if (floating.has_value() && floating->rotation != 0.0f) {
-            outlines.push_back({scaled(turned_corners(*floating), zoom), false});
+            outlines.push_back({scaled(turned_corners(*floating), scale), false});
         } else {
-            outlines.push_back({border_outline(bounds, zoom), true});
+            outlines.push_back({border_outline(bounds, scale), true});
         }
     }
-    if (drawing) outlines.push_back({scaled(preview.points, zoom), false});
+    if (drawing) outlines.push_back({scaled(preview.points, scale), false});
 
     // An outline far longer than the window only needs the part that can be
     // seen. A short one is drawn whole.
@@ -1486,15 +1511,15 @@ void UiState::update_ants() {
     std::optional<RectI> clip;
     const ViewArea view = m_window.get_view_area();
     if (length > kAntClipLength && view.width > 0.0f && view.height > 0.0f) {
-        const int left = floor_to_int(view.x * zoom) - kAntClipMargin;
-        const int top = floor_to_int(view.y * zoom) - kAntClipMargin;
-        clip = RectI{left, top, ceil_to_int(view.width * zoom) + 2 * kAntClipMargin,
-                     ceil_to_int(view.height * zoom) + 2 * kAntClipMargin};
+        const int left = floor_to_int(view.x * scale) - kAntClipMargin;
+        const int top = floor_to_int(view.y * scale) - kAntClipMargin;
+        clip = RectI{left, top, ceil_to_int(view.width * scale) + 2 * kAntClipMargin,
+                     ceil_to_int(view.height * scale) + 2 * kAntClipMargin};
     }
 
     // A pointer event asks for the outline too, and most of the time nothing
     // about it has changed since the last tick.
-    std::vector<float> key{static_cast<float>(m_ant_phase)};
+    std::vector<float> key{static_cast<float>(m_ant_phase), static_cast<float>(segment)};
     if (clip) key.insert(key.end(), {float(clip->x), float(clip->y), float(clip->width), float(clip->height)});
     for (const Outline& outline : outlines) {
         key.push_back(outline.closed ? 1.0f : 0.0f);
@@ -1508,7 +1533,7 @@ void UiState::update_ants() {
     std::vector<SelectionDash> light;
     if (!outline_unchanged) {
         for (const Outline& outline : outlines) {
-            append_ant_runs(outline.points, outline.closed, m_ant_phase, clip ? &*clip : nullptr, dark,
+            append_ant_runs(outline.points, outline.closed, m_ant_phase, segment, clip ? &*clip : nullptr, dark,
                             light);
         }
         state.set_ants_dark(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(dark)));
@@ -1518,7 +1543,7 @@ void UiState::update_ants() {
     std::vector<SelectionGrip> grips;
     if (visible && bounds.width >= kMinHandleSpan && bounds.height >= kMinHandleSpan &&
         m_window.global<UserState>().get_selected_tool() == ETool::SELECTION) {
-        grips = grip_anchors(bounds);
+        grips = grip_centres(bounds, scale);
     }
     state.set_grips(std::make_shared<slint::VectorModel<SelectionGrip>>(std::move(grips)));
 
@@ -1823,10 +1848,10 @@ void UiState::do_resize_unit_changed() {
     const int horizontal = parse_resize_field(dialog.get_horizontal_text());
     const int vertical = parse_resize_field(dialog.get_vertical_text());
     dialog.set_horizontal_text(slint::SharedString(std::to_string(
-        horizontal == 0 ? (percentage ? 100 : m_resize_base_width)
+        horizontal == 0 ? (percentage ? kPercent : m_resize_base_width)
                         : converted_field(horizontal, m_resize_base_width, percentage))));
     dialog.set_vertical_text(slint::SharedString(std::to_string(
-        vertical == 0 ? (percentage ? 100 : m_resize_base_height)
+        vertical == 0 ? (percentage ? kPercent : m_resize_base_height)
                       : converted_field(vertical, m_resize_base_height, percentage))));
 }
 

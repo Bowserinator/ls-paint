@@ -18,9 +18,9 @@ FetchContent_Declare(
 
 set(SLINT_FEATURE_INTERPRETER OFF CACHE BOOL "" FORCE)
 set(SLINT_FEATURE_LIVE_PREVIEW OFF CACHE BOOL "" FORCE)
-set(SLINT_FEATURE_RENDERER_FEMTOVG ON CACHE BOOL "" FORCE)
+set(SLINT_FEATURE_RENDERER_FEMTOVG OFF CACHE BOOL "" FORCE)
 set(SLINT_FEATURE_RENDERER_SOFTWARE OFF CACHE BOOL "" FORCE)
-set(SLINT_FEATURE_RENDERER_SKIA OFF CACHE BOOL "" FORCE)
+set(SLINT_FEATURE_RENDERER_SKIA ON CACHE BOOL "" FORCE)
 
 # Compile @image-url assets into the binary instead of reading them from disk
 # at run time. embed-for-software-renderer pre-decodes them for the renderer
@@ -66,7 +66,6 @@ add_library(lsp_core STATIC
     src/core/warp.cpp
     src/core/canvas_document.cpp
     src/core/color.cpp
-    src/core/compositor.cpp
     src/core/pixel_buffer.cpp
     src/core/pixel_delta.cpp
     src/core/raster.cpp

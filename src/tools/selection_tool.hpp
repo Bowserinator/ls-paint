@@ -47,6 +47,8 @@ private:
     void rotate_to(ToolContext& context, Point2f position);
     void finish_rotate_drag(ToolContext& context, Point2f position);
 
+    // Keeps the selection as it is now, for the undo step the drag ends with.
+    void remember_selection(ToolContext& context);
     // Records the drag as one undo step from the snapshot to the current state.
     void push_drag_edit(ToolContext& context);
 

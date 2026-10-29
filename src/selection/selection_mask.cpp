@@ -66,7 +66,7 @@ void SelectionMask::fill_rect(RectI rect) {
 }
 
 void SelectionMask::fill_polygon(std::span<const Point2f> points) {
-    if (points.size() < 3) {
+    if (points.size() < kMinPolygonPoints) {
         clear();
         return;
     }
@@ -75,7 +75,7 @@ void SelectionMask::fill_polygon(std::span<const Point2f> points) {
 
     std::vector<float> crossings;
     for (int y = 0; y < m_height; ++y) {
-        polygon_crossings(points, static_cast<float>(y) + 0.5f, crossings);
+        polygon_crossings(points, pixel_center(y), crossings);
         for (std::size_t i = 0; i + 1 < crossings.size(); i += 2) {
             const int left = std::clamp(static_cast<int>(crossings[i]), 0, m_width);
             const int right = std::clamp(static_cast<int>(crossings[i + 1]), 0, m_width);

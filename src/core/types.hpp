@@ -2,21 +2,31 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 namespace lsp {
+
+inline constexpr std::uint8_t kChannelMax = 255;
+inline constexpr float kChannelMaxFloat = 255.0f;
 
 struct Rgba8 {
     std::uint8_t r = 0;
     std::uint8_t g = 0;
     std::uint8_t b = 0;
-    std::uint8_t a = 255;
+    std::uint8_t a = kChannelMax;
 
     friend bool operator==(const Rgba8&, const Rgba8&) = default;
 };
 
-inline constexpr Rgba8 kWhite{255, 255, 255, 255};
+inline constexpr Rgba8 kWhite{kChannelMax, kChannelMax, kChannelMax, kChannelMax};
 inline constexpr Rgba8 kTransparent{0, 0, 0, 0};
+
+// The colour with each of its red, green and blue channels flipped.
+[[nodiscard]] constexpr Rgba8 inverted(Rgba8 color) noexcept {
+    return {static_cast<std::uint8_t>(kChannelMax - color.r), static_cast<std::uint8_t>(kChannelMax - color.g),
+            static_cast<std::uint8_t>(kChannelMax - color.b), color.a};
+}
 
 struct Point2f {
     float x = 0;
@@ -27,6 +37,13 @@ struct Point2f {
 [[nodiscard]] inline float distance(Point2f a, Point2f b) {
     return std::hypot(a.x - b.x, a.y - b.y);
 }
+
+[[nodiscard]] constexpr Point2f midpoint(Point2f a, Point2f b) noexcept {
+    return {(a.x + b.x) / 2.0f, (a.y + b.y) / 2.0f};
+}
+
+// The fewest points that enclose an area.
+inline constexpr std::size_t kMinPolygonPoints = 3;
 
 struct RectI {
     int x = 0;

@@ -21,6 +21,8 @@ namespace lsp {
 namespace {
 
 constexpr int kJpegQuality = 90;
+constexpr int kRgbChannels = 3;
+constexpr int kRgbaChannels = 4;
 
 // stb reads and writes through fopen, which cannot open a path outside the
 // ANSI code page on Windows, so the file is opened here and handed over as a
@@ -47,20 +49,20 @@ Rgba8 over_background(Rgba8 pixel, Rgba8 background) {
     const auto mix = [alpha](std::uint8_t top, std::uint8_t bottom) {
         return static_cast<std::uint8_t>(std::lround(top * alpha + bottom * (1.0f - alpha)));
     };
-    return {mix(pixel.r, background.r), mix(pixel.g, background.g), mix(pixel.b, background.b), 255};
+    return {mix(pixel.r, background.r), mix(pixel.g, background.g), mix(pixel.b, background.b), kChannelMax};
 }
 
 // stb_image_write takes three bytes per pixel for Bmp and Jpeg.
 std::vector<std::uint8_t> to_rgb_bytes(const PixelBuffer& source, Rgba8 background) {
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(source.width()) * source.height() * 3);
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(source.width()) * source.height() * kRgbChannels);
     for (int y = 0; y < source.height(); ++y) {
         const std::span<const Rgba8> pixels = source.row(y);
-        std::uint8_t* row = bytes.data() + static_cast<std::size_t>(y) * source.width() * 3;
+        std::uint8_t* row = bytes.data() + static_cast<std::size_t>(y) * source.width() * kRgbChannels;
         for (std::size_t x = 0; x < pixels.size(); ++x) {
             const Rgba8 opaque = over_background(pixels[x], background);
-            row[x * 3] = opaque.r;
-            row[x * 3 + 1] = opaque.g;
-            row[x * 3 + 2] = opaque.b;
+            row[x * kRgbChannels] = opaque.r;
+            row[x * kRgbChannels + 1] = opaque.g;
+            row[x * kRgbChannels + 2] = opaque.b;
         }
     }
     return bytes;
@@ -93,7 +95,7 @@ LoadResult load(const std::filesystem::path& path) {
     int width = 0;
     int height = 0;
     int channels = 0;
-    std::uint8_t* data = stbi_load_from_file(file, &width, &height, &channels, 4);
+    std::uint8_t* data = stbi_load_from_file(file, &width, &height, &channels, kRgbaChannels);
     std::fclose(file);
     if (data == nullptr) return {false, {}, std::string("Cannot decode image: ") + stbi_failure_reason()};
     return from_decoded(data, width, height, utf8_from_path(path));
@@ -104,7 +106,7 @@ LoadResult load_from_memory(const void* data, std::size_t size) {
     int height = 0;
     int channels = 0;
     std::uint8_t* pixels = stbi_load_from_memory(static_cast<const std::uint8_t*>(data),
-                                                static_cast<int>(size), &width, &height, &channels, 4);
+                                                static_cast<int>(size), &width, &height, &channels, kRgbaChannels);
     if (pixels == nullptr) return {false, {}, std::string("Cannot decode image: ") + stbi_failure_reason()};
     return from_decoded(pixels, width, height, "the pasted image");
 }
@@ -132,15 +134,15 @@ bool save(const CanvasDocument& document, const std::filesystem::path& path, Ima
     int written = 0;
     if (format == ImageFormat::Png) {
         const std::vector<Rgba8> pixels = source.contiguous_copy(source.bounds());
-        written = stbi_write_png_to_func(write_stream, file, source.width(), source.height(), 4,
-                                         pixels.data(), source.width() * 4);
+        written = stbi_write_png_to_func(write_stream, file, source.width(), source.height(), kRgbaChannels,
+                                         pixels.data(), source.width() * kRgbaChannels);
     } else if (format == ImageFormat::Bmp) {
         const std::vector<std::uint8_t> bytes = to_rgb_bytes(source, kWhite);
-        written = stbi_write_bmp_to_func(write_stream, file, source.width(), source.height(), 3,
+        written = stbi_write_bmp_to_func(write_stream, file, source.width(), source.height(), kRgbChannels,
                                          bytes.data());
     } else {
         const std::vector<std::uint8_t> bytes = to_rgb_bytes(source, kWhite);
-        written = stbi_write_jpg_to_func(write_stream, file, source.width(), source.height(), 3,
+        written = stbi_write_jpg_to_func(write_stream, file, source.width(), source.height(), kRgbChannels,
                                          bytes.data(), kJpegQuality);
     }
     const bool closed = std::fclose(file) == 0;

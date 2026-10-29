@@ -3,7 +3,6 @@
 #include <algorithm>
 
 #include "config.hpp"
-#include "core/blend_modes.hpp"
 #include "history/commands/canvas_resize_command.hpp"
 #include "history/commands/paint_stroke_command.hpp"
 #include "history/commands/selection_edit_command.hpp"
@@ -13,43 +12,6 @@
 #include "utils/path_text.hpp"
 
 namespace lsp {
-
-namespace {
-
-PixelBuffer flattened_onto(PixelBuffer image, Rgba8 background) {
-    const BlendFn blend = blend_fn_for(BlendMode::Normal);
-    for (int y = 0; y < image.height(); ++y) {
-        for (Rgba8& pixel : image.row(y)) pixel = blend(background, pixel, 1.0f);
-    }
-    return image;
-}
-
-// What the clipboard holds when it holds no image, so a paste that fails can be
-// diagnosed from the console.
-std::string clipboard_contents_note() {
-    const std::vector<std::string> types = Clipboard::available_types();
-    std::string note = "; the clipboard offers ";
-    if (types.empty()) {
-        note += "nothing";
-    } else {
-        for (std::size_t index = 0; index < types.size(); ++index) {
-            if (index != 0) note += ", ";
-            note += types[index];
-        }
-        if (Clipboard::has_image()) note += ", but its image could not be read";
-    }
-    std::string text;
-    if (!Clipboard::get_text(text) || text.empty()) return note + "; the clipboard holds no text";
-    constexpr std::size_t kMaxShown = 200;
-    const bool clipped = text.size() > kMaxShown;
-    text.resize(std::min(text.size(), kMaxShown));
-    for (char& letter : text) {
-        if (letter == '\n' || letter == '\r' || letter == '\t') letter = ' ';
-    }
-    return note + "; clipboard text: \"" + text + "\"" + (clipped ? "..." : "");
-}
-
-}  // namespace
 
 AppController::AppController()
     : m_document(kDefaultCanvasWidth, kDefaultCanvasHeight),
@@ -218,15 +180,13 @@ void AppController::delete_selection_contents() {
 
 void AppController::invert_colors() {
     commit_selection_contents();
-    const SelectionMask& selection = m_document.selection();
-    const RectI region = selection.active() ? selection.bounds().intersected(m_document.bounds())
-                                            : m_document.bounds();
+    const RectI region = copy_source_rect();
     if (region.empty()) return;
 
     const std::size_t layer_index = m_document.layers().active_index();
     PixelBuffer& pixels = m_document.active_layer().pixels;
     const PixelBuffer before = pixels;
-    lsp::invert_colors(pixels, selection, region);
+    lsp::invert_colors(pixels, m_document.selection(), region);
     m_document.mark_dirty(region);
     PixelDelta delta = PixelDelta::between(before, pixels, region);
     if (delta.empty()) return;
@@ -277,8 +237,7 @@ IoResult AppController::open_document(const std::filesystem::path& path) {
     if (loaded.pixels.width() > kMaxCanvasDimension || loaded.pixels.height() > kMaxCanvasDimension)
         return IoResult::failure("Image is larger than the canvas limit: " + utf8_from_path(path));
 
-    m_document.restore(
-        {flattened_onto(std::move(loaded.pixels), m_colors.ink(PointerButton::Secondary))});
+    m_document.restore({flatten_to_opaque(loaded.pixels, m_colors.ink(PointerButton::Secondary))});
     m_history.clear();
     m_current_path = path;
     return IoResult::success();
@@ -334,16 +293,6 @@ IoResult AppController::copy_to_clipboard() {
 
 bool AppController::is_own_copy(const PixelBuffer& image) const {
     return !m_clipboard.empty() && (image == m_clipboard.pixels || image == m_system_copy);
-}
-
-IoResult AppController::paste_from_clipboard() {
-    std::string error;
-    std::optional<PixelBuffer> image = Clipboard::get_image(&error);
-    if (!image) {
-        if (!error.empty()) return IoResult::failure(error);
-        return IoResult::failure("The clipboard does not contain an image" + clipboard_contents_note());
-    }
-    return paste_image(std::move(*image));
 }
 
 IoResult AppController::paste_from_file(const std::filesystem::path& path) {

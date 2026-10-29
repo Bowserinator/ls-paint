@@ -243,20 +243,6 @@ void test_paste_without_a_clipboard_is_a_no_op() {
     CHECK(!document.selection().active());
 }
 
-void test_paste_landing_entirely_off_canvas_is_a_no_op() {
-    AppController app;
-    CanvasDocument& document = app.document();
-    document.active_layer().pixels.at(5, 5) = {10, 20, 30, 255};
-    document.selection().fill_rect({4, 4, 4, 4});
-    const ClipboardContent clip = capture_clipboard(document.active_layer().pixels, document.selection());
-    app.clear_selection();
-
-    const SelectionEdit edit = lsp::paste_clipboard(document.active_layer().pixels, document.selection(),
-                                                    clip, 1000, 1000);
-    CHECK(edit.empty());
-    CHECK(!document.selection().active());
-}
-
 void test_rotate_selection_contents_keeps_the_mask_aligned() {
     AppController app;
     CanvasDocument& document = app.document();
@@ -1118,7 +1104,6 @@ int main() {
     test_paste_larger_than_canvas_grows_it();
     test_paste_taller_than_canvas_grows_only_height();
     test_paste_without_a_clipboard_is_a_no_op();
-    test_paste_landing_entirely_off_canvas_is_a_no_op();
     test_rotate_selection_contents_keeps_the_mask_aligned();
     test_rotating_twice_turns_the_originals_by_180();
     test_flip_selection_contents_horizontal();

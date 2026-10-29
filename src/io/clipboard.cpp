@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <vector>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -13,11 +14,16 @@
 
 #include <clip.h>
 
+#ifdef _MSC_VER
+    #define popen  _popen
+    #define pclose _pclose
+#endif
+
 namespace lsp {
 namespace {
 
 // The most bytes read from the clipboard in one go.
-constexpr std::size_t kMaxClipboardBytes = 256u * 1024u * 1024u;
+constexpr std::size_t kMaxClipboardBytes = 256u * kBytesPerMiB;
 
 // Runs `command` and returns its standard output, one byte past the limit at
 // most. The reader stops there on purpose: a pipeline that is cut off gets
@@ -87,16 +93,7 @@ std::optional<PixelBuffer> wayland_image(std::string* error) {
     }
     if (too_large && error != nullptr)
         *error = "The clipboard image is larger than the " +
-                 std::to_string(kMaxClipboardBytes / (1024u * 1024u)) + " MB this program reads.";
-    return std::nullopt;
-}
-
-std::optional<std::string> wayland_text() {
-    const std::vector<std::string> types = wayland_types();
-    for (const char* wanted : {"text/plain", "text/uri-list", "text/html"}) {
-        if (std::find(types.begin(), types.end(), wanted) == types.end()) continue;
-        if (std::optional<std::string> text = wayland_bytes(wanted)) return text;
-    }
+                 std::to_string(kMaxClipboardBytes / kBytesPerMiB) + " MB this program reads.";
     return std::nullopt;
 }
 
@@ -176,27 +173,11 @@ std::optional<PixelBuffer> Clipboard::get_image(std::string* error) {
     return pixels;
 }
 
-bool Clipboard::get_text(std::string& text) {
-    if (std::optional<std::string> wayland = wayland_text()) {
-        text = std::move(*wayland);
-        return true;
-    }
-    return clip::get_text(text);
-}
-
 bool Clipboard::has_image() {
     for (const std::string& type : wayland_types()) {
         if (is_image_type(type)) return true;
     }
     return clip::has(clip::image_format());
-}
-
-std::vector<std::string> Clipboard::available_types() {
-    std::vector<std::string> types = wayland_types();
-    if (!types.empty()) return types;
-    if (clip::has(clip::image_format())) types.emplace_back("an image (X11)");
-    if (clip::has(clip::text_format())) types.emplace_back("text (X11)");
-    return types;
 }
 
 }  // namespace lsp

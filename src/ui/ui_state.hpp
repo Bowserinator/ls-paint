@@ -34,34 +34,28 @@ public:
     // so, when it cannot be opened.
     bool open_startup_file(const std::filesystem::path& path);
 
-    // The Edit Colors window, made on first use. Its state lives in the window
-    // itself, so the tests read it here rather than from a global.
+    // The Edit Colors window, made on first use.
     [[nodiscard]] lsp_colors::EditColorsWindow& color_window();
     // True while the Edit Colors window is on screen.
     [[nodiscard]] bool color_window_open() const noexcept;
 
-    // The unsaved-changes question, made on first use. It is a real window, so
-    // the tests read its message and press its buttons here rather than through
-    // a global.
+    // The unsaved-changes question, made on first use.
     [[nodiscard]] lsp_confirm::ConfirmDialog& confirm_window();
     // True while that question is on screen.
     [[nodiscard]] bool confirm_window_open() const noexcept;
 
-    // A plain message, and the canvas size question. Both are real windows too.
+    // A plain message, and the canvas size question.
     [[nodiscard]] lsp_message::MessageDialog& message_window();
     [[nodiscard]] bool message_window_open() const noexcept;
     [[nodiscard]] lsp_resize::ResizeDialog& resize_window();
     [[nodiscard]] bool resize_window_open() const noexcept;
 
 private:
-    // Pulls the Slint color pickers into the controller. Called before every
-    // operation that needs them: only pointer presses synced them before, so
-    // a cut or a rotate would erase with whatever color was picked last.
+    // Pulls the picked colors into the controller.
     void sync_colors();
-    // Pulls the Shapes, Outline/Fill and thickness dropdowns into the tool
-    // settings the shape tool reads when it starts a gesture.
+    // Pulls the shape, outline, fill and thickness choices into the shape tool's options.
     void sync_shape_style();
-    // Pulls the font controls into the settings the text commit rasterizes.
+    // Pulls the font controls into the text options.
     void sync_font_style();
     // Publishes the family list, narrowed to the names that contain `query`.
     void publish_font_families(std::string_view query);
@@ -72,8 +66,7 @@ private:
     // while the pointer is off the paper.
     void publish_hover_color();
     void publish_cursor_overlay();
-    // True while a text box is being edited. The tool owns the flag, so the
-    // editor's Slint side cannot get out of step with it.
+    // True while a text box is being edited.
     [[nodiscard]] bool text_open() const noexcept;
     // Closes the open text box, drawing its content into the paper. Safe to
     // call when no box is open: the editor's own commit, a click elsewhere and
@@ -134,6 +127,10 @@ private:
     void do_open_color_dialog();
     void do_color_accepted();
     void close_color_window();
+    // Hides a dialog that may never have been made, and returns focus to the
+    // main window.
+    template <typename Handle>
+    void hide_dialog(std::optional<Handle> dialog);
     void do_color_add_custom();
     void do_color_basic_picked(const slint::Color& color);
     void do_color_custom_picked(const slint::Color& color, int index);
@@ -256,7 +253,7 @@ private:
     std::uint64_t m_shape_preview_revision = 0;
     // Whether the system clipboard last offered an image, for the Paste commands.
     bool m_system_clipboard = false;
-    // Timed here because Slint's pointer events carry no click count.
+    // Used to detect double clicks.
     std::chrono::steady_clock::time_point m_last_press;
     Point2f m_last_press_position;
     bool m_have_last_press = false;

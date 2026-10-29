@@ -34,10 +34,11 @@ inline constexpr int kZoomSettleMilliseconds = 120;
 
 // The application's name, which is also the name of its config folder.
 inline constexpr std::string_view kAppId = "ls_paint";
+inline constexpr std::size_t kBytesPerMiB = 1024u * 1024u;
 inline constexpr std::size_t kMaxHistoryEntries = 20;
 // The history also keeps a size budget, because one entry can hold a whole
 // canvas.
-inline constexpr std::size_t kMaxHistoryBytes = 512u * 1024u * 1024u;
+inline constexpr std::size_t kMaxHistoryBytes = 512u * kBytesPerMiB;
 // The custom colors in the ribbon's palette.
 inline constexpr int kCustomColorSlots = 10;
 // The number of files the File menu's recent list remembers.

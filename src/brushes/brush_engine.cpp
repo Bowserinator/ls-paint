@@ -11,6 +11,7 @@
 #include "core/blur.hpp"
 #include "core/warp.hpp"
 #include "utils/math.hpp"
+#include "utils/tiles.hpp"
 
 namespace lsp {
 
@@ -61,8 +62,8 @@ float value_noise(float x, float y, std::uint32_t seed) {
 
 // The paper's tooth at one pixel: 0 in the pits, 1 on the peaks.
 float paper_tooth(int x, int y) {
-    const float fx = static_cast<float>(x) + 0.5f;
-    const float fy = static_cast<float>(y) + 0.5f;
+    const float fx = pixel_center(x);
+    const float fy = pixel_center(y);
     const float noise = 0.5f * value_noise(fx / 1.5f, fy / 1.5f, 11u) +
                         0.3f * value_noise(fx / 3.5f, fy / 3.5f, 23u) +
                         0.2f * value_noise(fx / 9.0f, fy / 9.0f, 37u);
@@ -205,8 +206,8 @@ void BrushEngine::prepare_source() {
     if (m_source_ready) return;
     m_source_ready = true;
     if (!m_source || m_brush.kind != BrushKind::Blur) return;
-    const int columns = (m_source->width() + kBlurChunkSize - 1) / kBlurChunkSize;
-    const int rows = (m_source->height() + kBlurChunkSize - 1) / kBlurChunkSize;
+    const int columns = ceil_div(m_source->width(), kBlurChunkSize);
+    const int rows = ceil_div(m_source->height(), kBlurChunkSize);
     m_blurred_columns = columns;
     m_blurred.assign(static_cast<std::size_t>(columns) * static_cast<std::size_t>(rows), PixelBuffer());
 }
@@ -217,20 +218,17 @@ void BrushEngine::ensure_blurred(RectI area) {
     // A quarter of the size: the blur reaches as far as half the brush, which
     // keeps its effect inside the tip the user can see.
     const int radius = std::max(1, m_brush.size / 4);
-    for (int row = area.y / kBlurChunkSize; row <= (area.bottom() - 1) / kBlurChunkSize; ++row) {
-        for (int column = area.x / kBlurChunkSize; column <= (area.right() - 1) / kBlurChunkSize; ++column) {
-            PixelBuffer& chunk = m_blurred[grid_index(column, row, m_blurred_columns)];
-            if (chunk.width() > 0) continue;
-            chunk = blur::box_twice_region(
-                *m_source, radius,
-                {column * kBlurChunkSize, row * kBlurChunkSize, kBlurChunkSize, kBlurChunkSize});
-        }
-    }
+    for_each_tile(area, kBlurChunkSize, [&](int column, int row) {
+        PixelBuffer& chunk = m_blurred[grid_index(column, row, m_blurred_columns)];
+        if (chunk.width() > 0) return;
+        chunk = blur::box_twice_region(
+            *m_source, radius, {column * kBlurChunkSize, row * kBlurChunkSize, kBlurChunkSize, kBlurChunkSize});
+    });
 }
 
 std::uint8_t& BrushEngine::coverage_at(int x, int y, int width, int height) {
-    const int columns = (width + kCoverageChunkSize - 1) / kCoverageChunkSize;
-    const int rows = (height + kCoverageChunkSize - 1) / kCoverageChunkSize;
+    const int columns = ceil_div(width, kCoverageChunkSize);
+    const int rows = ceil_div(height, kCoverageChunkSize);
     if (columns != m_coverage_columns || rows != m_coverage_rows) {
         m_coverage_columns = columns;
         m_coverage_rows = rows;
@@ -323,7 +321,7 @@ void BrushEngine::pick_up(const PixelBuffer& canvas, float cx, float cy, float r
         if (!canvas.contains(x, y)) continue;
         const Rgba8 pixel = canvas.at(x, y);
         // Blank paper carries no paint to pick up.
-        const int ink = std::max({255 - pixel.r, 255 - pixel.g, 255 - pixel.b});
+        const int ink = std::max({kChannelMax - pixel.r, kChannelMax - pixel.g, kChannelMax - pixel.b});
         const float alpha = unit_from_byte(pixel.a) * std::clamp(static_cast<float>(ink) / 64.0f, 0.0f, 1.0f);
         red += static_cast<float>(pixel.r) * alpha;
         green += static_cast<float>(pixel.g) * alpha;
@@ -410,8 +408,7 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, float path) {
         const std::span<Rgba8> out = target.row(y);
         for (int x = area.x; x < area.right(); ++x) {
             if (!m_selection.contains(x, y)) continue;
-            const Sample sample = ink_at(m_profile, tip, static_cast<float>(x) + 0.5f - cx,
-                                         static_cast<float>(y) + 0.5f - cy, x, y);
+            const Sample sample = ink_at(m_profile, tip, pixel_center(x) - cx, pixel_center(y) - cy, x, y);
             float ink = sample.ink;
             if (ink <= 0.0f) continue;
             Rgba8 color = shaded(paint, sample.shade);
@@ -419,8 +416,8 @@ RectI BrushEngine::stamp(PixelBuffer& target, Point2f center, float path) {
                 // Each pixel takes what lay just behind it, less and less near
                 // the rim, so the picture follows the tip without being copied.
                 out[static_cast<std::size_t>(x)] = warp::sample_bilinear(
-                    before, static_cast<float>(x - before_area.x) + 0.5f - push.x * ink,
-                    static_cast<float>(y - before_area.y) + 0.5f - push.y * ink);
+                    before, pixel_center(x - before_area.x) - push.x * ink,
+                    pixel_center(y - before_area.y) - push.y * ink);
                 continue;
             }
             if (blur_stamp) {

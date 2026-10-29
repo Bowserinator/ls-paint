@@ -12,9 +12,9 @@ namespace {
 
 Rgba8 premultiply(Rgba8 pixel) {
     const std::uint32_t alpha = pixel.a;
-    return Rgba8{static_cast<std::uint8_t>(pixel.r * alpha / 255),
-                 static_cast<std::uint8_t>(pixel.g * alpha / 255),
-                 static_cast<std::uint8_t>(pixel.b * alpha / 255), pixel.a};
+    return Rgba8{static_cast<std::uint8_t>(pixel.r * alpha / kChannelMax),
+                 static_cast<std::uint8_t>(pixel.g * alpha / kChannelMax),
+                 static_cast<std::uint8_t>(pixel.b * alpha / kChannelMax), pixel.a};
 }
 
 Rgba8 unpremultiply(Rgba8 pixel) {
@@ -22,7 +22,7 @@ Rgba8 unpremultiply(Rgba8 pixel) {
     if (pixel.a == 0) return kTransparent;
     const std::uint32_t alpha = pixel.a;
     const auto restore = [alpha](std::uint8_t value) {
-        return static_cast<std::uint8_t>(std::min<std::uint32_t>(255, value * 255 / alpha));
+        return static_cast<std::uint8_t>(std::min<std::uint32_t>(kChannelMax, value * kChannelMax / alpha));
     };
     return Rgba8{restore(pixel.r), restore(pixel.g), restore(pixel.b), pixel.a};
 }

@@ -236,6 +236,13 @@ PenMove pen_move(const stbtt_fontinfo& info, int previous, std::uint32_t codepoi
     return move;
 }
 
+// The pen move for `codepoint` drawn with `face`. Kerning only applies between
+// two characters of the same font.
+PenMove pen_move_for(const GlyphFace& face, const LoadedFont* previous_font, int previous,
+                     std::uint32_t codepoint) {
+    return pen_move(face.font->info, previous_font == face.font ? previous : 0, codepoint, face.scale);
+}
+
 // One glyph, ready to stamp: the coverage bitmap plus the box it covers
 // relative to the pen and the baseline.
 struct GlyphBitmap {
@@ -336,8 +343,7 @@ std::vector<float> text_line_widths(std::string_view text, const TextOptions& op
         }
 
         const GlyphFace face = face_for(*font, scale, codepoint);
-        const PenMove move = pen_move(face.font->info, previous_font == face.font ? previous : 0,
-                                      codepoint, face.scale);
+        const PenMove move = pen_move_for(face, previous_font, previous, codepoint);
         width += move.kern + move.advance;
         previous = static_cast<int>(codepoint);
         previous_font = face.font;
@@ -444,8 +450,7 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
             }
 
             const GlyphFace face = face_for(*font, scale, codepoint);
-            const PenMove move = pen_move(face.font->info, previous_font == face.font ? previous : 0,
-                                          codepoint, face.scale);
+            const PenMove move = pen_move_for(face, previous_font, previous, codepoint);
             pen_x += move.kern;
 
             const int pen_start = pen_x;

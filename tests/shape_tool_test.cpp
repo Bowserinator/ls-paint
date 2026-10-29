@@ -3,6 +3,7 @@
 // heart rather than a stretched one. A kind whose outline crosses itself paints
 // a hole or a seam because the scanline fill counts the overlap twice.
 
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -17,6 +18,15 @@ using namespace lsp;
 using lsp::raster::Target;
 
 namespace {
+
+constexpr std::array<ShapeId, 23> kShapeIds{
+    ShapeId::Line,         ShapeId::Curve,         ShapeId::Oval,       ShapeId::Rectangle,
+    ShapeId::RoundedRect,  ShapeId::Polygon,       ShapeId::Triangle,   ShapeId::RightTriangle,
+    ShapeId::Diamond,      ShapeId::Pentagon,      ShapeId::Hexagon,    ShapeId::ArrowRight,
+    ShapeId::ArrowLeft,    ShapeId::ArrowUp,       ShapeId::ArrowDown,  ShapeId::Star4,
+    ShapeId::Star5,        ShapeId::Star6,         ShapeId::CalloutRounded, ShapeId::CalloutOval,
+    ShapeId::CalloutCloud, ShapeId::Heart,         ShapeId::Lightning,
+};
 
 int failures = 0;
 

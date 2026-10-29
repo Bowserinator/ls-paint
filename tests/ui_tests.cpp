@@ -420,8 +420,8 @@ int run_ui_tests() {
     CHECK(h.doc().get_grips()->row_count() == 8);
     const auto first_grip = h.doc().get_grips()->row_data(0);
     CHECK(first_grip.has_value());
-    CHECK(first_grip->x == float(h.doc().get_selection_x()));
-    CHECK(first_grip->y == float(h.doc().get_selection_y()));
+    CHECK(first_grip->x == float(h.doc().get_selection_x()) + 0.5f);
+    CHECK(first_grip->y == float(h.doc().get_selection_y()) + 0.5f);
 
     // 14b. Escape is Deselect: the outline and the grips stop, and the
     //      ribbon's selection buttons go back to being disabled.

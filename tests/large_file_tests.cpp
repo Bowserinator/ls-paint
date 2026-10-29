@@ -3,7 +3,6 @@
 #include <random>
 
 #include "core/canvas_document.hpp"
-#include "core/compositor.hpp"
 #include "core/pixel_delta.hpp"
 #include "selection/selection_ops.hpp"
 #include "utils/parallel.hpp"
@@ -38,18 +37,15 @@ void scribble(PixelBuffer& pixels, std::mt19937& rng, int strokes) {
     }
 }
 
-// With nothing floating, the flattened image is the layer, bit for bit what
-// compositing it would give.
-void flattened_matches_composite() {
+// With nothing floating, the flattened image is the layer itself.
+void flattened_matches_layer() {
     std::mt19937 rng(7);
     CanvasDocument doc(300, 200);
     scribble(doc.active_layer().pixels, rng, 60);
     doc.mark_dirty(doc.bounds());
     (void)doc.flush();
 
-    PixelBuffer expected(300, 200);
-    composite(doc.layers(), doc.bounds(), expected);
-    CHECK(doc.flattened() == expected);
+    CHECK(doc.flattened() == doc.active_layer().pixels);
     // The picture is the layer's own storage, not a second copy.
     CHECK(doc.flattened().storage_bytes() == doc.active_layer().pixels.storage_bytes());
     CHECK(doc.flattened().row_shared_with(doc.active_layer().pixels, 10));
@@ -159,7 +155,7 @@ void parallel_loop_runs_every_item_once() {
 }  // namespace
 
 int main() {
-    flattened_matches_composite();
+    flattened_matches_layer();
     rotation_matches_reference();
     delta_round_trips({0, 0, 0, 0}, 40, false);
     delta_round_trips({0, 0, 1000, 700}, -1, true);

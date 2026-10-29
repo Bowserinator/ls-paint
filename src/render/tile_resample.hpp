@@ -24,6 +24,9 @@ struct DeviceBox {
     friend bool operator==(const DeviceBox&, const DeviceBox&) = default;
 };
 
+// The smallest box that holds both `a` and `b`.
+[[nodiscard]] DeviceBox united(const DeviceBox& a, const DeviceBox& b);
+
 // The area averaged down by `factor`, each pixel weighing its colour by its
 // alpha so transparent pixels do not darken the result.
 [[nodiscard]] PixelGrid box_reduced(const PixelBuffer& source, RectI area, int factor);
@@ -38,18 +41,28 @@ struct DeviceBox {
 // Document pixels each tile image shows past its edge once resampled.
 [[nodiscard]] float resample_overlap(double scale);
 
-// Where a document coordinate lands on screen, in logical pixels. Edges sit on
-// whole pixels, except the canvas's own far edge, which stays exact.
-[[nodiscard]] float tile_edge(float doc, float zoom, int extent);
+// Where a document coordinate lands on screen, in device pixels. Edges sit on
+// whole device pixels, except the canvas's own far edge, which stays exact.
+[[nodiscard]] float tile_edge(float doc, float zoom, float dpr, int extent);
 
 // The screen pixels the image of one tile fills when drawn at `zoom` on a
 // screen with `dpr` device pixels per logical pixel.
 [[nodiscard]] DeviceBox tile_device_box(int column, int row, int tile_size, float overlap, float zoom,
                                         float dpr, int canvas_width, int canvas_height);
 
+// The part of `grid`, which shows the screen pixels under `outer`, that lies
+// under `part`. `part` must lie within `outer`.
+[[nodiscard]] PixelGrid cropped(const PixelGrid& grid, const DeviceBox& outer, const DeviceBox& part);
+
 // The canvas seen through `box` at `scale` screen pixels per document pixel,
 // one output pixel per screen pixel. Screen pixel n shows the document around
-// n / scale whichever tile it is asked for, so tiles agree where they overlap.
+// n / scale however large a box it is asked for, so a box covering several
+// tiles can be cut into them with no seam between.
 [[nodiscard]] PixelGrid resampled(const PixelBuffer& source, DeviceBox box, double scale);
+
+// The canvas seen through `box` with each screen pixel taking the one pixel of
+// the canvas, halved `level` times, that lies under its centre. Like
+// `resampled`, a screen pixel shows the same thing however large a box is asked.
+[[nodiscard]] PixelGrid sampled(const PixelBuffer& source, DeviceBox box, double scale, int level);
 
 }  // namespace lsp

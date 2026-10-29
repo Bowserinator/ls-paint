@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 5,
   "configurePresets": [
     {
       "name": "windows-x86_64-mingw",
@@ -9,6 +9,27 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "windows-x86_64-msvc",
+      "displayName": "Windows x86_64 (MSVC, C++23, Skia)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-msvc",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_STANDARD": "23",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON",
+        "SLINT_FEATURE_RENDERER_SKIA": "ON",
+        "SLINT_FEATURE_RENDERER_FEMTOVG": "OFF",
+        "SLINT_FEATURE_RENDERER_SOFTWARE": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-x86_64-msvc",
+      "configurePreset": "windows-x86_64-msvc",
+      "jobs": 4
     }
   ]
 }

@@ -50,6 +50,22 @@ int clamped_thickness(const ShapeOptions& options) {
     return std::clamp(options.thickness, kMinShapeThickness, kMaxShapeThickness);
 }
 
+// The drag box as the positions of its first and last pixels.
+struct BoxEdges {
+    float left;
+    float top;
+    float right;
+    float bottom;
+
+    [[nodiscard]] float width() const { return right - left; }
+    [[nodiscard]] float height() const { return bottom - top; }
+};
+
+BoxEdges edges_of(RectI box) {
+    return {static_cast<float>(box.x), static_cast<float>(box.y), static_cast<float>(box.x + box.width - 1),
+            static_cast<float>(box.y + box.height - 1)};
+}
+
 Point2f point_at(Point2f center, float rx, float ry, float degrees) {
     const float radians = radians_from_degrees(degrees);
     return {center.x + rx * std::cos(radians), center.y + ry * std::sin(radians)};
@@ -59,14 +75,11 @@ Point2f point_at(Point2f center, float rx, float ry, float degrees) {
 // pixels.
 template <std::size_t Count>
 std::vector<Point2f> fit_to_box(RectI box, const std::array<Point2f, Count>& unit) {
-    const float x0 = static_cast<float>(box.x);
-    const float y0 = static_cast<float>(box.y);
-    const float width = static_cast<float>(box.width - 1);
-    const float height = static_cast<float>(box.height - 1);
+    const BoxEdges edges = edges_of(box);
     std::vector<Point2f> points;
     points.reserve(unit.size());
     for (const Point2f& corner : unit)
-        points.push_back({x0 + corner.x * width, y0 + corner.y * height});
+        points.push_back({edges.left + corner.x * edges.width(), edges.top + corner.y * edges.height()});
     return points;
 }
 
@@ -83,10 +96,11 @@ void append_arc(std::vector<Point2f>& out, Point2f center, float rx, float ry, f
 }
 
 Point2f corner_of(RectI box, ShapeId kind, Point2f unit) {
-    const float x0 = static_cast<float>(box.x);
-    const float y0 = static_cast<float>(box.y);
-    const float width = static_cast<float>(box.width - 1);
-    const float height = static_cast<float>(box.height - 1);
+    const BoxEdges e = edges_of(box);
+    const float x0 = e.left;
+    const float y0 = e.top;
+    const float width = e.width();
+    const float height = e.height();
     switch (kind) {
         case ShapeId::ArrowLeft: return {x0 + (1.0f - unit.x) * width, y0 + unit.y * height};
         case ShapeId::ArrowUp: return {x0 + unit.y * width, y0 + (1.0f - unit.x) * height};
@@ -118,7 +132,7 @@ std::vector<Point2f> regular_polygon(Point2f center, float rx, float ry, int sid
     points.reserve(static_cast<std::size_t>(sides));
     for (int i = 0; i < sides; ++i)
         points.push_back(point_at(center, rx, ry,
-                                  start_degrees + static_cast<float>(i) * 360.0f /
+                                  start_degrees + static_cast<float>(i) * kFullTurnDegrees /
                                                       static_cast<float>(sides)));
     return points;
 }
@@ -130,7 +144,7 @@ std::vector<Point2f> star_points(Point2f center, float rx, float ry, int spikes,
     for (int i = 0; i < spikes * 2; ++i) {
         const float radius = i % 2 == 0 ? 1.0f : inner_ratio;
         points.push_back(point_at(center, rx * radius, ry * radius,
-                                  -90.0f + static_cast<float>(i) * 180.0f /
+                                  -kQuarterTurnDegrees + static_cast<float>(i) * kHalfTurnDegrees /
                                                static_cast<float>(spikes)));
     }
     return points;
@@ -139,7 +153,7 @@ std::vector<Point2f> star_points(Point2f center, float rx, float ry, int spikes,
 std::vector<Point2f> ellipse_points(RectI box) {
     std::vector<Point2f> points;
     append_arc(points, {box.x + box.width / 2.0f, box.y + box.height / 2.0f},
-               (box.width - 1) / 2.0f, (box.height - 1) / 2.0f, 0.0f, 360.0f);
+               (box.width - 1) / 2.0f, (box.height - 1) / 2.0f, 0.0f, kFullTurnDegrees);
     return points;
 }
 
@@ -163,26 +177,24 @@ Point2f default_bend(Point2f a, Point2f b) {
     constexpr float kBow = 0.25f;
     const float dx = b.x - a.x;
     const float dy = b.y - a.y;
-    return {(a.x + b.x) / 2.0f - dy * kBow, (a.y + b.y) / 2.0f + dx * kBow};
+    const Point2f middle = midpoint(a, b);
+    return {middle.x - dy * kBow, middle.y + dx * kBow};
 }
 
 std::vector<Point2f> rounded_box_points(RectI box, float radius) {
-    const float x0 = static_cast<float>(box.x);
-    const float y0 = static_cast<float>(box.y);
-    const float x1 = static_cast<float>(box.x + box.width - 1);
-    const float y1 = static_cast<float>(box.y + box.height - 1);
+    const auto [x0, y0, x1, y1] = edges_of(box);
     const float r = std::clamp(radius, 0.0f, std::min(x1 - x0, y1 - y0) / 2.0f);
     if (r <= 0.0f) return {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
     std::vector<Point2f> points;
     points.push_back({x0 + r, y0});
     points.push_back({x1 - r, y0});
-    append_arc(points, {x1 - r, y0 + r}, r, r, 270.0f, 360.0f);
+    append_arc(points, {x1 - r, y0 + r}, r, r, kThreeQuarterTurnDegrees, kFullTurnDegrees);
     points.push_back({x1, y1 - r});
-    append_arc(points, {x1 - r, y1 - r}, r, r, 0.0f, 90.0f);
+    append_arc(points, {x1 - r, y1 - r}, r, r, 0.0f, kQuarterTurnDegrees);
     points.push_back({x0 + r, y1});
-    append_arc(points, {x0 + r, y1 - r}, r, r, 90.0f, 180.0f);
+    append_arc(points, {x0 + r, y1 - r}, r, r, kQuarterTurnDegrees, kHalfTurnDegrees);
     points.push_back({x0, y0 + r});
-    append_arc(points, {x0 + r, y0 + r}, r, r, 180.0f, 270.0f);
+    append_arc(points, {x0 + r, y0 + r}, r, r, kHalfTurnDegrees, kThreeQuarterTurnDegrees);
     return points;
 }
 
@@ -195,10 +207,7 @@ RectI callout_body(RectI box) {
 
 std::vector<Point2f> callout_rounded_points(RectI box) {
     const RectI body = callout_body(box);
-    const float x0 = static_cast<float>(body.x);
-    const float y0 = static_cast<float>(body.y);
-    const float x1 = static_cast<float>(body.x + body.width - 1);
-    const float y1 = static_cast<float>(body.y + body.height - 1);
+    const auto [x0, y0, x1, y1] = edges_of(body);
     const float r = std::clamp(kCornerRadius, 0.0f, std::min(x1 - x0, y1 - y0) / 2.0f);
     const float width = static_cast<float>(box.width - 1);
     const float tip_x = x0 + kTailTipRatio * width;
@@ -209,13 +218,13 @@ std::vector<Point2f> callout_rounded_points(RectI box) {
     points.push_back({right_x, y1});
     points.push_back({tip_x, static_cast<float>(box.y + box.height - 1)});
     points.push_back({left_x, y1});
-    append_arc(points, {x0 + r, y1 - r}, r, r, 90.0f, 180.0f);
+    append_arc(points, {x0 + r, y1 - r}, r, r, kQuarterTurnDegrees, kHalfTurnDegrees);
     points.push_back({x0, y0 + r});
-    append_arc(points, {x0 + r, y0 + r}, r, r, 180.0f, 270.0f);
+    append_arc(points, {x0 + r, y0 + r}, r, r, kHalfTurnDegrees, kThreeQuarterTurnDegrees);
     points.push_back({x1 - r, y0});
-    append_arc(points, {x1 - r, y0 + r}, r, r, 270.0f, 360.0f);
+    append_arc(points, {x1 - r, y0 + r}, r, r, kThreeQuarterTurnDegrees, kFullTurnDegrees);
     points.push_back({x1, y1 - r});
-    append_arc(points, {x1 - r, y1 - r}, r, r, 0.0f, 90.0f);
+    append_arc(points, {x1 - r, y1 - r}, r, r, 0.0f, kQuarterTurnDegrees);
     return points;
 }
 
@@ -272,8 +281,9 @@ std::vector<Point2f> heart_points(RectI box) {
         min_y = std::min(min_y, point.y);
         max_y = std::max(max_y, point.y);
     }
-    const float width = static_cast<float>(box.width - 1);
-    const float height = static_cast<float>(box.height - 1);
+    const BoxEdges edges = edges_of(box);
+    const float width = edges.width();
+    const float height = edges.height();
     const float scale = std::min(width / (max_x - min_x), height / (max_y - min_y));
     const float offset_x = static_cast<float>(box.x) + (width - (max_x - min_x) * scale) / 2.0f;
     const float offset_y = static_cast<float>(box.y) + (height - (max_y - min_y) * scale) / 2.0f;
@@ -390,7 +400,7 @@ Brush texture_brush(ShapeTexture texture, int thickness) {
         case ShapeTexture::Watercolor: kind = BrushKind::Watercolor; break;
         default: break;
     }
-    return Brush{thickness, 0.25f, BrushShape::Round, kind};
+    return Brush{thickness, kDefaultBrushSpacing, BrushShape::Round, kind};
 }
 
 // The clip the raster target applies, in the form a brush stamp understands, so
@@ -431,7 +441,7 @@ constexpr float kHatchWorkBudget = 12.0e6f;
 // grainy surface instead of as lines.
 void hatch_texture(raster::Target target, std::span<const Point2f> points, int thickness,
                    ShapeTexture texture, Rgba8 color) {
-    if (points.size() < 3) return;
+    if (points.size() < kMinPolygonPoints) return;
     SelectionMask interior = interior_clip(target, points);
     if (interior.empty()) return;
     const RectI box = interior.bounds();
@@ -489,11 +499,8 @@ std::vector<Point2f> shape::outline(ShapeId kind, Point2f a, Point2f b,
     }
 
     const RectI box = normalized_rect(a, b);
-    const float x0 = static_cast<float>(box.x);
-    const float y0 = static_cast<float>(box.y);
-    const float x1 = static_cast<float>(box.x + box.width - 1);
-    const float y1 = static_cast<float>(box.y + box.height - 1);
-    const Point2f center{(x0 + x1) / 2.0f, (y0 + y1) / 2.0f};
+    const auto [x0, y0, x1, y1] = edges_of(box);
+    const Point2f center = midpoint({x0, y0}, {x1, y1});
     const float rx = (x1 - x0) / 2.0f;
     const float ry = (y1 - y0) / 2.0f;
 
@@ -505,7 +512,7 @@ std::vector<Point2f> shape::outline(ShapeId kind, Point2f a, Point2f b,
         case ShapeId::RightTriangle: return {{x0, y1}, {x0, y0}, {x1, y1}};
         case ShapeId::Diamond:
             return {{center.x, y0}, {x1, center.y}, {center.x, y1}, {x0, center.y}};
-        case ShapeId::Pentagon: return regular_polygon(center, rx, ry, 5, -90.0f);
+        case ShapeId::Pentagon: return regular_polygon(center, rx, ry, 5, -kQuarterTurnDegrees);
         case ShapeId::Hexagon: return regular_polygon(center, rx, ry, 6, 0.0f);
         case ShapeId::Star4: return star_points(center, rx, ry, 4, 0.38f);
         case ShapeId::Star5: return star_points(center, rx, ry, 5, 0.382f);
@@ -542,9 +549,8 @@ std::string shape::svg_commands(std::span<const Point2f> points, bool closed) {
 std::string shape::gallery_commands(ShapeId kind, RectI box) {
     if (kind == ShapeId::Polygon) return svg_commands(polygon_glyph(box), true);
     const Point2f top_left{static_cast<float>(box.x), static_cast<float>(box.y)};
-    const Point2f bottom_right{static_cast<float>(box.x + box.width - 1),
-                               static_cast<float>(box.y + box.height - 1)};
-    return svg_commands(outline(kind, top_left, bottom_right, {}), is_closed(kind));
+    const BoxEdges edges = edges_of(box);
+    return svg_commands(outline(kind, top_left, {edges.right, edges.bottom}, {}), is_closed(kind));
 }
 
 void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
@@ -694,7 +700,7 @@ void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerB
         update_preview(context, position);
         return;
     }
-    if (m_polygon.size() >= 3 && distance(position, m_polygon.front()) <= kClosePolygonDistance) {
+    if (m_polygon.size() >= kMinPolygonPoints && distance(position, m_polygon.front()) <= kClosePolygonDistance) {
         close_polygon(context);
         return;
     }
@@ -731,7 +737,7 @@ void ShapeTool::on_pointer_up(ToolContext& context, Point2f position) {
         // The first drag only lays out the baseline; the next one bends it.
         m_curve_pending = true;
         m_curve_end = position;
-        m_curve_control = {(m_origin.x + position.x) / 2.0f, (m_origin.y + position.y) / 2.0f};
+        m_curve_control = midpoint(m_origin, position);
         update_curve_preview(context);
         return;
     }
@@ -791,7 +797,7 @@ void ShapeTool::update_preview(ToolContext& context, Point2f cursor) {
         return;
     }
     // A curve is a straight baseline until it is bent.
-    const Point2f middle{(m_origin.x + cursor.x) / 2.0f, (m_origin.y + cursor.y) / 2.0f};
+    const Point2f middle = midpoint(m_origin, cursor);
     const std::span<const Point2f> bend = context.shape_options.kind == ShapeId::Curve
                                               ? std::span<const Point2f>(&middle, 1)
                                               : std::span<const Point2f>();
@@ -828,7 +834,7 @@ void ShapeTool::close_polygon(ToolContext& context) {
     m_polygon_open = false;
     m_polygon.clear();
     context.ui.shape.visible = false;
-    if (vertices.size() < 3) return;
+    if (vertices.size() < kMinPolygonPoints) return;
 
     commit_shape(context, ShapeId::Polygon, m_origin, m_cursor, vertices, m_button);
 }
