@@ -26,29 +26,28 @@ component RibbonTab inherits Rectangle {
         : touch.has-hover ? #f0f1f2
         : Styles.tab-strip-background;
 
-    // The frame of the selected tab, open at the bottom so it runs into the
-    // ribbon below it.
     if (root.selected && !root.backstage) : Rectangle {
-        border-width: 1px;
+        border-width: 1phx;
         border-color: Styles.tab-border;
-    }
-    if (root.selected && !root.backstage) : Rectangle {
-        x: 1px;
-        y: root.height - 1px;
-        width: root.width - 2px;
-        height: 1px;
-        background: Styles.ribbon-background;
     }
 
     if (root.contextual && !root.selected) : Rectangle {
         x: 0px;
-        width: 1px;
+        width: 1phx;
         background: Styles.tab-contextual-border;
     }
     if (root.contextual && !root.selected) : Rectangle {
-        x: root.width - 1px;
-        width: 1px;
+        x: root.width - 1phx;
+        width: 1phx;
         background: Styles.tab-contextual-border;
+    }
+
+    Rectangle {
+        x: root.selected ? 1phx : 0px;
+        y: root.height - 1phx;
+        width: root.width - 2 * self.x;
+        height: 1phx;
+        background: root.selected ? Styles.ribbon-background : Styles.tab-border;
     }
 
     Text {
@@ -144,14 +143,6 @@ export component TopBar inherits Rectangle {
         background: Styles.tab-strip-background;
     }
 
-    // The line under the tab strip, which the selected tab covers.
-    Rectangle {
-        y: Styles.tab-height - 1px;
-        width: 100%;
-        height: 1px;
-        background: Styles.tab-border;
-    }
-
     if (UserState.show-ribbon && root.tab == 1) : HomeBar {
         y: Styles.tab-height;
         width: 100%;
@@ -165,7 +156,13 @@ export component TopBar inherits Rectangle {
         width: 100%;
     }
 
-    // Drawn after the bars so the selected tab sits over the line above them.
+    Rectangle {
+        y: Styles.tab-height - 1phx;
+        width: 100%;
+        height: 1phx;
+        background: Styles.tab-border;
+    }
+
     HorizontalLayout {
         y: 0px;
         height: Styles.tab-height;
@@ -208,7 +205,7 @@ export component TopBar inherits Rectangle {
         x: parent.width - self.width;
         y: 0px;
         width: Styles.ribbon-toggle-width;
-        height: Styles.tab-height - 1px;
+        height: Styles.tab-height - 1phx;
         open: UserState.show-ribbon;
         clicked => { root.toggle-ribbon(); }
     }

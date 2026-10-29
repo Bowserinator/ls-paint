@@ -8,11 +8,11 @@ export component FileMenu {
     // The recent rows stop once the next one would run past this: the panel
     // hangs under the tab strip, so a short window leaves little room.
     in property <length> max-list-height: 320px;
-    width: Styles.large-menu-width + 2px + Styles.file-menu-recent-width;
+    width: Styles.large-menu-width + 2phx + Styles.file-menu-recent-width;
 
     Rectangle {
         background: Styles.large-menu-recent-background;
-        border-width: 1px;
+        border-width: 1phx;
         border-color: Styles.large-menu-border;
         drop-shadow-blur: 3px;
         drop-shadow-offset-y: 2px;
@@ -20,7 +20,7 @@ export component FileMenu {
     }
 
     HorizontalLayout {
-        padding: 1px;
+        padding: 1phx;
 
         LargeDropdown {
             LargeDropdownItem {
@@ -53,20 +53,20 @@ export component FileMenu {
 
         // The column's right edge: a rule and its white highlight.
         Rectangle {
-            width: 1px;
+            width: 1phx;
             background: Styles.large-menu-divider;
         }
         Rectangle {
-            width: 1px;
+            width: 1phx;
             background: #fefeff;
         }
 
         VerticalLayout {
-            width: Styles.file-menu-recent-width - 2px;
+            width: Styles.file-menu-recent-width - 2phx;
             alignment: start;
 
             Rectangle {
-                height: Styles.recent-row-height + 2px;
+                height: Styles.recent-row-height + 2phx;
 
                 Text {
                     x: 7px;
@@ -79,12 +79,12 @@ export component FileMenu {
                 }
                 Rectangle {
                     y: Styles.recent-row-height;
-                    height: 1px;
+                    height: 1phx;
                     background: Styles.large-menu-divider;
                 }
                 Rectangle {
-                    y: Styles.recent-row-height + 1px;
-                    height: 1px;
+                    y: Styles.recent-row-height + 1phx;
+                    height: 1phx;
                     background: #fefeff;
                 }
             }

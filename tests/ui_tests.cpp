@@ -407,10 +407,15 @@ int run_ui_tests() {
     CHECK(dark->row_count() > 0);
     CHECK(light->row_count() > 0);
     int outline = 0;
-    for (std::size_t i = 0; i < dark->row_count(); ++i)
-        outline += int(dark->row_data(i)->w) * int(dark->row_data(i)->h);
-    for (std::size_t i = 0; i < light->row_count(); ++i)
-        outline += int(light->row_data(i)->w) * int(light->row_data(i)->h);
+    for (const auto& runs : {dark, light}) {
+        for (std::size_t i = 0; i < runs->row_count(); ++i) {
+            const auto dash = runs->row_data(i);
+            CHECK(dash->w == 1.0f || dash->h == 1.0f);
+            CHECK(dash->w >= 1.0f && dash->w <= 3.0f);
+            CHECK(dash->h >= 1.0f && dash->h <= 3.0f);
+            outline += int(dash->w) * int(dash->h);
+        }
+    }
     const int sel_w = h.doc().get_selection_width();
     const int sel_h = h.doc().get_selection_height();
     CHECK(outline == 2 * (sel_w + sel_h - 2));

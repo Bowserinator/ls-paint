@@ -25,7 +25,7 @@ export global Styles {
     out property<length> ribbon-overflow-margin: 8px;
     // The line between two groups: one pixel, a shade darker than the ribbon, so
     // it is there to find without being a rule.
-    out property<length> ribbon-divider: 1px;
+    out property<physical-length> ribbon-divider: 1phx;
     out property<color> ribbon-divider-color: #dcdfe3;
     // The box around a ribbon group's icon, a step darker than the divider.
     out property<color> ribbon-icon-border-color: #b0b6bd;
@@ -63,8 +63,8 @@ export global Styles {
     // and the gap before the group's edge, plus the group's own padding.
     out property<length> ribbon-width-colors:
         2 * ribbon-group-padding + 2 * bar-vertical-btn-width
-            + (6px + bar-color-cell * 10 + 6px) + 70px + 4px;
-    out property<length> ribbon-width-about: 59px;
+            + (6px + bar-color-cell * 10 + 6px) + (bar-large-icon-size + 2 * bar-padding) * 1.2 + 4px;
+    out property<length> ribbon-width-about: (bar-large-icon-size + 2 * bar-padding) * 1.2 + 2 * ribbon-group-padding;
 
     // The View tab: three vertical buttons in Zoom, three check rows in
     // Show or hide, each with the group's own padding on both sides.
@@ -127,7 +127,7 @@ export global Styles {
     // two swatches beside the ten wide palette and the picker tile.
     out property<length> bar-colors-menu-width:
         2px + 6px + bar-vertical-btn-width + 6px + bar-vertical-btn-width + 6px + bar-color-cell * 10
-            + 6px + bar-vertical-btn-width + 6px;
+            + 6px + (bar-large-icon-size + 2 * bar-padding) * 1.2 + 6px;
     // The Shapes dropdown holds the glyph grid and, beside it, the outline and
     // fill buttons.
     out property<length> bar-shapes-menu-width:

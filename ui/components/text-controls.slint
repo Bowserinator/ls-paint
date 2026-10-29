@@ -13,7 +13,7 @@ export component ValueButton inherits Rectangle {
 
     height: 22px;
     background: focused ? Styles.menu-hover : touch.has-hover ? #e5f1fb : white;
-    border-width: 1px;
+    border-width: 1phx;
     border-color: focused ? #8dbcec : #c8c8c8;
 
     HorizontalLayout {
@@ -63,7 +63,7 @@ export component StyleToggle inherits Rectangle {
     width: 24px;
     height: 22px;
     background: active ? Styles.menu-hover : touch.has-hover ? #e5f1fb : transparent;
-    border-width: 1px;
+    border-width: 1phx;
     border-color: active ? #8dbcec : transparent;
 
     Text {

@@ -58,10 +58,8 @@ component ResizeBadge inherits Rectangle {
 // made of, held still instead of crawling. Each run is one device pixel thick,
 // so the frame stays one pixel thick at every zoom and on every screen.
 component AntsFrame inherits Rectangle {
-    // Device pixels per logical pixel.
-    in property <float> device-ratio: 1.0;
-    property <length> hair: 1px / root.device-ratio;
-    property <length> run: max(1.0, round(3.0 * root.device-ratio)) * root.hair;
+    property <length> hair: 1phx;
+    property <length> run: 3phx;
 
     for i in floor(root.width / root.run) : Rectangle {
         x: i * root.run;
@@ -107,9 +105,11 @@ export component AppWindow inherits Window {
     in property <bool> tile-pixelated: true;
     in property <float> device-ratio: 1.0;
 
-    // The zoom, reported so the backend can make the images that suit it.
+    // The zoom and screen scale both determine the backend's pixel grid.
     property <float> canvas-zoom: UserState.zoom;
+    property <float> canvas-device-ratio: 1px / 1phx;
     callback canvas-zoom-changed(float);
+    changed canvas-device-ratio => { root.canvas-zoom-changed(root.canvas-zoom); }
 
     // What the window shows of the document, so only the tiles near it are built.
     in-out property <ViewArea> view-area: {
@@ -151,7 +151,7 @@ export component AppWindow inherits Window {
         return round(value / 1px * root.device-ratio) / root.device-ratio * 1px;
     }
     // One device pixel.
-    property <length> hairline: 1px / root.device-ratio;
+    property <length> hairline: 1phx;
     // Side of a selection grip in device pixels.
     property <float> grip-size: max(3.0, round(7.0 * root.device-ratio / 1.7));
     // Moves a view offset to a whole device pixel. The tiles, the outline and
@@ -466,8 +466,8 @@ export component AppWindow inherits Window {
                         width: root.canvas-w;
                         height: root.canvas-h;
                         background: transparent;
-                        drop-shadow-blur: 12px;
-                        drop-shadow-offset-y: 4px;
+                        drop-shadow-blur: 7.2px;
+                        drop-shadow-offset-y: 2.4px;
                         drop-shadow-color: rgba(0, 0, 0, 0.28);
 
                         canvas-menu := PopupWindow {
@@ -476,7 +476,7 @@ export component AppWindow inherits Window {
 
                             CanvasMenuFrame {
                                 VerticalLayout {
-                                    padding: 1px;
+                                    padding: 1phx;
 
                                     CanvasMenuItem {
                                         caption: @tr("Cut");
@@ -770,7 +770,7 @@ export component AppWindow inherits Window {
                         y: root.canvas-origin;
                         width: max(1px, root.canvas-w + root.resize-dx);
                         height: max(1px, root.canvas-h + root.resize-dy);
-                        border-width: 1px;
+                        border-width: 1phx;
                         border-color: black;
                         visible: right-handle.active || bottom-handle.active || corner-handle.active;
                     }
@@ -877,16 +877,11 @@ export component AppWindow inherits Window {
                             y: -root.hairline;
                             width: parent.width + 2 * root.hairline;
                             height: parent.height + 2 * root.hairline;
-                            device-ratio: root.device-ratio;
                         }
                     }
 
-                    // The outline of an active selection: alternating light and
-                    // dark runs covering its border, rebuilt from C++ as the
-                    // phase advances so the pattern crawls around it.
-                    // Runs are laid out in device pixels, so the ants keep the
-                    // same dash length and weight at every magnification and
-                    // every screen scale, each covering whole pixels.
+                    // The selection outline advances in device pixels. Convert
+                    // with the scale that generated it, as for the tiles and grips.
                     for dash in DocumentState.ants-light : Rectangle {
                         x: root.canvas-origin + dash.x / root.device-ratio * 1px;
                         y: root.canvas-origin + dash.y / root.device-ratio * 1px;

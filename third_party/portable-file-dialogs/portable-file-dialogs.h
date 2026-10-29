@@ -741,17 +741,20 @@ inline void internal::executor::start_func(std::function<std::string(int *)> con
 
     auto trampoline = [fun, this]()
     {
-        // Save our thread id so that the caller can cancel us
-        m_tid = GetCurrentThreadId();
-        EnumWindows(&enum_windows_callback, (LPARAM)this);
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            // Save our thread id so that the caller can cancel us
+            m_tid = GetCurrentThreadId();
+            EnumWindows(&enum_windows_callback, (LPARAM)this);
+            m_running = true;
+        }
         m_cond.notify_all();
         return fun(&m_exit_code);
     };
 
     std::unique_lock<std::mutex> lock(m_mutex);
     m_future = std::async(std::launch::async, trampoline);
-    m_cond.wait(lock);
-    m_running = true;
+    m_cond.wait(lock, [this]() { return m_running; });
 }
 
 #elif __EMSCRIPTEN__
@@ -826,10 +829,16 @@ inline bool internal::executor::ready(int timeout /* = default_wait_timeout */)
             // thread uses a Windows API dialog, it may be attached to the
             // main thread and waiting for messages that only we can dispatch.
             MSG msg;
-            while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
+            // Reentrant paint handlers can refill the queue indefinitely.
+            if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
             {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
+                if (msg.message == WM_QUIT)
+                    PostQuitMessage(static_cast<int>(msg.wParam));
+                else
+                {
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                }
             }
             return false;
         }

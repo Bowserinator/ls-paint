@@ -123,6 +123,8 @@ target_include_directories(ls_paint PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_include_directories(ls_paint SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/portable-file-dialogs)
 find_package(Threads REQUIRED)
 target_link_libraries(ls_paint PRIVATE lsp_core Slint::Slint Threads::Threads)
+# Keep scale overrides at runtime, not frozen into separately generated windows.
+list(APPEND SLINT_COMPILER_ENV_VARS --unset=SLINT_SCALE_FACTOR)
 slint_target_sources(ls_paint ui/appwindow.slint)
 # The two dialogs are real windows, shown from the application code. Each is
 # compiled in its own namespace: the files they share with the ribbon would

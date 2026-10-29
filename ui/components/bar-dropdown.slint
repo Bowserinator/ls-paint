@@ -2,11 +2,11 @@ import { Styles } from "../styles.slint";
 
 export component BarDropdown {
     // Wider than the default only for the panels whose contents need it.
-    in property <length> panel-width: Styles.bar-dropdown-width + 2px;
+    in property <length> panel-width: Styles.bar-dropdown-width + 2phx;
 
     Rectangle {
         background: white;
-        border-width: 1px;
+        border-width: 1phx;
         border-color: Styles.bar-border-light;
         drop-shadow-blur: 3px;
         drop-shadow-offset-y: 2px;
@@ -15,7 +15,7 @@ export component BarDropdown {
 
     VerticalLayout {
         width: root.panel-width;
-        padding: 1px;
+        padding: 1phx;
         @children
     }
 }
@@ -23,7 +23,7 @@ export component BarDropdown {
 export component BarDropdownDivider {
     Rectangle {
         width: Styles.bar-dropdown-width;
-        height: 1px;
+        height: 1phx;
         background: Styles.bar-border-light;
     }
 }
@@ -67,7 +67,7 @@ export component BarDropdownItem {
     opacity: enabled ? 1.0 : 0.4;
     Rectangle {
         background: focused ? Styles.menu-hover : touch.has-hover ? #edf4fc : transparent;
-        border-width: 1px;
+        border-width: 1phx;
         border-color: focused ? #8dbcec : touch.has-hover ? #bfdcfb : transparent;
     }
 
@@ -100,7 +100,7 @@ export component BarDropdownItem {
 
         Rectangle {
             background: Styles.bar-border-light;
-            width: 1px;
+            width: 1phx;
             height: root.height;
         }
 
@@ -136,7 +136,7 @@ export component BarDropdownTextItem inherits Rectangle {
 
     Rectangle {
         background: focused ? Styles.menu-hover : touch.has-hover ? #edf4fc : transparent;
-        border-width: 1px;
+        border-width: 1phx;
         border-color: focused ? #8dbcec : touch.has-hover ? #bfdcfb : transparent;
     }
 
@@ -167,7 +167,7 @@ export component BarSizeDropdownItem {
 
     Rectangle {
         background: touch.has-hover ? #edf4fc : transparent;
-        border-width: 1px;
+        border-width: 1phx;
         border-color: touch.has-hover ? #bfdcfb : transparent;
     }
 

@@ -24,13 +24,13 @@ export component CanvasMenuItem inherits Rectangle {
 
     Rectangle {
         x: Styles.menu-item-height;
-        width: 1px;
+        width: 1phx;
         height: parent.height;
         background: Styles.bar-border-light;
     }
 
     Text {
-        x: Styles.menu-item-height + 1px + Styles.bar-padding;
+        x: Styles.menu-item-height + 1phx + Styles.bar-padding;
         width: parent.width - self.x - Styles.bar-padding;
         height: parent.height;
         text: root.caption;
@@ -53,15 +53,15 @@ export component CanvasMenuItem inherits Rectangle {
 // A divider between groups of entries.
 export component CanvasMenuDivider inherits Rectangle {
     width: Styles.menu-width;
-    height: 1px;
+    height: 1phx;
     background: Styles.bar-border-light;
 }
 
 // The frame the entries sit in: white, square, one pixel border.
 export component CanvasMenuFrame inherits Rectangle {
-    width: Styles.menu-width + 2px;
+    width: Styles.menu-width + 2phx;
     background: white;
-    border-width: 1px;
+    border-width: 1phx;
     border-color: Styles.bar-border-light;
     drop-shadow-blur: 3px;
     drop-shadow-offset-y: 2px;

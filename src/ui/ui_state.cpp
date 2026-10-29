@@ -95,8 +95,8 @@ constexpr int kMaxSkewDegrees = 89;
     return static_cast<float>(*degrees);
 }
 
-// Marching ants: alternating light and dark runs three logical pixels long,
-// advanced one logical pixel per tick. The whole pattern is rebuilt on every
+// Marching ants: alternating light and dark runs three physical pixels long,
+// advanced one physical pixel per tick. The whole pattern is rebuilt on every
 // tick, so the animation is just the phase moving forward.
 constexpr int kAntSegment = 3;
 constexpr auto kAntTick = std::chrono::milliseconds(80);
@@ -686,7 +686,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
     // The outline crawls on its own: nothing else has to touch it.
     m_ants_timer.start(slint::TimerMode::Repeated, kAntTick, [this] {
-        m_ant_phase = (m_ant_phase + std::max(1, round_to_int(m_bridge.device_ratio()))) % kAntPhaseWrap;
+        m_ant_phase = (m_ant_phase + 1) % kAntPhaseWrap;
         update_ants();
     });
 
@@ -694,6 +694,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
     // a resize of the window, which Slint never reports.
     m_settings = std::make_unique<SQLiteStore>(default_store_path());
     load_settings();
+    apply_zoom(m_window.global<UserState>().get_zoom());
     m_settings_timer.start(slint::TimerMode::Repeated, std::chrono::seconds(1),
                            [this] { watch_settings(); });
 }
@@ -1480,7 +1481,7 @@ void UiState::update_ants() {
     // pixels whatever the screen's scale.
     const float ratio = m_bridge.device_ratio();
     const float scale = m_window.global<UserState>().get_zoom() * ratio;
-    const int segment = std::max(1, round_to_int(static_cast<float>(kAntSegment) * ratio));
+    const int segment = kAntSegment;
 
     // Every outline to draw, in device pixels.
     struct Outline {

@@ -14,7 +14,7 @@ component ZoomButton inherits Rectangle {
         width: 20px;
         height: 20px;
         border-radius: 10px;
-        border-width: 1px;
+        border-width: 1phx;
         border-color: touch.has-hover ? #6f7377 : #8e9195;
         background: touch.pressed
             ? @linear-gradient(180deg, #d4d6d8 0%, #bfc2c5 100%)
@@ -71,7 +71,7 @@ component ZoomSlider inherits Rectangle {
         width: parent.width;
         height: root.groove-height;
         background: #e6e9ea;
-        border-width: 1px;
+        border-width: 1phx;
         border-color: #d6d6d6;
     }
 
@@ -115,7 +115,7 @@ component StatusGlyph inherits Rectangle {
 
 // The line that parts two readings.
 component StatusDivider inherits Rectangle {
-    width: 1px;
+    width: 1phx;
     background: #c8ccd2;
 }
 

@@ -18,6 +18,8 @@ export component ColorsGroup inherits BarItemGroup {
     // The width of the bar the group sits in: the panel slides left to keep its
     // right edge inside a narrow bar.
     in property <length> bar-width: 0px;
+    property <length> panel-width: Styles.bar-colors-menu-width - 2px + 2phx;
+    property <length> palette-cell: floor(Styles.bar-color-cell / 1phx) * 1phx;
 
     title: "Colors";
     show-title: !root.merged;
@@ -28,13 +30,13 @@ export component ColorsGroup inherits BarItemGroup {
         // The widest panel in the ribbon: it stays under its button while
         // the bar has room and slides left to keep its right edge inside
         // the bar when the button sits near the end of a narrow window.
-        x: root.x + colors-merged.x + Styles.bar-colors-menu-width
+        x: root.x + colors-merged.x + root.panel-width
                 > root.bar-width - Styles.bar-padding
-            ? root.bar-width - Styles.bar-padding - Styles.bar-colors-menu-width - root.x
+            ? root.bar-width - Styles.bar-padding - root.panel-width - root.x
             : colors-merged.x;
 
         BarDropdown {
-            panel-width: Styles.bar-colors-menu-width;
+            panel-width: root.panel-width;
 
             // The swatches sit beside the palette, as Paint draws them.
             HorizontalLayout {
@@ -56,13 +58,13 @@ export component ColorsGroup inherits BarItemGroup {
                 }
 
                 Rectangle {
-                    width: Styles.bar-color-cell * 10;
-                    height: Styles.bar-color-cell * 3;
+                    width: root.palette-cell * 10 - 1phx;
+                    height: root.palette-cell * 3 - 1phx;
 
                     for color[i] in UserState.color_palette: ColorButton {
-                        x: mod(i, 10) * Styles.bar-color-cell;
-                        y: floor(i / 10) * Styles.bar-color-cell;
-                        cell: Styles.bar-color-cell;
+                        x: mod(i, 10) * root.palette-cell;
+                        y: floor(i / 10) * root.palette-cell;
+                        cell: root.palette-cell;
                         colr: color;
                         clicked => {
                             if (UserState.color_idx == 0) {
@@ -76,7 +78,8 @@ export component ColorsGroup inherits BarItemGroup {
 
                 // Paint keeps the picker tile at the end of the palette row.
                 ImageButtonVertical {
-                    width: Styles.bar-vertical-btn-width;
+                    width: self.preferred-width * 1.2;
+                    horizontal-padding: Styles.bar-padding;
                     icon: @image-url("../../icons/edit-colors.png");
                     text: "Edit\ncolors";
                 }
@@ -118,14 +121,14 @@ export component ColorsGroup inherits BarItemGroup {
                 padding-right: 6px;
 
                 Rectangle {
-                    width: Styles.bar-color-cell * 10;
-                    height: Styles.bar-color-cell * 3;
+                    width: root.palette-cell * 10 - 1phx;
+                    height: root.palette-cell * 3 - 1phx;
 
                     for color[i] in UserState.color_palette:
                         ColorButton {
-                            x: mod(i, 10) * Styles.bar-color-cell;
-                            y: floor(i / 10) * Styles.bar-color-cell;
-                            cell: Styles.bar-color-cell;
+                            x: mod(i, 10) * root.palette-cell;
+                            y: floor(i / 10) * root.palette-cell;
+                            cell: root.palette-cell;
                             colr: color;
                             clicked => {
                                 if (UserState.color_idx == 0) {
@@ -139,7 +142,8 @@ export component ColorsGroup inherits BarItemGroup {
             }
 
             ImageButtonVertical {
-                width: 70px;
+                width: self.preferred-width * 1.2;
+                horizontal-padding: Styles.bar-padding;
                 // Two lines, as Paint draws it, so the caption never elides.
                 text: "Edit\ncolors";
                 icon: @image-url("../../icons/edit-colors.png");

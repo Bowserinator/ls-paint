@@ -98,5 +98,14 @@ set(LSP_TEST_TARGETS
     lsp_store_tests
     lsp_tile_resample_tests
     lsp_ui_tests
-    PARENT_SCOPE
 )
+
+if(WIN32)
+    add_executable(lsp_file_picker_tests file_picker_test.cpp)
+    target_include_directories(lsp_file_picker_tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/third_party/portable-file-dialogs)
+    target_link_libraries(lsp_file_picker_tests PRIVATE Threads::Threads user32)
+    add_test(NAME lsp_file_picker_tests COMMAND lsp_file_picker_tests)
+    set_tests_properties(lsp_file_picker_tests PROPERTIES TIMEOUT 10)
+    list(APPEND LSP_TEST_TARGETS lsp_file_picker_tests)
+endif()
+set(LSP_TEST_TARGETS ${LSP_TEST_TARGETS} PARENT_SCOPE)

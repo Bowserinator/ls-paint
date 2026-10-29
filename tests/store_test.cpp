@@ -145,14 +145,47 @@ void test_a_list_round_trips_through_encoding() {
           std::vector<std::string>({"back\\slash"}));
 }
 
+void test_environment_values() {
+    constexpr const char* name = "LSP_TEST_ENV_VALUE";
+    const auto previous = env_value(name);
+    const auto set_value = [name](const char* value) {
+#ifdef _WIN32
+        CHECK(_putenv_s(name, value) == 0);
+#else
+        CHECK(setenv(name, value, 1) == 0);
+#endif
+    };
+
+    set_value("");
+    CHECK(!env_value(name));
+    CHECK(!env_path(name));
+    set_value("A path with spaces");
+    CHECK(env_value(name) == "A path with spaces");
+    CHECK(env_path(name) == std::filesystem::path("A path with spaces"));
+    const std::string long_value(8192, 'x');
+    set_value(long_value.c_str());
+    CHECK(env_value(name) == long_value);
+    CHECK(env_path(name) == std::filesystem::path(long_value));
+#ifdef _WIN32
+    CHECK(_wputenv_s(L"LSP_TEST_ENV_VALUE", L"C:\\Users\\\u6d4b\u8bd5") == 0);
+    CHECK(env_path(name) == std::filesystem::path(L"C:\\Users\\\u6d4b\u8bd5"));
+    CHECK(_wputenv_s(L"LSP_TEST_ENV_VALUE", L"") == 0);
+#else
+    CHECK(unsetenv(name) == 0);
+#endif
+    CHECK(!env_value(name));
+    CHECK(!env_path(name));
+    if (previous) set_value(previous->c_str());
+}
+
 void test_the_default_path_names_the_app_directory() {
     const std::filesystem::path path = default_store_path();
     CHECK(path.filename() == kStoreFilename);
     CHECK(path.parent_path().filename() == kAppId);
     // The base is the platform's per-user config directory, so XDG_CONFIG_HOME
     // decides it wherever that variable is set.
-    if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0')
-        CHECK(path.parent_path().parent_path() == std::filesystem::path(xdg));
+    if (const auto xdg = env_path("XDG_CONFIG_HOME"))
+        CHECK(path.parent_path().parent_path() == *xdg);
 }
 
 }  // namespace
@@ -185,6 +218,7 @@ int main() {
     test_a_store_that_never_loaded_does_not_clear_the_table();
     test_a_list_round_trips_through_encoding();
     test_the_default_path_names_the_app_directory();
+    test_environment_values();
 
     if (failures == 0) {
         std::printf("ALL OK\n");

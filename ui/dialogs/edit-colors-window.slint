@@ -11,25 +11,33 @@ component Swatch inherits Rectangle {
     width: Win10.swatch-width;
     height: Win10.swatch-height;
 
-    WinSunken {
-        width: parent.width;
-        height: parent.height;
-        face: root.colr;
-    }
+    Rectangle {
+        x: round(root.absolute-position.x / 1phx) * 1phx - root.absolute-position.x;
+        y: round(root.absolute-position.y / 1phx) * 1phx - root.absolute-position.y;
+        width: round(root.width / 1phx) * 1phx;
+        height: round(root.height / 1phx) * 1phx;
+        property <length> focus-outset: 1phx + round(2px / 1phx) * 1phx;
 
-    if root.chosen : Rectangle {
-        x: -1px;
-        y: -1px;
-        width: parent.width + 2px;
-        height: parent.height + 2px;
-        border-width: 1px;
-        border-color: Win10.focus-color;
-    }
-    if root.chosen : WinFocusDots {
-        x: -3px;
-        y: -3px;
-        width: parent.width + 6px;
-        height: parent.height + 6px;
+        WinSunken {
+            width: parent.width;
+            height: parent.height;
+            face: root.colr;
+        }
+
+        if root.chosen : Rectangle {
+            x: -1phx;
+            y: -1phx;
+            width: parent.width + 2phx;
+            height: parent.height + 2phx;
+            border-width: 1phx;
+            border-color: Win10.focus-color;
+        }
+        if root.chosen : WinFocusDots {
+            x: -parent.focus-outset;
+            y: -parent.focus-outset;
+            width: parent.width + 2 * parent.focus-outset;
+            height: parent.height + 2 * parent.focus-outset;
+        }
     }
 
     TouchArea {
@@ -218,10 +226,10 @@ export component EditColorsWindow inherits Window {
             // The square sits in the same sunken edge as a swatch, one pixel
             // wide.
             WinSunken {
-                x: (parent.width - Styles.dialog-square-size) / 2 - 1px;
-                y: (parent.height - Styles.dialog-square-size) / 2 - 1px;
-                width: Styles.dialog-square-size + 2px;
-                height: Styles.dialog-square-size + 2px;
+                x: (parent.width - Styles.dialog-square-size) / 2 - 1phx;
+                y: (parent.height - Styles.dialog-square-size) / 2 - 1phx;
+                width: Styles.dialog-square-size + 2phx;
+                height: Styles.dialog-square-size + 2phx;
                 deep: false;
                 face: hue-color;
             }
@@ -247,7 +255,7 @@ export component EditColorsWindow inherits Window {
                 width: 14px;
                 height: 14px;
                 border-radius: 7px;
-                border-width: 2px;
+                border-width: 2phx;
                 border-color: white;
                 background: hue-color;
                 x: parent.width / 2 + sin(hue * 1deg) * (Styles.dialog-ring-size + Styles.dialog-ring-inner) / 4 - 7px;
@@ -259,7 +267,7 @@ export component EditColorsWindow inherits Window {
                 width: 10px;
                 height: 10px;
                 border-radius: 5px;
-                border-width: 1px;
+                border-width: 1phx;
                 border-color: white;
                 background: current;
                 x: (parent.width - Styles.dialog-square-size) / 2

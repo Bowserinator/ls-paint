@@ -163,10 +163,10 @@ export component CanvasRuler inherits Rectangle {
     // The hairline the ribbon draws under itself, on the side that faces the
     // canvas.
     Rectangle {
-        x: root.vertical ? root.width - 1px : 0px;
-        y: root.vertical ? 0px : root.height - 1px;
-        width: root.vertical ? 1px : root.width;
-        height: root.vertical ? root.height : 1px;
+        x: root.vertical ? root.width - 1phx : 0px;
+        y: root.vertical ? 0px : root.height - 1phx;
+        width: root.vertical ? 1phx : root.width;
+        height: root.vertical ? root.height : 1phx;
         background: Styles.ribbon-divider-color;
     }
 }
