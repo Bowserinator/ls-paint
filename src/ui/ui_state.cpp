@@ -436,9 +436,11 @@ std::vector<Point2f> turned_corners(const FloatingContents& contents) {
 UiState::UiState(AppWindow& window, AppController& controller)
     : m_window(window),
       m_controller(controller) {
-    m_window.set_tile_size(kDisplayTileSize);
-    m_window.set_tiles(m_bridge.tiles());
+    m_canvas_tiles = std::make_shared<slint::VectorModel<CanvasTile>>();
+    m_window.set_canvas_tiles(m_canvas_tiles);
+    m_bridge.attach([this] { update_canvas(); }, [this] { publish_canvas(); });
     const auto show_view = [this](const ViewArea& area) {
+        apply_zoom(m_window.global<UserState>().get_zoom());
         // A margin of a pixel each way covers the partly visible edge ones.
         const int left = floor_to_int(area.x) - 1;
         const int top = floor_to_int(area.y) - 1;
@@ -758,26 +760,54 @@ void UiState::load_settings() {
 }
 
 void UiState::apply_zoom(float zoom) {
-    const float ratio = m_window.window().scale_factor();
-    if (m_bridge.set_zoom(zoom, ratio > 0.0f ? ratio : 1.0f)) rebuild_tiles();
-    publish_tile_style();
+    const float scale = m_window.window().scale_factor();
+    const float ratio = scale > 0.0f ? scale : 1.0f;
+    if (zoom == m_bridge.zoom() && ratio == m_bridge.device_ratio()) return;
+    m_bridge.set_zoom(zoom, ratio);
+    m_window.set_device_ratio(ratio);
     update_ants();
-    m_zoom_timer.start(slint::TimerMode::SingleShot, std::chrono::milliseconds(kZoomSettleMilliseconds), [this] {
-        if (!m_bridge.refine()) return;
-        rebuild_tiles();
-        publish_tile_style();
-    });
+    m_bridge.poll(m_controller.document().flattened());
 }
 
-void UiState::rebuild_tiles() {
-    const PixelBuffer& pixels = m_controller.document().flattened();
-    m_bridge.upload(pixels, pixels.bounds());
+UiState::~UiState() { m_bridge.shutdown(); }
+
+void UiState::update_canvas() {
+    CanvasDocument& document = m_controller.document();
+    if (const auto dirty = document.flush())
+        m_bridge.upload(document.flattened(), *dirty, document.generation());
+    else
+        m_bridge.poll(document.flattened());
 }
 
-void UiState::publish_tile_style() {
-    m_window.set_tile_overlap(m_bridge.tile_overlap());
-    m_window.set_tile_pixelated(m_bridge.pixelated());
-    m_window.set_device_ratio(m_bridge.device_ratio());
+void UiState::publish_canvas() {
+    const CanvasPresentation& picture = m_bridge.presentation();
+    const auto row_of = [](const TilePlacement& tile) {
+        CanvasTile row;
+        row.source = tile.image;
+        row.x = static_cast<float>(tile.area.x);
+        row.y = static_cast<float>(tile.area.y);
+        row.width = static_cast<float>(tile.area.width);
+        row.height = static_cast<float>(tile.area.height);
+        row.clip_x = tile.clip.x;
+        row.clip_y = tile.clip.y;
+        row.clip_width = tile.clip.width;
+        row.clip_height = tile.clip.height;
+        row.bleed_x = tile.bleed_x;
+        row.bleed_y = tile.bleed_y;
+        row.pixelated = tile.pixelated;
+        return row;
+    };
+    for (std::size_t i = 0; i < picture.tiles.size(); ++i) {
+        if (i < m_canvas_shown.size() && same_picture(picture.tiles[i], m_canvas_shown[i])) continue;
+        if (i < m_canvas_tiles->row_count())
+            m_canvas_tiles->set_row_data(i, row_of(picture.tiles[i]));
+        else
+            m_canvas_tiles->push_back(row_of(picture.tiles[i]));
+    }
+    while (m_canvas_tiles->row_count() > picture.tiles.size()) m_canvas_tiles->erase(m_canvas_tiles->row_count() - 1);
+    m_canvas_shown = picture.tiles;
+    m_window.set_canvas_ready(picture.ready);
+    m_window.set_canvas_message(picture.failed ? "Canvas preview could not be allocated" : "Preparing canvas...");
 }
 
 UiState::SettingsSnapshot UiState::current_settings() const {
@@ -1376,6 +1406,7 @@ void UiState::do_cancel_text() {
 }
 
 void UiState::refresh() {
+    apply_zoom(m_window.global<UserState>().get_zoom());
     CanvasDocument& document = m_controller.document();
     // The background color can change at any time, and the transparent
     // selection follows it.
@@ -1383,9 +1414,7 @@ void UiState::refresh() {
         sync_colors();
         m_controller.refresh_transparent_color();
     }
-    if (const auto region = document.flush()) {
-        m_bridge.upload(document.flattened(), *region);
-    }
+    update_canvas();
 
     auto& state = m_window.global<DocumentState>();
     state.set_canvas_width(document.width());
@@ -1651,10 +1680,10 @@ void UiState::open_recent(int index) {
     if (index < 0 || index >= static_cast<int>(m_recent_files.size())) return;
     m_pending_path = m_recent_files[static_cast<std::size_t>(index)];
     if (!std::filesystem::exists(m_pending_path)) {
-        // A file that is no longer there leaves the list without a word.
         const std::filesystem::path missing = m_pending_path;
         m_pending_path.clear();
         forget_recent_file(missing);
+        show_message("Open failed", "File not found: " + utf8_from_path(missing));
         return;
     }
     if (m_controller.history().is_modified()) {

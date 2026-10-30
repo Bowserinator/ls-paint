@@ -1,4 +1,5 @@
-import { ScrollView, Palette } from "std-widgets.slint";
+import { Palette } from "std-widgets.slint";
+import { ScrollView } from "components/scrollview.slint";
 import { TopBar } from "topbar.slint";
 import { StatusBar } from "statusbar.slint";
 import { Styles } from "styles.slint";
@@ -7,7 +8,7 @@ import { CanvasMenuItem, CanvasMenuDivider, CanvasMenuFrame } from "components/c
 import { CanvasRuler } from "components/canvas-ruler.slint";
 import { CanvasCursor } from "components/canvas-cursor.slint";
 
-import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ResizeOverlay, EResizeCursor, ToolOptions, ViewArea } from "globals.slint";
+import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ResizeOverlay, EResizeCursor, ToolOptions, ViewArea, CanvasTile } from "globals.slint";
 export * from "globals.slint";
 
 import "../assets/weblysleek/weblysleekuil.ttf";
@@ -92,17 +93,9 @@ component AntsFrame inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    // The canvas as a row-major grid of square images, `tile-size` document
-    // pixels a side; the ones on the right and bottom edges are cut short.
-    in property <[image]> tiles;
-    in property <int> tile-size: 512;
-    property <int> tile-columns: max(1, ceil(DocumentState.canvas-width / root.tile-size));
-
-    // Pixels each tile image shows past its edge, in document pixels, and
-    // whether the images are drawn as crisp blocks. Both come from the backend,
-    // which makes the images.
-    in property <float> tile-overlap: 2.0;
-    in property <bool> tile-pixelated: true;
+    in property <[CanvasTile]> canvas-tiles;
+    in property <bool> canvas-ready: false;
+    in property <string> canvas-message: "Preparing canvas...";
     in property <float> device-ratio: 1.0;
 
     // The zoom and screen scale both determine the backend's pixel grid.
@@ -132,18 +125,17 @@ export component AppWindow inherits Window {
     }
     changed canvas-zoom => { root.canvas-zoom-changed(root.canvas-zoom); }
 
-    // Where a tile edge falls on screen. Edges sit on whole device pixels, the
-    // same ones the backend cuts the tile images to, and each tile runs a little
-    // under its neighbour, so no gap shows between the two; the paper's own edge
-    // stays exact.
-    pure function edge-x(doc: float) -> length {
-        return (doc >= DocumentState.canvas-width ? DocumentState.canvas-width * UserState.zoom * root.device-ratio
-            : round(doc * UserState.zoom * root.device-ratio)) / root.device-ratio * 1px;
+    // Shared device-pixel edges keep neighbouring tiles and overlays aligned.
+    pure function device-x(doc: float) -> float {
+        return doc >= DocumentState.canvas-width ? DocumentState.canvas-width * UserState.zoom * root.device-ratio
+            : round(doc * UserState.zoom * root.device-ratio);
     }
-    pure function edge-y(doc: float) -> length {
-        return (doc >= DocumentState.canvas-height ? DocumentState.canvas-height * UserState.zoom * root.device-ratio
-            : round(doc * UserState.zoom * root.device-ratio)) / root.device-ratio * 1px;
+    pure function device-y(doc: float) -> float {
+        return doc >= DocumentState.canvas-height ? DocumentState.canvas-height * UserState.zoom * root.device-ratio
+            : round(doc * UserState.zoom * root.device-ratio);
     }
+    pure function edge-x(doc: float) -> length { return root.device-x(doc) / root.device-ratio * 1px; }
+    pure function edge-y(doc: float) -> length { return root.device-y(doc) / root.device-ratio * 1px; }
 
     // The nearest whole device pixel. Anything one device pixel thick that is
     // not on one would cover two of them, which draws it twice as heavy.
@@ -457,6 +449,27 @@ export component AppWindow inherits Window {
                         }
                     }
 
+                    // The paper's shadow. A shadow is drawn as one image the size of
+                    // its element, so one the size of a zoomed-in paper would cost
+                    // far more than the view it falls in. It is cut to the part of
+                    // the paper on screen, with the cut edges kept out of sight.
+                    Rectangle {
+                        property <length> edge-l: max(root.canvas-origin, -scroll.viewport-x - 24px);
+                        property <length> edge-t: max(root.canvas-origin, -scroll.viewport-y - 24px);
+                        property <length> edge-r: min(root.canvas-origin + root.canvas-w,
+                                                     -scroll.viewport-x + scroll.visible-width + 24px);
+                        property <length> edge-b: min(root.canvas-origin + root.canvas-h,
+                                                      -scroll.viewport-y + scroll.visible-height + 24px);
+                        x: self.edge-l;
+                        y: self.edge-t;
+                        width: max(0px, self.edge-r - self.edge-l);
+                        height: max(0px, self.edge-b - self.edge-t);
+                        background: transparent;
+                        drop-shadow-blur: 7.2px;
+                        drop-shadow-offset-y: 2.4px;
+                        drop-shadow-color: rgba(0, 0, 0, 0.28);
+                    }
+
                     // The selection tool owns the right-click menu. It is a
                     // plain popup because the TouchArea child grabs the press
                     // before a ContextMenuArea would ever see it.
@@ -466,9 +479,6 @@ export component AppWindow inherits Window {
                         width: root.canvas-w;
                         height: root.canvas-h;
                         background: transparent;
-                        drop-shadow-blur: 7.2px;
-                        drop-shadow-offset-y: 2.4px;
-                        drop-shadow-color: rgba(0, 0, 0, 0.28);
 
                         canvas-menu := PopupWindow {
                             x: root.menu-x;
@@ -582,6 +592,7 @@ export component AppWindow inherits Window {
                         }
 
                         touch := TouchArea {
+                            enabled: root.canvas-ready;
                             width: 100%;
                             height: 100%;
                             // Over the rotate zone the arrow the window draws at
@@ -718,22 +729,28 @@ export component AppWindow inherits Window {
                             width: 100%;
                             height: 100%;
 
-                            for tile[i] in root.tiles : Image {
-                                image-rendering: root.tile-pixelated
-                                    ? ImageRendering.pixelated
-                                    : ImageRendering.smooth;
-                                source: tile;
-                                // A tile draws over the ones to its right and below
-                                // it. Where the screen places a tile between two
-                                // device pixels its first row and column come out
-                                // wrong, and those lie under its neighbour's overlap.
-                                z: -1.0;
-                                x: root.edge-x(mod(i, root.tile-columns) * root.tile-size);
-                                y: root.edge-y(floor(i / root.tile-columns) * root.tile-size);
-                                width: root.edge-x((mod(i, root.tile-columns) + 1) * root.tile-size + root.tile-overlap)
-                                    - root.edge-x(mod(i, root.tile-columns) * root.tile-size);
-                                height: root.edge-y((floor(i / root.tile-columns) + 1) * root.tile-size + root.tile-overlap)
-                                    - root.edge-y(floor(i / root.tile-columns) * root.tile-size);
+                            // Each tile reaches a little under the next one, so
+                            // no gap shows between them at any zoom.
+                            for tile in root.canvas-tiles : Image {
+                                property <float> span-x: root.device-x(tile.x + tile.width) - root.device-x(tile.x);
+                                property <float> span-y: root.device-y(tile.y + tile.height) - root.device-y(tile.y);
+                                property <int> shown-width: max(tile.clip-width, 1);
+                                property <int> shown-height: max(tile.clip-height, 1);
+                                x: root.edge-x(tile.x);
+                                y: root.edge-y(tile.y);
+                                width: span-x * (shown-width + tile.bleed-x) / shown-width / root.device-ratio * 1px;
+                                height: span-y * (shown-height + tile.bleed-y) / shown-height / root.device-ratio * 1px;
+                                source: tile.source;
+                                source-clip-x: tile.clip-x;
+                                source-clip-y: tile.clip-y;
+                                source-clip-width: tile.clip-width + tile.bleed-x;
+                                source-clip-height: tile.clip-height + tile.bleed-y;
+                                image-rendering: tile.pixelated ? ImageRendering.pixelated : ImageRendering.smooth;
+                            }
+                            if !root.canvas-ready : Text {
+                                text: root.canvas-message;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
                             }
                         }
                         }

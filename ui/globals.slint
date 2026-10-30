@@ -267,6 +267,24 @@ export struct ViewArea {
     height: float,
 }
 
+// A picture of part of the document: the area it covers, in document pixels,
+// and the part of the image that fills it, in image pixels. The bleed is how
+// much more of the image can be drawn beyond it, under the next tile.
+export struct CanvasTile {
+    source: image,
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    clip-x: int,
+    clip-y: int,
+    clip-width: int,
+    clip-height: int,
+    bleed-x: int,
+    bleed-y: int,
+    pixelated: bool,
+}
+
 export struct ShapeGlyph {
     commands: string,
     kind: EShapeKind,

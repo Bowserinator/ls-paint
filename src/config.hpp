@@ -26,11 +26,23 @@ inline constexpr int kBlurChunkSize = 256;
 // A stroke that lays down ink once per pixel tracks its coverage in squares of
 // this many pixels a side, only where it has been.
 inline constexpr int kCoverageChunkSize = 256;
-// The canvas is shown as squares of this many pixels a side, so a brush stroke
-// only refreshes the squares it touched.
+// Reduced pictures of the document are kept as tiles of this many pixels a side.
 inline constexpr int kDisplayTileSize = 512;
-// How long the zoom must hold still before the canvas is resampled exactly.
-inline constexpr int kZoomSettleMilliseconds = 120;
+inline constexpr int kOverviewEdge = 512;
+inline constexpr int kPreviewGutter = 1;
+inline constexpr int kRenderPrefetchPixels = 128;
+inline constexpr int kRenderMaxEntries = 256;
+inline constexpr std::size_t kPreviewCacheBytes = 256u * 1024u * 1024u;
+// Bytes of the document read in one go while tiles are generated, and the time
+// one pass may spend on it: briefly while the view is being moved, so that
+// moving stays smooth, and longer once it has been still for a moment.
+inline constexpr std::size_t kRenderChunkBytes = 1u * 1024u * 1024u;
+inline constexpr int kRenderBusyMilliseconds = 2;
+inline constexpr int kRenderIdleMilliseconds = 12;
+inline constexpr int kRenderStillMilliseconds = 60;
+// An edit updates the tiles on the spot up to this many bytes of document;
+// anything larger is caught up with over the next passes.
+inline constexpr std::size_t kPreviewPatchBytes = 4u * 1024u * 1024u;
 
 // The application's name, which is also the name of its config folder.
 inline constexpr std::string_view kAppId = "ls_paint";

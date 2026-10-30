@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "app/app_controller.hpp"
 #include "appwindow.h"
@@ -16,6 +17,7 @@
 #include "confirm-dialog.h"
 #include "edit-colors-window.h"
 #include "io/document_io.hpp"
+#include "render/slint_bridge.hpp"
 #include "store/store.hpp"
 #include "store/store_sqlite.hpp"
 #include "ui/ui_state.hpp"
@@ -257,10 +259,97 @@ struct Origin {
     [[nodiscard]] float to_window_y(float doc_y) const { return y + doc_y; }
 };
 
+// The area the tiles of a presentation cover, counting each document pixel once
+// when they do not overlap.
+long long covered_pixels(const CanvasPresentation& picture) {
+    long long total = 0;
+    for (const TilePlacement& tile : picture.tiles)
+        total += static_cast<long long>(tile.area.width) * tile.area.height;
+    return total;
+}
+
+void zoom_keeps_coverage() {
+    const PixelBuffer source(4 * kDisplayTileSize, kDisplayTileSize, kWhite);
+    const long long whole = static_cast<long long>(source.width()) * source.height();
+    SlintBridge bridge;
+    bridge.set_view(source, source.bounds());
+    bridge.upload(source, source.bounds(), 1);
+    while (!bridge.idle()) bridge.poll(source);
+    CHECK(bridge.presentation().ready);
+    CHECK(bridge.presentation().tiles.size() == 4);
+    CHECK(covered_pixels(bridge.presentation()) == whole);
+
+    for (const auto& [zoom, dpr] : {std::pair{1.25f, 1.0f}, std::pair{0.5f, 1.0f}, std::pair{0.2f, 1.5f}}) {
+        CHECK(bridge.set_zoom(zoom, dpr));
+        bridge.poll(source);
+        CHECK(covered_pixels(bridge.presentation()) == whole);
+        while (!bridge.idle()) bridge.poll(source);
+        CHECK(covered_pixels(bridge.presentation()) == whole);
+        for (const TilePlacement& tile : bridge.presentation().tiles) CHECK(tile.pixelated == (zoom * dpr >= 1.0f));
+    }
+}
+
+void edits_reach_tiles_at_once() {
+    PixelBuffer source(2 * kDisplayTileSize, kDisplayTileSize, kWhite);
+    SlintBridge bridge;
+    bridge.set_view(source, source.bounds());
+    bridge.upload(source, source.bounds(), 1);
+    while (!bridge.idle()) bridge.poll(source);
+    CHECK(bridge.presentation().tiles.size() == 2);
+    const std::uint64_t edited = bridge.presentation().tiles[0].revision;
+    const std::uint64_t untouched = bridge.presentation().tiles[1].revision;
+
+    source.at(10, 10) = {255, 0, 0, 255};
+    bridge.upload(source, {10, 10, 1, 1}, 1);
+    CHECK(bridge.presentation().tiles.size() == 2);
+    CHECK(bridge.presentation().tiles[0].revision != edited);
+    CHECK(bridge.presentation().tiles[1].revision == untouched);
+
+    const PixelBuffer replaced(kDisplayTileSize, kDisplayTileSize, kWhite);
+    bridge.upload(replaced, replaced.bounds(), 2);
+    while (!bridge.idle()) bridge.poll(replaced);
+    CHECK(bridge.presentation().tiles.size() == 1);
+}
+
+void canvas_publishes_tiles() {
+    AppController controller;
+    controller.resize_canvas(4 * kDisplayTileSize, kDisplayTileSize, kWhite);
+    auto window = AppWindow::create();
+    UiState ui(*window, controller);
+    ViewArea view{};
+    view.width = 4 * kDisplayTileSize;
+    view.height = kDisplayTileSize;
+    window->invoke_view_area_changed(view);
+    controller.document().mark_dirty(controller.document().flattened().bounds());
+
+    const long long whole = static_cast<long long>(4 * kDisplayTileSize) * kDisplayTileSize;
+    const auto covered = [&] {
+        long long total = 0;
+        const auto tiles = window->get_canvas_tiles();
+        for (std::size_t index = 0; index < tiles->row_count(); ++index) {
+            const auto tile = tiles->row_data(index);
+            total += static_cast<long long>(tile->width) * static_cast<long long>(tile->height);
+        }
+        return total;
+    };
+    for (int pass = 0; pass < 100 && covered() != whole; ++pass)
+        window->global<UserState>().invoke_pointer_move(0.0f, 0.0f, false);
+    CHECK(window->get_canvas_ready());
+    CHECK(covered() == whole);
+
+    window->global<UserState>().set_zoom(0.5f);
+    window->invoke_canvas_zoom_changed(0.5f);
+    for (int pass = 0; pass < 100 && covered() != whole; ++pass)
+        window->global<UserState>().invoke_pointer_move(0.0f, 0.0f, false);
+    CHECK(covered() == whole);
+}
+
 }  // namespace
 
 int run_ui_tests() {
     slint::cbindgen_private::slint_testing_init_backend();
+    zoom_keeps_coverage();
+    edits_reach_tiles_at_once();
 
     // The settings store is a real database, so every window made here writes
     // to a directory of the tests' own rather than to the user's settings.
@@ -275,6 +364,7 @@ int run_ui_tests() {
     setenv("XDG_CONFIG_HOME", config_dir.string().c_str(), 1);
 #endif
 
+    canvas_publishes_tiles();
     Harness h;
 
     // 1. A fresh document has no selection and no clipboard content. The
@@ -1257,10 +1347,8 @@ int run_ui_tests() {
         CHECK(stored.get(kStoreKeyFontFamily).value_or("") == "DejaVu Serif");
     }
 
-    // 37. The File menu's recent list: the settings store fills it, a click
-    //     opens that file, an entry whose file is gone leaves the list without
-    //     a word, and opening over unsaved work asks the same question File >
-    //     Open asks.
+    // 37. Recent files open from the File menu. Missing files raise an alert
+    //     and leave the list. Replacing unsaved work requires confirmation.
     {
         const std::filesystem::path recent_dir =
             std::filesystem::temp_directory_path() / "lsp_ui_recent";
@@ -1305,8 +1393,13 @@ int run_ui_tests() {
         h.release(419, 71);
         CHECK(h.popups() == 0);
         CHECK(h.user().get_recent_files()->row_count() == 1);
-        CHECK(!h.message_open());
+        CHECK(h.message_open());
+        CHECK(std::string(h.message().get_heading()) == "Open failed");
+        CHECK(std::string(h.message().get_text()).find("gone.png") != std::string::npos);
         CHECK(!h.controller().has_current_path());
+        CHECK(!h.controller().history().is_modified());
+        h.message().invoke_accepted();
+        CHECK(!h.message_open());
 
         // The entry left behind opens its picture.
         h.press(25, 14);

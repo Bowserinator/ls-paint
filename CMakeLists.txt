@@ -75,6 +75,7 @@ add_library(lsp_core STATIC
     src/io/clipboard.cpp
     src/io/document_io.cpp
     src/io/stb_impl.cpp
+    src/render/preview_cache.cpp
     src/render/tile_resample.cpp
     src/selection/selection_mask.cpp
     src/selection/selection_ops.cpp

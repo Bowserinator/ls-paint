@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -17,6 +18,7 @@ public:
     [[nodiscard]] int width() const noexcept { return base().width(); }
     [[nodiscard]] int height() const noexcept { return base().height(); }
     [[nodiscard]] RectI bounds() const noexcept { return base().bounds(); }
+    [[nodiscard]] std::uint64_t generation() const noexcept { return m_generation; }
 
     [[nodiscard]] LayerStack& layers() noexcept { return m_layers; }
     [[nodiscard]] SelectionMask& selection() noexcept { return m_selection; }
@@ -68,6 +70,7 @@ private:
     SelectionMask m_selection;
     std::optional<FloatingContents> m_floating;
     std::optional<Rgba8> m_transparent_color;
+    std::uint64_t m_generation = 0;
 };
 
 }  // namespace lsp

@@ -1,11 +1,14 @@
 #include "core/canvas_document.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 namespace lsp {
 
 namespace {
+
+std::atomic<std::uint64_t> next_generation{1};
 
 // One buffer per layer, each made from the layer's own pixels.
 template <typename MakeFn>
@@ -18,7 +21,8 @@ std::vector<PixelBuffer> map_layers(const LayerStack& layers, MakeFn make) {
 
 }  // namespace
 
-CanvasDocument::CanvasDocument(int width, int height) : m_selection(width, height) {
+CanvasDocument::CanvasDocument(int width, int height)
+    : m_selection(width, height), m_generation(next_generation.fetch_add(1)) {
     m_layers.add({"Background", PixelBuffer(width, height, kWhite)});
     mark_dirty(bounds());
 }
@@ -60,6 +64,7 @@ std::vector<PixelBuffer> CanvasDocument::snapshot() const {
 }
 
 void CanvasDocument::rebuild_flattened() {
+    m_generation = next_generation.fetch_add(1);
     m_with_floating = {};
     m_dirty = {};
     mark_dirty(bounds());

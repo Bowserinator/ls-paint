@@ -257,9 +257,9 @@ PixelGrid sampled(const PixelBuffer& source, DeviceBox box, double scale, int le
                      std::min((rows.back() + 1) * factor, source.height()) - top * factor};
     const PixelGrid mip = factor == 1 ? PixelGrid{} : box_reduced(source, area, factor);
 
-    for (int y = 0; y < out.height; ++y) {
-        const std::size_t base = grid_index(0, y, out.width);
-        const int row = rows[static_cast<std::size_t>(y)];
+    parallel_for(static_cast<std::size_t>(out.height), [&](std::size_t row_index) {
+        const std::size_t base = row_index * static_cast<std::size_t>(out.width);
+        const int row = rows[row_index];
         if (factor == 1) {
             const auto line = source.row(row);
             for (int x = 0; x < out.width; ++x)
@@ -270,7 +270,7 @@ PixelGrid sampled(const PixelBuffer& source, DeviceBox box, double scale, int le
                 out.pixels[base + static_cast<std::size_t>(x)] =
                     mip.pixels[grid_index(columns[static_cast<std::size_t>(x)] - left, row - top, mip.width)];
         }
-    }
+    });
     return out;
 }
 

@@ -24,6 +24,7 @@ namespace lsp {
 class UiState {
 public:
     UiState(AppWindow& window, AppController& controller);
+    ~UiState();
 
     // Puts the remembered window size and place back. The constructor runs this
     // before the window is first shown; main() runs it again once the window
@@ -74,12 +75,9 @@ private:
     void do_commit_text(const std::string& text);
     void do_cancel_text();
     void refresh();
-    // Makes the canvas images that suit the view's zoom, with a quick version
-    // at once and the exact one once the zoom stops changing.
     void apply_zoom(float zoom);
-    void rebuild_tiles();
-    // Tells the window how the images are laid out and drawn.
-    void publish_tile_style();
+    void update_canvas();
+    void publish_canvas();
 
     // What the store holds: the window geometry and the settings the app
     // remembers, as one comparable set.
@@ -213,7 +211,8 @@ private:
     AppWindow& m_window;
     AppController& m_controller;
     SlintBridge m_bridge;
-    slint::Timer m_zoom_timer;
+    std::shared_ptr<slint::VectorModel<CanvasTile>> m_canvas_tiles;
+    std::vector<TilePlacement> m_canvas_shown;
     // The dialogs are windows of their own, made on first use and kept for the
     // life of the application.
     std::optional<slint::ComponentHandle<lsp_colors::EditColorsWindow>>
