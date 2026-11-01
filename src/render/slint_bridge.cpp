@@ -113,7 +113,7 @@ void SlintBridge::upload(const PixelBuffer& source, std::span<const RectI> regio
         state.republish = true;
     } else {
         const ScopedPhase invalidating(Phase::Invalidate);
-        for (const RectI& region : regions) state.cache.invalidate(source, region);
+        state.cache.invalidate(source, regions);
     }
     poll(source);
 }

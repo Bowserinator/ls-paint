@@ -158,6 +158,50 @@ void large_edits_catch_up() {
     CHECK(count_current() == total);
 }
 
+void batched_edits_refresh_each_tile_once() {
+    for (const double scale : {1.0, 0.25}) {
+        PixelBuffer source = pattern(1300, 700);
+        PreviewCache cache = make(source, source.bounds(), scale);
+        PreviewCache single = make(source, source.bounds(), scale);
+        const RectI first{250, 250, 20, 20};
+        const RectI second{760, 300, 20, 20};
+        const std::vector<RectI> edits{first, second, first, {}, {-20, -20, 4, 4}};
+        for (const RectI region : {first, second})
+            for (int y = region.y; y < region.bottom(); ++y)
+                for (int x = region.x; x < region.right(); ++x) source.at(x, y) = {255, 0, 0, 255};
+        const auto version = cache.version();
+        cache.invalidate(source, edits);
+        single.invalidate(source, std::span<const RectI>(edits.data(), 2));
+        CHECK(cache.version() - version == single.version() - version);
+        CHECK(!cache.build(source, kForever));
+        const int factor = 1 << cache.level();
+        const PixelGrid expected = box_reduced(source, source.bounds(), factor);
+        for (const PreviewPatch& patch : cache.plan())
+            for (int y = patch.area.y; y < patch.area.bottom(); y += factor)
+                for (int x = patch.area.x; x < patch.area.right(); x += factor)
+                    CHECK(shown(patch, x, y) == expected.pixels[grid_index(x / factor, y / factor, expected.width)]);
+    }
+}
+
+void batched_edits_share_the_patch_budget() {
+    PixelBuffer source(2048, 2048, kWhite);
+    PreviewCache cache = make(source, source.bounds(), 1.0);
+    constexpr Rgba8 kRed{255, 0, 0, 255};
+    source = PixelBuffer(2048, 2048, kRed);
+    std::vector<RectI> edits;
+    for (int y = 0; y < 2048; y += kTile)
+        for (int x = 0; x < 2048; x += kTile) edits.push_back({x, y, kTile, kTile});
+    cache.invalidate(source, edits);
+    int current = 0;
+    for (const PreviewPatch& patch : cache.plan())
+        if (shown(patch, patch.area.x, patch.area.y) == kRed) ++current;
+    CHECK(current > 0);
+    CHECK(current < static_cast<int>(cache.plan().size()));
+    settle(cache, source);
+    for (const PreviewPatch& patch : cache.plan())
+        CHECK(shown(patch, patch.area.x, patch.area.y) == kRed);
+}
+
 void coarser_tile_stands_in() {
     const PixelBuffer source = pattern(2048, 2048);
     const int far = 2048 - kTile;
@@ -255,6 +299,8 @@ int main() {
     edits_show_without_building();
     edits_beside_a_tile_leave_it_alone();
     large_edits_catch_up();
+    batched_edits_refresh_each_tile_once();
+    batched_edits_share_the_patch_budget();
     coarser_tile_stands_in();
     finer_tiles_stand_in_when_zooming_out();
     bleed_stays_inside_the_document();

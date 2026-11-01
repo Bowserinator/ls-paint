@@ -135,13 +135,17 @@ bool PreviewCache::advance(PreviewKey key, Entry& entry, const PixelBuffer& sour
 }
 
 void PreviewCache::invalidate(const PixelBuffer& source, RectI dirty) {
-    dirty = dirty.intersected(m_bounds);
+    invalidate(source, std::span<const RectI>(&dirty, 1));
+}
+
+void PreviewCache::invalidate(const PixelBuffer& source, std::span<const RectI> dirty) {
     if (dirty.empty() || source.bounds() != m_bounds) return;
     std::size_t budget = kPreviewPatchBytes / sizeof(Rgba8);
     const auto patch = [&](PreviewKey key, Entry& entry) {
         if (!entry.tile) return;
         const RectI area = samples(key);
-        const RectI hit = area.intersected(dirty);
+        RectI hit;
+        for (const RectI region : dirty) hit = hit.united(area.intersected(region));
         if (hit.empty()) return;
         const int factor = 1 << key.level;
         const int left = (hit.x - area.x) / factor;

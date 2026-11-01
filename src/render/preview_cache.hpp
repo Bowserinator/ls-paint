@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include "config.hpp"
@@ -50,6 +51,7 @@ public:
     void reset(RectI bounds, std::uint64_t generation);
     // Brings the tiles up to date with `source` where it changed.
     void invalidate(const PixelBuffer& source, RectI dirty);
+    void invalidate(const PixelBuffer& source, std::span<const RectI> dirty);
     // Sets the part of the document on screen and its screen pixels per document pixel.
     void demand(RectI view, double scale);
     // Generates what the view needs for up to `budget`. True if work is left.
