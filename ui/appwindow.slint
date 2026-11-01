@@ -8,7 +8,7 @@ import { CanvasMenuItem, CanvasMenuDivider, CanvasMenuFrame } from "components/c
 import { CanvasRuler } from "components/canvas-ruler.slint";
 import { CanvasCursor } from "components/canvas-cursor.slint";
 
-import { UserState, DocumentState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ResizeOverlay, EResizeCursor, ToolOptions, ViewArea, CanvasTile } from "globals.slint";
+import { UserState, DocumentState, DebugState, ETool, EContentTransform, ZoomScale, ShapeStyle, ShapeOverlay, FontStyle, TextOverlay, RotateOverlay, ResizeOverlay, MoveOverlay, EResizeCursor, ToolOptions, ViewArea, CanvasTile, StrokePatch } from "globals.slint";
 export * from "globals.slint";
 
 import "../assets/weblysleek/weblysleekuil.ttf";
@@ -21,16 +21,53 @@ import "../assets/weblysleek/weblysleekuisbi.ttf";
 // Which quadrant of the rotation centre the pointer is in, as seen on screen.
 enum ERotateCorner { NE, NW, SE, SW }
 
+// A piece of the open text box's border, or one of its grips. A press on it works
+// the box, moving it or dragging a grip, through the same pointer events the
+// paper sends; the pieces stand in for the paper where the box's own editor
+// covers it.
+component TextEdge inherits TouchArea {
+    // Where the paper's top left is on the window.
+    in property <length> paper-x;
+    in property <length> paper-y;
+    function doc-x() -> length { return (self.absolute-position.x + self.mouse-x - root.paper-x) / UserState.zoom; }
+    function doc-y() -> length { return (self.absolute-position.y + self.mouse-y - root.paper-y) / UserState.zoom; }
+
+    // A grip has the badge the window draws at the pointer, so the system
+    // pointer is turned off over it.
+    mouse-cursor: ResizeOverlay.cursor != EResizeCursor.NONE ? MouseCursor.none : MouseCursor.move;
+
+    changed has-hover => {
+        if (!self.has-hover && !self.pressed) {
+            TextOverlay.edge-left();
+        }
+    }
+
+    pointer-event(event) => {
+        UserState.cursor-on-canvas = true;
+        UserState.cursor-x = self.doc-x() / 1px;
+        UserState.cursor-y = self.doc-y() / 1px;
+        if (event.kind == PointerEventKind.down) {
+            UserState.pointer-down(self.doc-x(), self.doc-y(), event.button == PointerEventButton.right);
+        } else if (event.kind == PointerEventKind.up) {
+            UserState.pointer-up(self.doc-x(), self.doc-y(), event.button == PointerEventButton.right);
+        } else if (event.kind == PointerEventKind.cancel) {
+            UserState.pointer-cancel();
+        } else if (event.kind == PointerEventKind.move) {
+            UserState.pointer-move(self.doc-x(), self.doc-y(), event.modifiers.shift);
+        }
+    }
+}
+
 // The badge shown at the pointer over the rotate zone: a curved arrow lying in
 // the corner the pointer is in.
 component RotateBadge inherits Rectangle {
     in property <ERotateCorner> corner: ERotateCorner.NE;
-    width: 24px;
-    height: 24px;
+    width: 24phx;
+    height: 24phx;
 
     Image {
-        width: 24px;
-        height: 24px;
+        width: 24phx;
+        height: 24phx;
         source: root.corner == ERotateCorner.NW ? @image-url("../icons/rotate/rotate-nw.png")
               : root.corner == ERotateCorner.SE ? @image-url("../icons/rotate/rotate-se.png")
               : root.corner == ERotateCorner.SW ? @image-url("../icons/rotate/rotate-sw.png")
@@ -38,16 +75,30 @@ component RotateBadge inherits Rectangle {
     }
 }
 
+// The pointer the magnifier takes over the paper, the size of the other
+// pointers this window draws: the lens is what points, so the image sits with
+// the middle of the lens on the pointer.
+component MagnifyBadge inherits Rectangle {
+    width: 24phx;
+    height: 24phx;
+
+    Image {
+        width: 24phx;
+        height: 24phx;
+        source: @image-url("../icons/magnify.png");
+    }
+}
+
 // The badge shown at the pointer over a resize grip: a double arrow lying along
 // the line the grip drags.
 component ResizeBadge inherits Rectangle {
     in property <EResizeCursor> shape: EResizeCursor.HORIZONTAL;
-    width: 24px;
-    height: 24px;
+    width: 24phx;
+    height: 24phx;
 
     Image {
-        width: 24px;
-        height: 24px;
+        width: 24phx;
+        height: 24phx;
         source: root.shape == EResizeCursor.VERTICAL ? @image-url("../icons/resize/resize-vertical.png")
               : root.shape == EResizeCursor.NWSE ? @image-url("../icons/resize/resize-nwse.png")
               : root.shape == EResizeCursor.NESW ? @image-url("../icons/resize/resize-nesw.png")
@@ -94,6 +145,8 @@ component AntsFrame inherits Rectangle {
 
 export component AppWindow inherits Window {
     in property <[CanvasTile]> canvas-tiles;
+    // What the stroke in progress has painted, drawn over the canvas.
+    in property <[StrokePatch]> stroke-patches;
     in property <bool> canvas-ready: false;
     in property <string> canvas-message: "Preparing canvas...";
     in property <float> device-ratio: 1.0;
@@ -125,6 +178,14 @@ export component AppWindow inherits Window {
     }
     changed canvas-zoom => { root.canvas-zoom-changed(root.canvas-zoom); }
 
+    // Picking a colour while a text box is open recolours its text.
+    property <color> text-ink: UserState.primary-color;
+    changed text-ink => {
+        if (TextOverlay.visible) {
+            TextOverlay.recolor(root.text-ink);
+        }
+    }
+
     // Shared device-pixel edges keep neighbouring tiles and overlays aligned.
     pure function device-x(doc: float) -> float {
         return doc >= DocumentState.canvas-width ? DocumentState.canvas-width * UserState.zoom * root.device-ratio
@@ -144,6 +205,11 @@ export component AppWindow inherits Window {
     }
     // One device pixel.
     property <length> hairline: 1phx;
+    // How far a press still takes hold of the text box's border: past its outer
+    // side and inside it. Kept to a few device pixels so the text stays
+    // selectable up to the border.
+    property <length> text-grab-out: 2phx;
+    property <length> text-grab-in: 1phx;
     // Side of a selection grip in device pixels.
     property <float> grip-size: max(3.0, round(7.0 * root.device-ratio / 1.7));
     // Moves a view offset to a whole device pixel. The tiles, the outline and
@@ -302,9 +368,17 @@ export component AppWindow inherits Window {
                                          scroll.visible-height - scroll.viewport-height);
     }
 
+    // The magnifier's zoom step: each press brings the view in to half the
+    // paper it showed.
+    property <float> magnify-step: 2.0;
+    // Where a press with the magnifier takes the zoom, and how much of what is
+    // on screen now the view will then cover.
+    property <float> magnify-zoom: min(ZoomScale.max-zoom, UserState.zoom * root.magnify-step);
+    property <float> magnify-ratio: UserState.zoom / root.magnify-zoom;
+
     // Whether the window draws the pointer over the paper instead of the system.
-    // The magnifier keeps the system pointer, and so does the text tool while
-    // its box is open, because the box has a pointer of its own.
+    // The magnifier draws its own pointer, and the text tool keeps the system
+    // one while its box is open, because the box has a pointer of its own.
     property <bool> custom-cursor: UserState.selected-tool != ETool.MAGNIFY
         && !(UserState.selected-tool == ETool.TEXT && TextOverlay.visible);
 
@@ -322,7 +396,11 @@ export component AppWindow inherits Window {
 
         key-pressed(event) => {
             if (event.text == "\u{1b}" && UserState.selected-tool == ETool.TEXT) {
-                UserState.selected-tool = root.last-brush-tool;
+                if (TextOverlay.visible) {
+                    UserState.cancel-text();
+                } else {
+                    UserState.selected-tool = root.last-brush-tool;
+                }
             }
             let typing = UserState.selected-tool == ETool.TEXT && TextOverlay.visible;
             let plain = !event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt;
@@ -433,6 +511,11 @@ export component AppWindow inherits Window {
                                 focus-scope.focus();
                                 root.pan-start(workspace-touch.mouse-x + scroll.viewport-x,
                                                workspace-touch.mouse-y + scroll.viewport-y);
+                            } else if (event.kind == PointerEventKind.down
+                                && event.button == PointerEventButton.left
+                                && DocumentState.has-selection) {
+                                focus-scope.focus();
+                                UserState.clear-selection();
                             } else if (event.kind == PointerEventKind.move && root.panning) {
                                 root.pan-move(workspace-touch.mouse-x + scroll.viewport-x,
                                               workspace-touch.mouse-y + scroll.viewport-y);
@@ -600,8 +683,11 @@ export component AppWindow inherits Window {
                             // one is turned off while it shows.
                             mouse-cursor: root.pan-cursor
                                 ? (root.panning ? MouseCursor.grabbing : MouseCursor.grab)
+                                : (MoveOverlay.hover || MoveOverlay.dragging)
+                                    ? (MoveOverlay.dragging ? MouseCursor.grabbing : MouseCursor.grab)
                                 : (RotateOverlay.hover || RotateOverlay.rotating
                                     || ResizeOverlay.cursor != EResizeCursor.NONE
+                                    || (UserState.selected-tool == ETool.MAGNIFY && UserState.cursor-on-canvas)
                                     || root.custom-cursor) ? MouseCursor.none : MouseCursor.default;
 
                             pointer-event(event) => {
@@ -644,7 +730,7 @@ export component AppWindow inherits Window {
                                         root.apply-zoom(touch.mouse-x + root.canvas-origin + scroll.viewport-x,
                                                         touch.mouse-y + root.canvas-origin + scroll.viewport-y,
                                                         event.button == PointerEventButton.right
-                                                            || event.modifiers.alt ? 1 / ZoomScale.step : ZoomScale.step);
+                                                            || event.modifiers.alt ? 1 / root.magnify-step : root.magnify-step);
                                     } else if (event.button == PointerEventButton.right
                                         && UserState.selected-tool == ETool.SELECTION) {
                                         // The menu takes over input from here on, so the press is
@@ -653,6 +739,12 @@ export component AppWindow inherits Window {
                                         root.menu-x = touch.mouse-x;
                                         root.menu-y = touch.mouse-y;
                                         canvas-menu.show();
+                                    } else if (UserState.selected-tool == ETool.TEXT && TextOverlay.visible) {
+                                        // A press away from the open box (its border is
+                                        // answered by the pieces around it) puts the text
+                                        // down. The text tool stays in hand, so the next
+                                        // press opens a new box.
+                                        UserState.commit-text(TextOverlay.content);
                                     } else {
                                         UserState.pointer-down(touch.mouse-x / UserState.zoom,
                                                                touch.mouse-y / UserState.zoom,
@@ -725,9 +817,24 @@ export component AppWindow inherits Window {
                                 accept
                             }
 
+                        // The tiles are drawn once into a layer that is reused while
+                        // nothing in it changes, so a frame that only moves the pointer
+                        // or paints a stroke patch costs one picture, not every tile. The
+                        // layer covers the part of the paper in view, so its size follows
+                        // the window rather than the document.
                         canvas := Rectangle {
-                            width: 100%;
-                            height: 100%;
+                            property <length> view-left: root.snap(max(0px, -scroll.viewport-x - root.canvas-origin));
+                            property <length> view-top: root.snap(max(0px, -scroll.viewport-y - root.canvas-origin));
+                            property <length> view-right: min(root.canvas-w,
+                                -scroll.viewport-x - root.canvas-origin + scroll.visible-width + 1px);
+                            property <length> view-bottom: min(root.canvas-h,
+                                -scroll.viewport-y - root.canvas-origin + scroll.visible-height + 1px);
+                            x: self.view-left;
+                            y: self.view-top;
+                            width: max(0px, self.view-right - self.view-left);
+                            height: max(0px, self.view-bottom - self.view-top);
+                            clip: true;
+                            cache-rendering-hint: true;
 
                             // Each tile reaches a little under the next one, so
                             // no gap shows between them at any zoom.
@@ -736,8 +843,8 @@ export component AppWindow inherits Window {
                                 property <float> span-y: root.device-y(tile.y + tile.height) - root.device-y(tile.y);
                                 property <int> shown-width: max(tile.clip-width, 1);
                                 property <int> shown-height: max(tile.clip-height, 1);
-                                x: root.edge-x(tile.x);
-                                y: root.edge-y(tile.y);
+                                x: root.edge-x(tile.x) - canvas.x;
+                                y: root.edge-y(tile.y) - canvas.y;
                                 width: span-x * (shown-width + tile.bleed-x) / shown-width / root.device-ratio * 1px;
                                 height: span-y * (shown-height + tile.bleed-y) / shown-height / root.device-ratio * 1px;
                                 source: tile.source;
@@ -754,6 +861,19 @@ export component AppWindow inherits Window {
                             }
                         }
                         }
+                    }
+
+                    // What the stroke in progress has painted, laid over
+                    // the tiles until they catch up.
+                    for patch in root.stroke-patches : Image {
+                        x: root.canvas-origin + root.edge-x(patch.x);
+                        y: root.canvas-origin + root.edge-y(patch.y);
+                        width: root.edge-x(patch.x + patch.source.width) - root.edge-x(patch.x);
+                        height: root.edge-y(patch.y + patch.source.height) - root.edge-y(patch.y);
+                        source: patch.source;
+                        image-rendering: UserState.zoom * root.device-ratio >= 1
+                            ? ImageRendering.pixelated
+                            : ImageRendering.smooth;
                     }
 
                     // The grid: one line per step, over the paper and under
@@ -809,11 +929,11 @@ export component AppWindow inherits Window {
                     // and only reaches the paper when it closes: on Escape, on a
                     // click elsewhere or when the tool is left. The glyphs shown
                     // are the pixels the commit will paint, drawn by the backend;
-                    // the input underneath only takes the typing.
+                    // the input underneath only takes the typing and the selecting.
                     if TextOverlay.visible : Rectangle {
                         x: root.canvas-origin + root.snap(TextOverlay.x * UserState.zoom);
                         y: root.canvas-origin + root.snap(TextOverlay.y * UserState.zoom);
-                        width: root.snap(max(24px, TextOverlay.box-width * UserState.zoom * 1px));
+                        width: root.snap(max(1px, TextOverlay.box-width * UserState.zoom * 1px));
                         height: root.snap(max(1px, TextOverlay.box-height * UserState.zoom * 1px));
                         // The backend draws the text again whenever the text,
                         // the cursor or the way it is set changes.
@@ -834,57 +954,77 @@ export component AppWindow inherits Window {
                         border-width: root.hairline;
                         border-color: transparent;
 
-                        Image {
-                            source: TextOverlay.preview;
-                            x: -TextOverlay.preview-margin * UserState.zoom * 1px;
-                            y: -TextOverlay.preview-margin * UserState.zoom * 1px;
-                            width: TextOverlay.preview.width * UserState.zoom * 1px;
-                            height: TextOverlay.preview.height * UserState.zoom * 1px;
-                            image-rendering: UserState.zoom >= 1
-                                ? ImageRendering.pixelated
-                                : ImageRendering.smooth;
-                        }
-
-                        text-field := TextInput {
+                        // A box with a size of its own cuts off what lies outside
+                        // it, as the commit does.
+                        Rectangle {
                             width: 100%;
                             height: 100%;
-                            text <=> TextOverlay.content;
-                            // Invisible: the backend's image is what is seen.
-                            color: transparent;
-                            selection-foreground-color: transparent;
-                            font-family: FontStyle.family;
-                            // The raster measures a size as the face's ascent plus
-                            // descent, so the input scales by the face's own ratio
-                            // to take up the room the committed pixels do.
-                            font-size: FontStyle.size * UserState.zoom * FontStyle.preview-scale;
-                            font-italic: FontStyle.italic;
-                            font-weight: FontStyle.bold ? 700 : 400;
-                            wrap: no-wrap;
-                            single-line: false;
-                            vertical-alignment: top;
-                            horizontal-alignment: left;
-                            init => { self.focus(); }
-                            changed cursor-position-byte-offset => {
-                                TextOverlay.cursor = self.cursor-position-byte-offset;
-                                UserState.measure-text(TextOverlay.content);
-                            }
-                            key-pressed(event) => {
-                                if (event.text == "\u{1b}") {
-                                    UserState.cancel-text();
-                                    UserState.selected-tool = root.last-brush-tool;
-                                    return accept;
-                                }
-                                return reject;
-                            }
-                        }
+                            clip: TextOverlay.sized;
 
-                        Rectangle {
-                            visible: text-field.has-focus;
-                            x: TextOverlay.caret-x * UserState.zoom * 1px;
-                            y: TextOverlay.caret-y * UserState.zoom * 1px;
-                            width: 1px;
-                            height: TextOverlay.caret-height * UserState.zoom * 1px;
-                            background: TextOverlay.color;
+                            Image {
+                                source: TextOverlay.preview;
+                                x: -TextOverlay.preview-margin * UserState.zoom * 1px;
+                                y: -TextOverlay.preview-margin * UserState.zoom * 1px;
+                                width: TextOverlay.preview.width * UserState.zoom * 1px;
+                                height: TextOverlay.preview.height * UserState.zoom * 1px;
+                                image-rendering: UserState.zoom >= 1
+                                    ? ImageRendering.pixelated
+                                    : ImageRendering.smooth;
+                            }
+
+                            text-field := TextInput {
+                                x: 0px;
+                                y: 0px;
+                                // As large as the text, so a box cut smaller than
+                                // it does not scroll the text under the preview.
+                                width: max(parent.width, TextOverlay.text-width * UserState.zoom * 1px + 2phx);
+                                height: max(parent.height, TextOverlay.text-height * UserState.zoom * 1px);
+                                text <=> TextOverlay.content;
+                                // Invisible: the backend's image is what is seen,
+                                // the selection included.
+                                color: transparent;
+                                selection-foreground-color: transparent;
+                                selection-background-color: transparent;
+                                font-family: FontStyle.family;
+                                // The raster measures a size as the face's ascent plus
+                                // descent, so the input scales by the face's own ratio
+                                // to take up the room the committed pixels do.
+                                font-size: FontStyle.size * UserState.zoom * FontStyle.preview-scale;
+                                font-italic: FontStyle.italic;
+                                font-weight: FontStyle.bold ? 700 : 400;
+                                wrap: no-wrap;
+                                single-line: false;
+                                vertical-alignment: top;
+                                horizontal-alignment: left;
+                                init => { self.focus(); }
+                                changed cursor-position-byte-offset => {
+                                    TextOverlay.cursor = self.cursor-position-byte-offset;
+                                    TextOverlay.selection-start = min(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+                                    TextOverlay.selection-end = max(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+                                    UserState.measure-text(TextOverlay.content);
+                                }
+                                changed anchor-position-byte-offset => {
+                                    TextOverlay.selection-start = min(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+                                    TextOverlay.selection-end = max(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+                                    UserState.measure-text(TextOverlay.content);
+                                }
+                                key-pressed(event) => {
+                                    if (event.text == "\u{1b}") {
+                                        UserState.cancel-text();
+                                        return accept;
+                                    }
+                                    return reject;
+                                }
+                            }
+
+                            Rectangle {
+                                visible: text-field.has-focus;
+                                x: TextOverlay.caret-x * UserState.zoom * 1px;
+                                y: TextOverlay.caret-y * UserState.zoom * 1px;
+                                width: 1px;
+                                height: TextOverlay.caret-height * UserState.zoom * 1px;
+                                background: TextOverlay.color;
+                            }
                         }
 
                         // Over the text, where the selection's own outline sits:
@@ -894,6 +1034,45 @@ export component AppWindow inherits Window {
                             y: -root.hairline;
                             width: parent.width + 2 * root.hairline;
                             height: parent.height + 2 * root.hairline;
+                        }
+
+                        // The box's border, which takes the press instead of the
+                        // editor: dragging it moves the box. The grips of the box
+                        // are answered further down.
+                        TextEdge {
+                            x: -(root.hairline + root.text-grab-out);
+                            y: -(root.hairline + root.text-grab-out);
+                            width: parent.width + 2 * (root.hairline + root.text-grab-out);
+                            height: root.hairline + root.text-grab-out + root.text-grab-in;
+                            paper-x: touch.absolute-position.x;
+                            paper-y: touch.absolute-position.y;
+                        }
+
+                        TextEdge {
+                            x: -(root.hairline + root.text-grab-out);
+                            y: parent.height - root.text-grab-in;
+                            width: parent.width + 2 * (root.hairline + root.text-grab-out);
+                            height: root.hairline + root.text-grab-out + root.text-grab-in;
+                            paper-x: touch.absolute-position.x;
+                            paper-y: touch.absolute-position.y;
+                        }
+
+                        TextEdge {
+                            x: -(root.hairline + root.text-grab-out);
+                            y: 0px;
+                            width: root.hairline + root.text-grab-out + root.text-grab-in;
+                            height: parent.height;
+                            paper-x: touch.absolute-position.x;
+                            paper-y: touch.absolute-position.y;
+                        }
+
+                        TextEdge {
+                            x: parent.width - root.text-grab-in;
+                            y: 0px;
+                            width: root.hairline + root.text-grab-out + root.text-grab-in;
+                            height: parent.height;
+                            paper-x: touch.absolute-position.x;
+                            paper-y: touch.absolute-position.y;
                         }
                     }
 
@@ -915,6 +1094,15 @@ export component AppWindow inherits Window {
                         background: Styles.ants-dark;
                     }
 
+                    for edge in DocumentState.ants-edges : Image {
+                        x: root.canvas-origin + edge.x / root.device-ratio * 1px;
+                        y: root.canvas-origin + edge.y / root.device-ratio * 1px;
+                        width: edge.w / root.device-ratio * 1px;
+                        height: edge.h / root.device-ratio * 1px;
+                        source: edge.source;
+                        image-rendering: ImageRendering.pixelated;
+                    }
+
                     // Resize grips sit on the selection's border. They are pure
                     // visuals: the press is hit-tested by the selection tool
                     // through the canvas touch area, so an element here must
@@ -930,13 +1118,25 @@ export component AppWindow inherits Window {
                         border-color: black;
                     }
 
+                    // The open text box's grips take the press, so a drag on one
+                    // resizes the box.
+                    for grip in DocumentState.grips : TextEdge {
+                        enabled: TextOverlay.visible && UserState.selected-tool == ETool.TEXT;
+                        x: root.canvas-origin + round(grip.x - root.grip-size / 2.0 - 1.0) / root.device-ratio * 1px;
+                        y: root.canvas-origin + round(grip.y - root.grip-size / 2.0 - 1.0) / root.device-ratio * 1px;
+                        width: (root.grip-size + 2.0) / root.device-ratio * 1px;
+                        height: (root.grip-size + 2.0) / root.device-ratio * 1px;
+                        paper-x: touch.absolute-position.x;
+                        paper-y: touch.absolute-position.y;
+                    }
+
                     // The badge at the pointer, while it is over the rotate zone
                     // or turning the contents.
                     if UserState.selected-tool == ETool.SELECTION && UserState.cursor-on-canvas
                         && !root.pan-cursor
                         && (RotateOverlay.hover || RotateOverlay.rotating) : RotateBadge {
-                        x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12px;
-                        y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12px;
+                        x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12phx;
+                        y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12phx;
                         corner: UserState.cursor-x < DocumentState.selection-x + DocumentState.selection-width / 2.0
                             ? (UserState.cursor-y < DocumentState.selection-y + DocumentState.selection-height / 2.0
                                 ? ERotateCorner.NW : ERotateCorner.SW)
@@ -944,12 +1144,50 @@ export component AppWindow inherits Window {
                                 ? ERotateCorner.NE : ERotateCorner.SE);
                     }
 
+                    // With the magnifier, the part of the paper the view would show
+                    // once a press zoomed in at the pointer.
+                    if UserState.selected-tool == ETool.MAGNIFY && UserState.cursor-on-canvas
+                        && !root.pan-cursor && root.magnify-zoom > UserState.zoom : Rectangle {
+                        // The pointer holds its place in the view, so the new view's
+                        // edges sit around it in the same proportion. The scroll
+                        // limits keep the view on the content, and a view that is
+                        // smaller than the one on screen never leaves it.
+                        property <length> pointer-x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px;
+                        property <length> pointer-y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px;
+                        property <length> view-x: -scroll.viewport-x;
+                        property <length> view-y: -scroll.viewport-y;
+                        property <length> view-w: root.snap(scroll.visible-width * root.magnify-ratio);
+                        property <length> view-h: root.snap(scroll.visible-height * root.magnify-ratio);
+                        property <length> view-left: root.snap(max(max(0px, self.view-x),
+                            min(min(scroll.viewport-width, self.view-x + scroll.visible-width) - self.view-w,
+                                self.pointer-x - (self.pointer-x - self.view-x) * root.magnify-ratio)));
+                        property <length> view-top: root.snap(max(max(0px, self.view-y),
+                            min(min(scroll.viewport-height, self.view-y + scroll.visible-height) - self.view-h,
+                                self.pointer-y - (self.pointer-y - self.view-y) * root.magnify-ratio)));
+                        // The view may reach past the paper, but the outline is
+                        // only ever drawn over the paper.
+                        x: max(self.view-left, root.canvas-origin);
+                        y: max(self.view-top, root.canvas-origin);
+                        width: max(0px, root.snap(min(self.view-left + self.view-w, root.canvas-origin + root.canvas-w)) - self.x);
+                        height: max(0px, root.snap(min(self.view-top + self.view-h, root.canvas-origin + root.canvas-h)) - self.y);
+                        background: transparent;
+                        border-width: root.hairline;
+                        border-color: #000000;
+                    }
+
+                    if UserState.selected-tool == ETool.MAGNIFY && UserState.cursor-on-canvas
+                        && !root.pan-cursor : MagnifyBadge {
+                        x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 10phx;
+                        y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 8phx;
+                    }
+
                     // The badge at the pointer, while it is over a resize grip.
-                    if UserState.selected-tool == ETool.SELECTION && UserState.cursor-on-canvas
+                    if (UserState.selected-tool == ETool.SELECTION || UserState.selected-tool == ETool.TEXT)
+                        && UserState.cursor-on-canvas
                         && !root.pan-cursor
                         && ResizeOverlay.cursor != EResizeCursor.NONE : ResizeBadge {
-                        x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12px;
-                        y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12px;
+                        x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12phx;
+                        y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12phx;
                         shape: ResizeOverlay.cursor;
                     }
 
@@ -996,6 +1234,25 @@ export component AppWindow inherits Window {
 
                         dragged(dx, dy) => { root.resize-dx = dx; root.resize-dy = dy; }
                         released(dx, dy) => { root.resize-canvas(dx, dy); }
+                    }
+                }
+
+                if DebugState.enabled : Rectangle {
+                    width: 430px;
+                    height: debug-text.preferred-height + 12px;
+                    x: parent.width - self.width - 24px;
+                    y: parent.height - self.height - 24px;
+                    background: #000000c8;
+
+                    debug-text := Text {
+                        x: 8px;
+                        y: 6px;
+                        width: parent.width - 16px;
+                        text: DebugState.text;
+                        color: #9dff9d;
+                        font-size: 11px;
+                        font-family: "monospace";
+                        overflow: clip;
                     }
                 }
             }

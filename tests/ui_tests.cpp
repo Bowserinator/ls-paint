@@ -485,6 +485,7 @@ int run_ui_tests() {
     //     the light and dark runs together cover the border exactly once.
     CHECK(h.doc().get_ants_dark()->row_count() == 0);
     CHECK(h.doc().get_ants_light()->row_count() == 0);
+    CHECK(h.doc().get_ants_edges()->row_count() == 0);
     CHECK(h.doc().get_grips()->row_count() == 0);
 
     h.user().invoke_select_all();
@@ -492,19 +493,15 @@ int run_ui_tests() {
     // whole paper.
     CHECK(h.doc().get_selection_width() == h.doc().get_canvas_width());
     CHECK(h.doc().get_selection_height() == h.doc().get_canvas_height());
-    const auto dark = h.doc().get_ants_dark();
-    const auto light = h.doc().get_ants_light();
-    CHECK(dark->row_count() > 0);
-    CHECK(light->row_count() > 0);
+    const auto edges = h.doc().get_ants_edges();
+    CHECK(edges->row_count() == 4);
+    CHECK(h.doc().get_ants_dark()->row_count() == 0);
+    CHECK(h.doc().get_ants_light()->row_count() == 0);
     int outline = 0;
-    for (const auto& runs : {dark, light}) {
-        for (std::size_t i = 0; i < runs->row_count(); ++i) {
-            const auto dash = runs->row_data(i);
-            CHECK(dash->w == 1.0f || dash->h == 1.0f);
-            CHECK(dash->w >= 1.0f && dash->w <= 3.0f);
-            CHECK(dash->h >= 1.0f && dash->h <= 3.0f);
-            outline += int(dash->w) * int(dash->h);
-        }
+    for (std::size_t i = 0; i < edges->row_count(); ++i) {
+        const auto edge = edges->row_data(i);
+        CHECK(edge->w == 1.0f || edge->h == 1.0f);
+        outline += int(edge->w) * int(edge->h);
     }
     const int sel_w = h.doc().get_selection_width();
     const int sel_h = h.doc().get_selection_height();
@@ -524,6 +521,7 @@ int run_ui_tests() {
     CHECK(!h.doc().get_has_selection());
     CHECK(h.doc().get_ants_dark()->row_count() == 0);
     CHECK(h.doc().get_ants_light()->row_count() == 0);
+    CHECK(h.doc().get_ants_edges()->row_count() == 0);
     CHECK(h.doc().get_grips()->row_count() == 0);
 
     // 15. The grips belong to the selection tool: switching away takes them
@@ -531,11 +529,12 @@ int run_ui_tests() {
     h.user().set_selected_tool(ETool::PENCIL);
     h.user().invoke_select_all();  // any callback re-syncs the document state
     CHECK(h.doc().get_grips()->row_count() == 0);
-    CHECK(h.doc().get_ants_dark()->row_count() > 0);
+    CHECK(h.doc().get_ants_edges()->row_count() == 4);
 
     h.user().invoke_clear_selection();
     CHECK(h.doc().get_ants_dark()->row_count() == 0);
     CHECK(h.doc().get_ants_light()->row_count() == 0);
+    CHECK(h.doc().get_ants_edges()->row_count() == 0);
     CHECK(h.doc().get_grips()->row_count() == 0);
 
     // 15b. The status bar's pointer cell: at zoom 1 with the view unrolled
@@ -559,6 +558,13 @@ int run_ui_tests() {
     h.user().invoke_select_all();  // any callback re-syncs the view state
     CHECK(std::string(h.user().get_hover_color_text()).empty());
     h.user().invoke_clear_selection();
+
+    h.user().invoke_select_all();
+    CHECK(h.doc().get_has_selection());
+    h.press(origin.x - 2, origin.y - 2);
+    h.release(origin.x - 2, origin.y - 2);
+    CHECK(!h.doc().get_has_selection());
+    CHECK(h.doc().get_ants_edges()->row_count() == 0);
 
     // 15b-2. The View tab's Status Bar box is two-way bound to this property,
     //       which is what the window instantiates the strip from: clearing it
@@ -641,7 +647,7 @@ int run_ui_tests() {
     CHECK(h.doc().get_selection_width() == turned_box.width);
     CHECK(h.doc().get_selection_height() == turned_box.height);
     CHECK(h.doc().get_grips()->row_count() == 8);
-    CHECK(h.doc().get_ants_dark()->row_count() > 0);
+    CHECK(h.doc().get_ants_dark()->row_count() > 0 || h.doc().get_ants_edges()->row_count() > 0);
 
     // Take the turn back and drop the selection: the shape checks below draw
     // outside it, and a live selection clips what the tools can paint.
@@ -805,6 +811,7 @@ int run_ui_tests() {
     CHECK(h.count_ink(58, 58, 240, 84) == 0);
     h.key("\x1b");  // Escape abandons the box and draws nothing
     CHECK(!h.text_box().get_visible());
+    CHECK(h.user().get_selected_tool() == ETool::TEXT);
     CHECK(h.count_ink(58, 58, 240, 84) == 0);
 
     //      A box closed by a click elsewhere does draw, and one undo takes the
@@ -818,13 +825,10 @@ int run_ui_tests() {
     h.controller().history().undo();
     (void)h.controller().document().flush();
     CHECK(h.count_ink(58, 58, 240, 84) == 0);
-    // A box opened by the click that dismissed the last one does not take the
-    // keyboard, so the tool switch is what closes it here.
-    h.user().set_selected_tool(ETool::PENCIL);
-    h.press(origin.x + 700, origin.y + 350);
-    h.release(origin.x + 700, origin.y + 350);
+    // That click only closed the box: the text tool stays in hand and no new
+    // box opened.
     CHECK(!h.text_box().get_visible());
-    h.user().set_selected_tool(ETool::TEXT);
+    CHECK(h.user().get_selected_tool() == ETool::TEXT);
 
     // 15i. Enter starts a second line, so one box can hold several lines.
     h.press(origin.x + 60, origin.y + 120);
@@ -837,14 +841,12 @@ int run_ui_tests() {
     h.release(origin.x + 420, origin.y + 120);
     CHECK(h.count_ink(58, 118, 140, 140) > 0);
     CHECK(h.count_ink(58, 140, 140, 166) > 0);
-    h.user().set_selected_tool(ETool::PENCIL);
-    h.press(origin.x + 700, origin.y + 350);
-    h.release(origin.x + 700, origin.y + 350);
     CHECK(!h.text_box().get_visible());
     h.user().set_selected_tool(ETool::TEXT);
 
-    // 15j. A click elsewhere commits the box, and the press that dismissed it
-    //      opens the next one. Leaving the tool with an empty box writes nothing.
+    // 15j. A click elsewhere commits the box and leaves the text tool in hand
+    //      without starting a stroke; leaving the tool with an empty box
+    //      writes nothing.
     h.press(origin.x + 40, origin.y + 250);
     h.release(origin.x + 40, origin.y + 250);
     CHECK(h.text_box().get_visible());
@@ -853,12 +855,17 @@ int run_ui_tests() {
     h.press(origin.x + 450, origin.y + 250);
     h.release(origin.x + 450, origin.y + 250);
     CHECK(h.count_ink(38, 248, 130, 274) > 0);  // "Hi" landed where it was typed
-    CHECK(h.text_box().get_visible());          // and a new box is open
+    CHECK(!h.text_box().get_visible());
+    CHECK(h.user().get_selected_tool() == ETool::TEXT);
+    CHECK(h.count_ink(448, 248, 560, 280) == 0);  // the dismissing click drew nothing
+    h.press(origin.x + 40, origin.y + 300);
+    h.release(origin.x + 40, origin.y + 300);
+    CHECK(h.text_box().get_visible());
     h.user().set_selected_tool(ETool::PENCIL);
     h.press(origin.x + 700, origin.y + 350);  // any canvas event runs the tool switch
     h.release(origin.x + 700, origin.y + 350);
     CHECK(!h.text_box().get_visible());
-    CHECK(h.count_ink(448, 248, 560, 280) == 0);  // the empty box painted nothing
+    CHECK(h.count_ink(38, 298, 130, 324) == 0);  // the empty box painted nothing
 
     // 15k. A texture is previewed in its base colour, and a shape with neither
     //      an outline nor a fill paints nothing and takes no undo step.

@@ -113,6 +113,33 @@ component StatusGlyph inherits Rectangle {
     }
 }
 
+component StatusReadout inherits Rectangle {
+    in property <image> icon;
+    in property <string> value;
+
+    background: #f7f8fa;
+
+    StatusGlyph {
+        x: 6px;
+        y: 0px;
+        height: parent.height;
+        icon: root.icon;
+    }
+
+    Text {
+        x: 6px + Styles.status-icon-size + 4px;
+        y: 0px;
+        width: max(0px, parent.width - self.x - 6px);
+        height: parent.height;
+        vertical-alignment: center;
+        horizontal-alignment: left;
+        overflow: elide;
+        font-size: Styles.bar-font-size;
+        color: Styles.bar-text-color;
+        text: root.value;
+    }
+}
+
 // The line that parts two readings.
 component StatusDivider inherits Rectangle {
     width: 1phx;
@@ -134,109 +161,49 @@ export component StatusBar inherits Rectangle {
     callback zoom-step(dir: int);
 
     HorizontalLayout {
+        x: 0px;
         padding: 3px;
         spacing: 0px;
 
         // Pointer position, in document pixels.
-        Rectangle {
+        StatusReadout {
             horizontal-stretch: 0;
-            min-width: 100px;
-            background: #f7f8fa;
-
-            HorizontalLayout {
-                padding-left: 6px;
-                padding-right: 6px;
-                spacing: 4px;
-
-                StatusGlyph { icon: @image-url("../icons/status/pointer.png"); }
-
-                Text {
-                    vertical-alignment: center;
-                    horizontal-alignment: left;
-                    font-size: Styles.bar-font-size;
-                    color: Styles.bar-text-color;
-                    text: UserState.cursor-on-canvas
-                        ? floor(UserState.cursor-x) + ", " + floor(UserState.cursor-y)
-                        : "";
-                }
-            }
+            min-width: 120px;
+            icon: @image-url("../icons/status/pointer.png");
+            value: UserState.cursor-on-canvas
+                ? floor(UserState.cursor-x) + ", " + floor(UserState.cursor-y)
+                : "";
         }
 
         StatusDivider {}
 
         // Selection size, empty without one.
-        Rectangle {
+        StatusReadout {
             horizontal-stretch: 0;
-            min-width: 100px;
-            background: #f7f8fa;
-
-            HorizontalLayout {
-                padding-left: 6px;
-                padding-right: 6px;
-                spacing: 4px;
-
-                StatusGlyph { icon: @image-url("../icons/status/selection.png"); }
-
-                Text {
-                    vertical-alignment: center;
-                    horizontal-alignment: left;
-                    font-size: Styles.bar-font-size;
-                    color: Styles.bar-text-color;
-                    text: DocumentState.has-selection
-                        ? DocumentState.selection-width + " x " + DocumentState.selection-height
-                        : "";
-                }
-            }
+            min-width: 120px;
+            icon: @image-url("../icons/status/selection.png");
+            value: DocumentState.has-selection
+                ? DocumentState.selection-width + " x " + DocumentState.selection-height
+                : "";
         }
 
         StatusDivider {}
 
         // Paper size.
-        Rectangle {
+        StatusReadout {
             horizontal-stretch: 0;
-            min-width: 100px;
-            background: #f7f8fa;
-
-            HorizontalLayout {
-                padding-left: 6px;
-                padding-right: 6px;
-                spacing: 4px;
-
-                StatusGlyph { icon: @image-url("../icons/status/canvas.png"); }
-
-                Text {
-                    vertical-alignment: center;
-                    horizontal-alignment: left;
-                    font-size: Styles.bar-font-size;
-                    color: Styles.bar-text-color;
-                    text: DocumentState.canvas-width + " x " + DocumentState.canvas-height;
-                }
-            }
+            min-width: 120px;
+            icon: @image-url("../icons/status/canvas.png");
+            value: DocumentState.canvas-width + " x " + DocumentState.canvas-height;
         }
 
         StatusDivider {}
 
         // The colour under the pointer, blank while it is off the paper.
-        Rectangle {
+        StatusReadout {
             horizontal-stretch: 1;
-            background: #f7f8fa;
-
-            HorizontalLayout {
-                padding-left: 6px;
-                padding-right: 6px;
-                spacing: 4px;
-
-                StatusGlyph { icon: @image-url("../icons/status/color.png"); }
-
-                Text {
-                    vertical-alignment: center;
-                    horizontal-alignment: left;
-                    overflow: elide;
-                    font-size: Styles.bar-font-size;
-                    color: Styles.bar-text-color;
-                    text: UserState.cursor-on-canvas ? UserState.hover-color-text : "";
-                }
-            }
+            icon: @image-url("../icons/status/color.png");
+            value: UserState.cursor-on-canvas ? UserState.hover-color-text : "";
         }
 
         StatusDivider {}

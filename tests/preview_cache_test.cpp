@@ -20,6 +20,9 @@ int failures = 0;
     } while (0)
 
 constexpr auto kForever = std::chrono::seconds(10);
+constexpr int kTile = kDisplayTileSize;
+
+constexpr int tiles_across(int length) { return (length + kTile - 1) / kTile; }
 
 PixelBuffer pattern(int width, int height) {
     PixelBuffer source(width, height);
@@ -60,9 +63,9 @@ void full_size_matches_document() {
     const PreviewCache cache = make(source, source.bounds(), 1.0);
     CHECK(cache.level() == 0);
     const auto plan = cache.plan();
-    CHECK(plan.size() == 6);
-    for (const int x : {0, 1, 511, 512, 1023, 1299})
-        for (const int y : {0, 3, 511, 512, 699}) {
+    CHECK(plan.size() == static_cast<std::size_t>(tiles_across(1300) * tiles_across(700)));
+    for (const int x : {0, 1, kTile - 1, kTile, 2 * kTile - 1, 1299})
+        for (const int y : {0, 3, kTile - 1, kTile, 699}) {
             const PreviewPatch* patch = patch_at(plan, x, y);
             CHECK(patch);
             if (patch) CHECK(shown(*patch, x, y) == source.at(x, y));
@@ -147,24 +150,29 @@ void large_edits_catch_up() {
             if (shown(patch, patch.area.x + 1, patch.area.y + 1) == kGrey) ++current;
         return current;
     };
+    const int total = tiles_across(2048) * tiles_across(2048);
     CHECK(count_current() > 0);
-    CHECK(count_current() < 16);
+    CHECK(count_current() < total);
 
     settle(cache, source);
-    CHECK(count_current() == 16);
+    CHECK(count_current() == total);
 }
 
 void coarser_tile_stands_in() {
     const PixelBuffer source = pattern(2048, 2048);
-    PreviewCache cache = make(source, {0, 0, 512, 512}, 1.0);
-    cache.demand({1536, 0, 512, 512}, 1.0);
+    const int far = 2048 - kTile;
+    PreviewCache cache = make(source, {0, 0, kTile, kTile}, 1.0);
+    cache.demand({far, 0, kTile, kTile}, 1.0);
     const auto plan = cache.plan();
     CHECK(plan.size() == 1);
     if (plan.empty()) return;
     const PreviewPatch& patch = plan.front();
-    CHECK(patch.area == (RectI{1536, 0, 512, 512}));
-    CHECK(patch.tile->key.level == 2);
-    CHECK(patch.clip == (RectI{384, 0, 128, 128}));
+    CHECK(patch.area == (RectI{far, 0, kTile, kTile}));
+    int overview = 0;
+    while ((2048 + (1 << overview) - 1) / (1 << overview) > kOverviewEdge) ++overview;
+    CHECK(patch.tile->key.level == overview);
+    const int factor = 1 << patch.tile->key.level;
+    CHECK(patch.clip == (RectI{far / factor, 0, kTile / factor, kTile / factor}));
 
     settle(cache, source);
     CHECK(cache.plan().front().tile->key.level == 0);
@@ -176,16 +184,16 @@ void finer_tiles_stand_in_when_zooming_out() {
     cache.demand({0, 0, 1024, 1024}, 0.4);
     CHECK(cache.level() == 1);
     const auto plan = cache.plan();
-    CHECK(plan.size() == 4);
+    CHECK(plan.size() == static_cast<std::size_t>((1024 / kTile) * (1024 / kTile)));
     for (const PreviewPatch& patch : plan) {
         CHECK(patch.tile->key.level == 0);
-        CHECK(patch.area.width == 512);
+        CHECK(patch.area.width == kTile);
         CHECK(shown(patch, patch.area.x + 3, patch.area.y + 5) == source.at(patch.area.x + 3, patch.area.y + 5));
     }
     settle(cache, source);
     const auto settled = cache.plan();
-    CHECK(settled.size() == 1);
-    if (!settled.empty()) CHECK(settled.front().tile->key.level == 1);
+    CHECK(settled.size() == static_cast<std::size_t>((1024 / (2 * kTile)) * (1024 / (2 * kTile))));
+    for (const PreviewPatch& patch : settled) CHECK(patch.tile->key.level == 1);
 }
 
 void bleed_stays_inside_the_document() {

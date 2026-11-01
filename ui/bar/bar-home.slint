@@ -9,6 +9,7 @@ import { UserState, DocumentState, ETool, ESelectionType, ERotation, ToolOptions
 // One cell of the Brushes picker: the picture of one brush type, outlined while
 // it is the type in use.
 component BrushGlyphButton inherits Rectangle {
+    cache-rendering-hint: true;
     in property <image> source;
     in property <bool> focused: false;
     // The cell's place in the grid and the brush it stands for, so the panel
@@ -112,6 +113,7 @@ component TextureMenu inherits BarDropdown {
 }
 
 component ShapeGlyphButton inherits Rectangle {
+    cache-rendering-hint: true;
     in property <string> commands;
     in property <bool> focused: false;
     in property <bool> filled: true;

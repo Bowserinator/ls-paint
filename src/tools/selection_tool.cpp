@@ -42,13 +42,6 @@ RectI marquee_rect(Point2f a, Point2f b) {
     return rect_from_corners(a, b);
 }
 
-std::optional<SelectionHandle> handle_at(RectI bounds, Point2f position, float zoom) {
-    if (bounds.width < kMinHandleSpan || bounds.height < kMinHandleSpan) return std::nullopt;
-    for (const SelectionHandle handle : kSelectionHandles)
-        if (distance(handle_anchor(bounds, handle), position) * zoom <= kHandleHitRadius) return handle;
-    return std::nullopt;
-}
-
 // True when a press at `position` would start a turn: near a corner, but not on
 // a resize grip or inside the selection, which take the press first.
 bool in_rotate_zone(RectI bounds, Point2f position, float zoom) {
@@ -58,20 +51,6 @@ bool in_rotate_zone(RectI bounds, Point2f position, float zoom) {
     for (const SelectionHandle corner : kCorners)
         if (distance(handle_anchor(bounds, corner), position) <= kRotateHitRadius) return true;
     return false;
-}
-
-ResizeCursor resize_cursor_for(SelectionHandle handle) {
-    switch (handle) {
-        case SelectionHandle::N:
-        case SelectionHandle::S: return ResizeCursor::Vertical;
-        case SelectionHandle::E:
-        case SelectionHandle::W: return ResizeCursor::Horizontal;
-        case SelectionHandle::Nw:
-        case SelectionHandle::Se: return ResizeCursor::DiagonalNwSe;
-        case SelectionHandle::Ne:
-        case SelectionHandle::Sw: break;
-    }
-    return ResizeCursor::DiagonalNeSw;
 }
 
 // Records whether a press at the pointer would grab a grip, so the UI can show
@@ -96,6 +75,15 @@ void update_rotate_hover(ToolContext& context, Point2f position) {
         selection.active() && !bounds.empty() && in_rotate_zone(bounds, position, context.zoom);
 }
 
+// Records whether a press at the pointer would take hold of the selection to
+// move it: anywhere inside it that no grip claims.
+void update_move_hover(ToolContext& context, Point2f position) {
+    const SelectionMask& selection = context.document.selection();
+    const RectI bounds = selection.bounds();
+    context.ui.move.hover = selection.active() && !bounds.empty() && bounds.contains(position) &&
+                            !handle_at(bounds, position, context.zoom);
+}
+
 Point2f rect_centre(RectI bounds) {
     return {static_cast<float>(bounds.x) + bounds.width / 2.0f,
             static_cast<float>(bounds.y) + bounds.height / 2.0f};
@@ -115,8 +103,29 @@ float bearing_degrees(Point2f centre, Point2f position) {
     return degrees_from_radians(std::atan2(position.y - centre.y, position.x - centre.x));
 }
 
-// The rectangle the drag would produce: the edges opposite the grip stay put,
-// and the result always stays on the canvas at least one pixel wide.
+}  // namespace
+
+std::optional<SelectionHandle> handle_at(RectI bounds, Point2f position, float zoom) {
+    if (bounds.width < kMinHandleSpan || bounds.height < kMinHandleSpan) return std::nullopt;
+    for (const SelectionHandle handle : kSelectionHandles)
+        if (distance(handle_anchor(bounds, handle), position) * zoom <= kHandleHitRadius) return handle;
+    return std::nullopt;
+}
+
+ResizeCursor resize_cursor_for(SelectionHandle handle) {
+    switch (handle) {
+        case SelectionHandle::N:
+        case SelectionHandle::S: return ResizeCursor::Vertical;
+        case SelectionHandle::E:
+        case SelectionHandle::W: return ResizeCursor::Horizontal;
+        case SelectionHandle::Nw:
+        case SelectionHandle::Se: return ResizeCursor::DiagonalNwSe;
+        case SelectionHandle::Ne:
+        case SelectionHandle::Sw: break;
+    }
+    return ResizeCursor::DiagonalNeSw;
+}
+
 RectI resized_bounds(RectI start, SelectionHandle handle, Point2f position, RectI canvas) {
     int left = start.x;
     int top = start.y;
@@ -150,8 +159,6 @@ RectI resized_bounds(RectI start, SelectionHandle handle, Point2f position, Rect
     return {left, top, right - left, bottom - top};
 }
 
-}  // namespace
-
 Point2f handle_anchor(RectI bounds, SelectionHandle handle) {
     const float left = static_cast<float>(bounds.x);
     const float top = static_cast<float>(bounds.y);
@@ -178,6 +185,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
     context.ui.rotate.hover = false;
     context.ui.rotate.rotating = false;
     context.ui.resize = {};
+    context.ui.move = {};
     if (button == PointerButton::Secondary) return;  // reserved for the context menu
 
     const SelectionShape shape = context.shape;
@@ -217,6 +225,7 @@ void SelectionTool::on_pointer_down(ToolContext& context, Point2f position, Poin
             m_contents_dy = 0;
             remember_selection(context);
             m_drag = Drag::Contents;
+            context.ui.move.dragging = true;
             return;
         }
 
@@ -265,6 +274,11 @@ void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
         update_resize_hover(context, position);
     else if (m_drag != Drag::Resize)
         context.ui.resize = {};
+
+    if (idle && context.ui.resize.cursor == ResizeCursor::None)
+        update_move_hover(context, position);
+    else if (m_drag != Drag::Contents)
+        context.ui.move = {};
 
     if (m_drag == Drag::Contents) {
         const int dx = round_to_int(position.x - m_contents_start.x);
@@ -370,6 +384,8 @@ void SelectionTool::finish_contents_drag(ToolContext& context) {
     context.document.mark_dirty(context.document.bounds());
     push_drag_edit(context);
     m_drag = Drag::None;
+    // The pointer is still over what it moved.
+    context.ui.move = {true, false};
 }
 
 void SelectionTool::finish_resize_drag(ToolContext& context, Point2f position) {
@@ -448,6 +464,7 @@ bool SelectionTool::on_cancel(ToolContext& context) {
     context.document.mark_dirty(context.document.bounds());
     context.ui.rotate = {};
     context.ui.resize = {};
+    context.ui.move = {};
     context.ui.selection.points.clear();
     m_polygon.clear();
     m_drag = Drag::None;
@@ -463,6 +480,7 @@ void SelectionTool::on_deactivate(ToolContext& context) {
     }
     context.ui.rotate = {};
     context.ui.resize = {};
+    context.ui.move = {};
 }
 
 void SelectionTool::push_drag_edit(ToolContext& context) {

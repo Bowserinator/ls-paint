@@ -52,6 +52,11 @@ target_link_libraries(lsp_preview_cache_tests PRIVATE lsp_core)
 target_include_directories(lsp_preview_cache_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME lsp_preview_cache_tests COMMAND lsp_preview_cache_tests)
 
+add_executable(lsp_debug_stats_tests debug_stats_test.cpp)
+target_link_libraries(lsp_debug_stats_tests PRIVATE lsp_core)
+target_include_directories(lsp_debug_stats_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME lsp_debug_stats_tests COMMAND lsp_debug_stats_tests)
+
 add_executable(lsp_ui_tests
     ui_tests.cpp
     ${CMAKE_SOURCE_DIR}/src/render/slint_bridge.cpp
@@ -83,11 +88,11 @@ add_custom_target(snapshots
 )
 
 if(MSVC)
-    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_preview_cache_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_preview_cache_tests lsp_debug_stats_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE /W4)
     endforeach()
 else()
-    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_preview_cache_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_preview_cache_tests lsp_debug_stats_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE -Wall -Wextra)
     endforeach()
 endif()
@@ -103,6 +108,7 @@ set(LSP_TEST_TARGETS
     lsp_store_tests
     lsp_tile_resample_tests
     lsp_preview_cache_tests
+    lsp_debug_stats_tests
     lsp_ui_tests
 )
 

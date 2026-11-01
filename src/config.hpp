@@ -27,11 +27,13 @@ inline constexpr int kBlurChunkSize = 256;
 // this many pixels a side, only where it has been.
 inline constexpr int kCoverageChunkSize = 256;
 // Reduced pictures of the document are kept as tiles of this many pixels a side.
-inline constexpr int kDisplayTileSize = 512;
-inline constexpr int kOverviewEdge = 512;
+inline constexpr int kDisplayTileSize = 256;
+inline constexpr int kOverviewEdge = kDisplayTileSize;
 inline constexpr int kPreviewGutter = 1;
+// Smallest gap between two updates of the picture while a stroke is moving.
+inline constexpr int kMinUpdateDebounceForMouseMoveMs = 16;
 inline constexpr int kRenderPrefetchPixels = 128;
-inline constexpr int kRenderMaxEntries = 256;
+inline constexpr int kRenderMaxEntries = 512;
 inline constexpr std::size_t kPreviewCacheBytes = 256u * 1024u * 1024u;
 // Bytes of the document read in one go while tiles are generated, and the time
 // one pass may spend on it: briefly while the view is being moved, so that
@@ -43,6 +45,10 @@ inline constexpr int kRenderStillMilliseconds = 60;
 // An edit updates the tiles on the spot up to this many bytes of document;
 // anything larger is caught up with over the next passes.
 inline constexpr std::size_t kPreviewPatchBytes = 4u * 1024u * 1024u;
+// While a stroke is under way its edits are shown as pictures laid over the
+// canvas. Once they pass either limit they are settled into the canvas.
+inline constexpr std::size_t kStrokeOverlayMaxPictures = 256;
+inline constexpr std::size_t kStrokeOverlayMaxPixels = 4u * 1024u * 1024u;
 
 // The application's name, which is also the name of its config folder.
 inline constexpr std::string_view kAppId = "ls_paint";

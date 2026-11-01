@@ -10,6 +10,7 @@
 #include "core/raster.hpp"
 #include "history/commands/selection_edit_command.hpp"
 #include "history/history_stack.hpp"
+#include "tools/selection_handles.hpp"
 #include "tools/shape_tool.hpp"
 #include "tools/text_tool.hpp"
 #include "tools/tool.hpp"
@@ -58,14 +59,17 @@ struct RotatePreview {
     bool rotating = false;
 };
 
-// The pointer shape that goes with a resize grip, by the line the grip drags
-// along.
-enum class ResizeCursor { None, Horizontal, Vertical, DiagonalNwSe, DiagonalNeSw };
-
 // What the selection tool tells the UI about resizing: the shape the pointer
 // takes over a grip, or while a resize drag runs.
 struct ResizePreview {
     ResizeCursor cursor = ResizeCursor::None;
+};
+
+// What a tool tells the UI about dragging a selection or a text box around:
+// whether a press at the pointer would grab it, and whether a drag is under way.
+struct MovePreview {
+    bool hover = false;
+    bool dragging = false;
 };
 
 // What the active tool tells the UI about a gesture that is still running.
@@ -75,6 +79,7 @@ struct ToolUiState {
     SelectionPreview selection;
     RotatePreview rotate;
     ResizePreview resize;
+    MovePreview move;
 };
 
 // The active layer as a raster target that the selection holds back.

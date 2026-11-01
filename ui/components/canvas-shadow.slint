@@ -1,0 +1,42 @@
+// One layer of the canvas shadow that leaves the paper untinted.
+export component CanvasShadow inherits Rectangle {
+    // Width of the bands on the top, left and right.
+    in property <length> spread;
+    // Depth of the band underneath, where the shadow falls strongest.
+    in property <length> drop;
+    in property <brush> shade: rgba(0, 0, 0, 0.08);
+
+    background: transparent;
+
+    Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.spread;
+        background: root.shade;
+    }
+
+    Rectangle {
+        x: 0px;
+        y: root.height - root.drop;
+        width: root.width;
+        height: root.drop;
+        background: root.shade;
+    }
+
+    Rectangle {
+        x: 0px;
+        y: root.spread;
+        width: root.spread;
+        height: root.height - root.spread - root.drop;
+        background: root.shade;
+    }
+
+    Rectangle {
+        x: root.width - root.spread;
+        y: root.spread;
+        width: root.spread;
+        height: root.height - root.spread - root.drop;
+        background: root.shade;
+    }
+}

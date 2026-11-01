@@ -6,6 +6,7 @@
 #include "tools/eraser_tool.hpp"
 #include "tools/pencil_tool.hpp"
 #include "tools/selection_tool.hpp"
+#include "tools/text_tool.hpp"
 #include "tools/tool_context.hpp"
 
 using namespace lsp;
@@ -1092,6 +1093,145 @@ void test_invert_colors_without_a_selection_takes_the_whole_layer() {
            Rgba8{0, 0, 0, 255}));
 }
 
+void test_hovering_inside_a_selection_offers_to_move_it() {
+    Fixture fixture;
+    fixture.ctx.zoom = 4.0f;
+    SelectionTool tool;
+    stroke(tool, fixture, {4, 4}, {20, 20});
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 16, 16}));
+
+    tool.on_pointer_move(fixture.ctx, {12, 12});
+    CHECK(fixture.tool_ui.move.hover);
+    CHECK(!fixture.tool_ui.move.dragging);
+
+    // A grip claims the pointer, and outside the selection nothing is grabbed.
+    tool.on_pointer_move(fixture.ctx, {4, 4});
+    CHECK(!fixture.tool_ui.move.hover);
+    tool.on_pointer_move(fixture.ctx, {28, 28});
+    CHECK(!fixture.tool_ui.move.hover);
+
+    tool.on_pointer_move(fixture.ctx, {12, 12});
+    tool.on_pointer_down(fixture.ctx, {12, 12}, PointerButton::Primary);
+    CHECK(fixture.tool_ui.move.dragging);
+    tool.on_pointer_move(fixture.ctx, {14, 12});
+    tool.on_pointer_up(fixture.ctx, {14, 12});
+    CHECK(!fixture.tool_ui.move.dragging);
+    CHECK(fixture.tool_ui.move.hover);
+}
+
+TextOverlayState open_text_box(float x, float y, float width, float height) {
+    TextOverlayState text;
+    text.visible = true;
+    text.origin = {x, y};
+    text.width = width;
+    text.height = height;
+    return text;
+}
+
+void test_the_text_box_moves_by_its_edge() {
+    Fixture fixture(64, 64);
+    fixture.ctx.zoom = 2.0f;
+    fixture.tool_ui.text = open_text_box(10, 10, 20, 12);
+    TextTool tool;
+
+    // Inside the box nothing is grabbed from here: the editor takes that press.
+    CHECK(text_box_grabs(fixture.tool_ui.text, {10, 16}, 2.0f));
+    CHECK(!text_box_grabs(fixture.tool_ui.text, {50, 50}, 2.0f));
+
+    tool.on_pointer_down(fixture.ctx, {20, 8}, PointerButton::Primary);
+    CHECK(fixture.tool_ui.move.dragging);
+    tool.on_pointer_move(fixture.ctx, {25, 13});
+    CHECK(fixture.tool_ui.text.origin.x == 15.0f && fixture.tool_ui.text.origin.y == 15.0f);
+    tool.on_pointer_up(fixture.ctx, {25, 13});
+    CHECK(!fixture.tool_ui.move.dragging);
+    CHECK(fixture.tool_ui.text.visible);
+    CHECK(!fixture.tool_ui.text.sized);
+}
+
+void test_the_text_box_resizes_by_a_grip() {
+    Fixture fixture(64, 64);
+    fixture.ctx.zoom = 2.0f;
+    fixture.tool_ui.text = open_text_box(10, 10, 20, 12);
+    TextTool tool;
+
+    // The south east grip sits on the box's last pixel.
+    tool.on_pointer_move(fixture.ctx, {29, 21});
+    CHECK(fixture.tool_ui.resize.cursor == ResizeCursor::DiagonalNwSe);
+
+    tool.on_pointer_down(fixture.ctx, {29, 21}, PointerButton::Primary);
+    tool.on_pointer_move(fixture.ctx, {39, 31});
+    const TextOverlayState& text = fixture.tool_ui.text;
+    CHECK(text.sized);
+    CHECK(text.origin.x == 10.0f && text.origin.y == 10.0f);
+    CHECK(text.width == 30.0f);
+    CHECK(text.height == 22.0f);
+    tool.on_pointer_up(fixture.ctx, {39, 31});
+    CHECK(text.sized);
+    CHECK(fixture.tool_ui.resize.cursor == ResizeCursor::DiagonalNwSe);
+}
+
+void test_escape_puts_a_dragged_text_box_back() {
+    Fixture fixture(64, 64);
+    fixture.ctx.zoom = 2.0f;
+    fixture.tool_ui.text = open_text_box(10, 10, 20, 12);
+    TextTool tool;
+    tool.on_pointer_down(fixture.ctx, {20, 8}, PointerButton::Primary);
+    tool.on_pointer_move(fixture.ctx, {30, 18});
+    CHECK(tool.on_cancel(fixture.ctx));
+    CHECK(fixture.tool_ui.text.origin.x == 10.0f && fixture.tool_ui.text.origin.y == 10.0f);
+    CHECK(!tool.on_cancel(fixture.ctx));
+}
+
+void test_a_press_away_from_the_box_opens_a_new_one() {
+    Fixture fixture(64, 64);
+    fixture.ctx.zoom = 2.0f;
+    fixture.tool_ui.text = open_text_box(10, 10, 20, 12);
+    fixture.tool_ui.text.sized = true;
+    TextTool tool;
+    tool.on_pointer_down(fixture.ctx, {50, 50}, PointerButton::Primary);
+    tool.on_pointer_up(fixture.ctx, {50, 50});
+    CHECK(fixture.tool_ui.text.origin.x == 50.0f && fixture.tool_ui.text.origin.y == 50.0f);
+    CHECK(!fixture.tool_ui.text.sized);
+}
+
+void test_text_is_cut_off_at_the_box() {
+    AppController controller;
+    controller.resize_canvas(80, 40, kWhite);
+    TextOptions& options = controller.text_options();
+    options.size = 20.0f;
+    const Rgba8 ink{0, 0, 0, 255};
+
+    controller.commit_text({4, 4}, "WWWWWW", ink);
+    const PixelBuffer& whole = controller.document().active_layer().pixels;
+    int far_ink = 0;
+    for (int y = 0; y < whole.height(); ++y)
+        for (int x = 30; x < whole.width(); ++x)
+            if (!(whole.at(x, y) == kWhite)) ++far_ink;
+    CHECK(far_ink > 0);
+    controller.history().undo();
+
+    controller.commit_text({4, 4}, "WWWWWW", ink, RectI{4, 4, 26, 30});
+    const PixelBuffer& cut = controller.document().active_layer().pixels;
+    int inside = 0;
+    int outside = 0;
+    for (int y = 0; y < cut.height(); ++y)
+        for (int x = 0; x < cut.width(); ++x) {
+            if (cut.at(x, y) == kWhite) continue;
+            (x >= 4 && x < 30 && y >= 4 && y < 34 ? inside : outside)++;
+        }
+    CHECK(inside > 0);
+    CHECK(outside == 0);
+
+    controller.history().undo();
+    controller.commit_text({4, 4}, "WWWWWW", ink, RectI{-50, -50, 10, 10});
+    const PixelBuffer& none = controller.document().active_layer().pixels;
+    int stray = 0;
+    for (int y = 0; y < none.height(); ++y)
+        for (int x = 0; x < none.width(); ++x)
+            if (!(none.at(x, y) == kWhite)) ++stray;
+    CHECK(stray == 0);
+}
+
 int main() {
     test_degenerate_marquee_leaves_canvas_paintable();
     test_fewer_than_three_polygon_points_leaves_no_selection();
@@ -1131,6 +1271,12 @@ int main() {
     test_a_rotate_drag_holding_shift_snaps_to_45_degrees();
     test_a_rotate_drag_is_one_undo_step();
     test_a_rotate_drag_that_never_moves_is_a_no_op();
+    test_hovering_inside_a_selection_offers_to_move_it();
+    test_the_text_box_moves_by_its_edge();
+    test_the_text_box_resizes_by_a_grip();
+    test_escape_puts_a_dragged_text_box_back();
+    test_a_press_away_from_the_box_opens_a_new_one();
+    test_text_is_cut_off_at_the_box();
     test_freehand_gesture_publishes_its_path();
     test_polygon_gesture_previews_and_escape_abandons_it();
     test_transparent_selection_leaves_the_background_color_out();

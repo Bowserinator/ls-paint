@@ -5,6 +5,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# A plain `cmake -B build` leaves the build type empty, which compiles the
+# brush engine and the preview cache with no optimisation at all.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 include(FetchContent)
 
 set(SLINT_CARGO_RELEASE_PROFILE ON CACHE BOOL "Force Slint Cargo release profile" FORCE)
@@ -28,6 +34,10 @@ set(SLINT_FEATURE_RENDERER_SKIA ON CACHE BOOL "" FORCE)
 set(DEFAULT_SLINT_EMBED_RESOURCES embed-files CACHE STRING "How the Slint compiler embeds @image-url assets" FORCE)
 
 FetchContent_MakeAvailable(Slint)
+
+# jemalloc appends inherited Make flags to Cargo's flags, turning options into targets.
+corrosion_set_env_vars(slint_cpp "MAKEFLAGS=")
+corrosion_set_env_vars(slint-compiler "MAKEFLAGS=")
 
 # stb: single-header image and font decoding. Only headers are used, so this
 # just populates the source tree.

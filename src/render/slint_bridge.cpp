@@ -6,10 +6,15 @@
 #include <map>
 #include <utility>
 
+#include "ui/debug_stats.hpp"
+#include "utils/trace.hpp"
+
 namespace lsp {
 namespace {
 
 slint::Image image_from_grid(const PixelGrid& grid) {
+    const ScopedPhase timing(Phase::Images);
+    trace::bump(trace::TileImage);
     slint::SharedPixelBuffer<slint::Rgba8Pixel> pixels(static_cast<std::uint32_t>(grid.width),
                                                      static_cast<std::uint32_t>(grid.height));
     static_assert(sizeof(Rgba8) == sizeof(slint::Rgba8Pixel));
@@ -42,6 +47,7 @@ struct SlintBridge::State {
     }
 
     void publish() {
+        const ScopedPhase timing(Phase::Publish);
         const double scale = double(zoom) * dpr;
         if (!republish && cache.version() == shown_version && scale == shown_scale) return;
         shown_version = cache.version();
@@ -94,6 +100,11 @@ void SlintBridge::attach(std::function<void()> wake, std::function<void()> prese
 }
 
 void SlintBridge::upload(const PixelBuffer& source, RectI region, std::uint64_t generation) {
+    upload(source, std::span<const RectI>(&region, 1), generation);
+}
+
+void SlintBridge::upload(const PixelBuffer& source, std::span<const RectI> regions, std::uint64_t generation) {
+    const ScopedPhase timing(Phase::Upload);
     auto& state = *m_state;
     if (state.cache.generation() != generation || state.cache.bounds() != source.bounds()) {
         state.cache.reset(source.bounds(), generation);
@@ -101,7 +112,8 @@ void SlintBridge::upload(const PixelBuffer& source, RectI region, std::uint64_t 
         state.published = {};
         state.republish = true;
     } else {
-        state.cache.invalidate(source, region);
+        const ScopedPhase invalidating(Phase::Invalidate);
+        for (const RectI& region : regions) state.cache.invalidate(source, region);
     }
     poll(source);
 }
@@ -123,13 +135,17 @@ void SlintBridge::set_view(const PixelBuffer& source, RectI view) {
 }
 
 void SlintBridge::poll(const PixelBuffer& source) {
+    const ScopedPhase timing(Phase::Poll);
     auto& state = *m_state;
     if (!state.alive || state.cache.bounds().empty() || state.cache.bounds() != source.bounds()) return;
     const RectI area = (state.area.empty() ? source.bounds() : state.area).intersected(source.bounds());
     state.cache.demand(area, double(state.zoom) * state.dpr);
     const bool moving = state.moving();
-    state.busy = state.cache.build(
-        source, std::chrono::milliseconds(moving ? kRenderBusyMilliseconds : kRenderIdleMilliseconds));
+    {
+        const ScopedPhase building(Phase::Build);
+        state.busy = state.cache.build(
+            source, std::chrono::milliseconds(moving ? kRenderBusyMilliseconds : kRenderIdleMilliseconds));
+    }
     state.publish();
     if (!state.busy || state.scheduled || !state.wake) return;
     state.scheduled = true;
@@ -148,7 +164,14 @@ float SlintBridge::device_ratio() const { return m_state->dpr; }
 const CanvasPresentation& SlintBridge::presentation() const { return m_state->published; }
 std::size_t SlintBridge::cache_bytes() const { return m_state->cache.bytes(); }
 
+slint::Image image_from(const PixelBuffer& source, RectI region) {
+    region = region.intersected(source.bounds());
+    trace::bump(trace::ImageFrom);
+    return image_from_grid({region.width, region.height, source.contiguous_copy(region)});
+}
+
 slint::Image image_from(const PixelBuffer& source) {
+    trace::bump(trace::ImageFrom);
     return image_from_grid({source.width(), source.height(), source.contiguous_copy(source.bounds())});
 }
 

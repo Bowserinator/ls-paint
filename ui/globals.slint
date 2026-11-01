@@ -5,6 +5,8 @@ export enum ETool {
 export enum ESelectionType { RECTANGULAR, FREEHAND, POLYGON }
 export enum EResizeCursor { NONE, HORIZONTAL, VERTICAL, NWSE, NESW }
 export enum ERotation { CW90, CCW90, R180 }
+// The character styles the Text tab toggles.
+export enum EFontToggle { BOLD, ITALIC, UNDERLINE, STRIKE }
 export enum EContentTransform { ROTATE_CW90, ROTATE_CCW90, ROTATE_180, FLIP_HORIZONTAL, FLIP_VERTICAL }
 
 // Every shape the Shapes picker offers, in the order it shows them.
@@ -43,9 +45,17 @@ export enum EBrushKind {
 }
 
 // One run of the marching-ants outline, in screen pixels from the paper's
-// top-left corner. The pattern is rebuilt from the C++ side on every animation
-// tick and whenever the zoom changes.
+// top-left corner. Outlines that are not an upright box are rebuilt from the
+// C++ side on every animation tick and whenever the zoom changes.
 export struct SelectionDash {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+export struct SelectionEdge {
+    source: image,
     x: float,
     y: float,
     w: float,
@@ -153,7 +163,7 @@ export global UserState  {
     // it, and half the side of that square image in screen pixels. The image is
     // blank and the reach is zero while the pointer draws nothing.
     in-out property <image> cursor-overlay;
-    in-out property <length> cursor-overlay-reach: 0px;
+    in-out property <float> cursor-overlay-reach: 0;
 }
 
 // The zoom ladder the status bar walks: 25% steps below 100, 100% steps
@@ -161,6 +171,11 @@ export global UserState  {
 // pct-to-pos maps a zoom percentage onto the slider track and pos-to-pct
 // reads one back; whole numbers land exactly on notches either way, so
 // 100% sits at position 4 rather than in the middle.
+export global DebugState {
+    in property <bool> enabled: false;
+    in property <string> text;
+}
+
 export global ZoomScale {
     // The zoom limits, and the factor one zoom step multiplies or divides by.
     out property<float> min-zoom: 0.125;
@@ -234,6 +249,7 @@ export global DocumentState {
     // advances.
     in property <[SelectionDash]> ants-dark;
     in property <[SelectionDash]> ants-light;
+    in property <[SelectionEdge]> ants-edges;
 
     // Empty unless the selection tool is holding a selection big enough for
     // the grips not to swallow the drag-inside-to-move target.
@@ -283,6 +299,13 @@ export struct CanvasTile {
     bleed-x: int,
     bleed-y: int,
     pixelated: bool,
+}
+
+// A picture laid over the canvas, and where its top left sits in the document.
+export struct StrokePatch {
+    source: image,
+    x: float,
+    y: float,
 }
 
 export struct ShapeGlyph {
@@ -349,6 +372,10 @@ export global FontStyle {
     in-out property <float> preview-scale: 1.0;
     // Raised when the family changes, so the backend can republish the scale.
     callback family-changed;
+    // A style button was pressed. With part of the open text selected only that
+    // part changes, otherwise the whole text does. The backend flips the
+    // matching property above, which is also what the button shows.
+    callback toggle-style(EFontToggle);
 }
 
 // The rotate feedback: whether the pointer sits in the zone just outside a
@@ -361,6 +388,13 @@ export global RotateOverlay {
 // The pointer shape the selection tool asks for over a resize grip.
 export global ResizeOverlay {
     in-out property <EResizeCursor> cursor: EResizeCursor.NONE;
+}
+
+// Whether the pointer is over something a drag would move, such as the
+// selection, and whether that drag is under way.
+export global MoveOverlay {
+    in-out property <bool> hover: false;
+    in-out property <bool> dragging: false;
 }
 
 // The text box being edited. The content is written by the editor, and the
@@ -384,6 +418,22 @@ export global TextOverlay {
     in-out property <float> caret-height: 0;
     // The byte offset of the cursor in the content.
     in-out property <int> cursor: 0;
+    // The selected part of the content as byte offsets, equal when nothing is
+    // selected.
+    in-out property <int> selection-start: 0;
+    in-out property <int> selection-end: 0;
+    // The size of the text itself in document pixels, whatever size the box has.
+    in-out property <float> text-width: 0;
+    in-out property <float> text-height: 0;
+    // Whether the box has a size of its own, which cuts off what lies outside it.
+    in-out property <bool> sized: false;
+    // Raised each time a box is closed without writing any text.
+    in-out property <int> cancel-count: 0;
+    // The text colour was changed: the selected part takes it, or the whole text
+    // when nothing is selected.
+    callback recolor(color);
+    // The pointer left the box's edge without a drag under way.
+    callback edge-left;
 }
 
 // Paint's Edit Colors surface. The picker works in HSV: the ring picks the hue

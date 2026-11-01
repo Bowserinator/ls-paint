@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -43,7 +45,10 @@ public:
 
     void resize_canvas(int width, int height, Rgba8 fill);
     // Draws a committed text box into the active layer as one history entry.
-    void commit_text(Point2f origin, std::string_view text, Rgba8 color);
+    // Text outside `box`, when given, is cut off. Characters that `styles` has no
+    // entry for are drawn in `color` with the text options.
+    void commit_text(Point2f origin, std::string_view text, Rgba8 color, std::optional<RectI> box = std::nullopt,
+                     std::span<const TextStyle> styles = {});
     void crop_to_selection();
     void rotate(CanvasDocument::Rotation rotation);
     void flip_horizontal();

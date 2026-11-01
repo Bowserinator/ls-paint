@@ -2,6 +2,7 @@ import { DropdownArrow } from "dropdown-arrow.slint";
 import { Styles } from "../styles.slint";
 
 component ImageButtonBase inherits Rectangle {
+    cache-rendering-hint: true;
     in-out property<bool> focused: false;
     in-out property<bool> force_hover: false;
     in-out property<bool> enabled: true;

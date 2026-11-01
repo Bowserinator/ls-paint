@@ -1,32 +1,14 @@
 #pragma once
 
-#include <array>
 #include <optional>
 #include <string_view>
 #include <vector>
 
 #include "selection/selection_ops.hpp"
+#include "tools/selection_handles.hpp"
 #include "tools/tool.hpp"
 
 namespace lsp {
-
-// The eight resize grips of a selection: four corners plus the middle of every
-// edge.
-enum class SelectionHandle { Nw, N, Ne, E, Se, S, Sw, W };
-
-// The grips in the order a press looks for them: corners first, so a small
-// selection prefers them over the edge grips.
-inline constexpr std::array kSelectionHandles{SelectionHandle::Nw, SelectionHandle::Ne,
-                                              SelectionHandle::Se, SelectionHandle::Sw,
-                                              SelectionHandle::N,  SelectionHandle::E,
-                                              SelectionHandle::S,  SelectionHandle::W};
-
-// Resize grips are only offered on selections at least this many pixels across,
-// so the grips do not swallow the "drag inside to move it" target.
-inline constexpr int kMinHandleSpan = 8;
-
-// Where a grip sits: on the border pixels of `bounds`.
-[[nodiscard]] Point2f handle_anchor(RectI bounds, SelectionHandle handle);
 
 class SelectionTool final : public ITool {
 public:

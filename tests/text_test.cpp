@@ -270,7 +270,102 @@ void test_text_off_canvas_leaves_the_buffer_alone() {
     CHECK(painted_count(pixels) == 0);
 }
 
+// Styles apply to the characters they are given for, not to the whole block.
+void test_a_style_applies_only_to_its_own_characters() {
+    const Rgba8 red{255, 0, 0, 255};
+    const Rgba8 green{0, 200, 0, 255};
+    const std::string text = "HHHH";
+    std::vector<TextStyle> styles(text.size(), TextStyle{false, false, false, false, red});
+    styles[2].color = green;
+    styles[3].color = green;
+    PixelBuffer pixels(160, 48);
+    (void)draw_text(Target{pixels}, {4, 4}, text, body_options(), kInk, styles);
+    CHECK(count_color(pixels, red) > 0);
+    CHECK(count_color(pixels, green) > 0);
+    CHECK(count_color(pixels, kInk) == 0);
+
+    // Only the first half is bold, so it carries more ink than the same half
+    // of the plain block.
+    std::vector<TextStyle> half_bold(text.size(), TextStyle{false, false, false, false, kInk});
+    half_bold[0].bold = true;
+    half_bold[1].bold = true;
+    PixelBuffer plain(160, 48);
+    PixelBuffer mixed(160, 48);
+    (void)draw_text(Target{plain}, {4, 4}, text, body_options(), kInk);
+    (void)draw_text(Target{mixed}, {4, 4}, text, body_options(), kInk, half_bold);
+    CHECK(painted_count(mixed) > painted_count(plain));
+    PixelBuffer all_bold(160, 48);
+    TextOptions bold_options = body_options();
+    bold_options.bold = true;
+    (void)draw_text(Target{all_bold}, {4, 4}, text, bold_options, kInk);
+    CHECK(painted_count(mixed) < painted_count(all_bold));
+}
+
+void test_a_rule_follows_the_style_of_its_character() {
+    const std::string text = "HH";
+    std::vector<TextStyle> styles(text.size(), TextStyle{false, false, false, false, kInk});
+    PixelBuffer plain(120, 48);
+    PixelBuffer ruled(120, 48);
+    (void)draw_text(Target{plain}, {4, 4}, text, body_options(), kInk, styles);
+    styles[1].underline = true;
+    (void)draw_text(Target{ruled}, {4, 4}, text, body_options(), kInk, styles);
+    CHECK(last_ink_row(ruled) > last_ink_row(plain));
+}
+
+void test_an_edit_keeps_the_styles_of_the_text_it_left_alone() {
+    const TextStyle bold{true, false, false, false, kInk};
+    const TextStyle plain{false, false, false, false, kInk};
+    const std::vector<TextStyle> before{bold, plain};
+
+    // A character typed between the two takes the typing style.
+    std::vector<TextStyle> after = restyled_after_edit("ab", "axb", before, bold, 2);
+    CHECK(after.size() == 3);
+    CHECK(after[0] == bold);
+    CHECK(after[1] == bold);
+    CHECK(after[2] == plain);
+
+    // A repeated character is told apart by where the cursor is.
+    after = restyled_after_edit("aa", "aaa", before, TextStyle{true, true, false, false, kInk}, 2);
+    CHECK(after.size() == 3);
+    CHECK(after[0] == bold);
+    CHECK(after[1].italic);
+    CHECK(after[2] == plain);
+
+    // Deleting drops the styles of what went.
+    const std::vector<TextStyle> three{bold, plain, bold};
+    after = restyled_after_edit("abc", "ac", three, plain, 1);
+    CHECK(after.size() == 2);
+    CHECK(after[0] == bold);
+    CHECK(after[1] == bold);
+
+    // Replacing everything restyles everything.
+    after = restyled_after_edit("ab", "x", before, plain, 1);
+    CHECK(after.size() == 1);
+    CHECK(after[0] == plain);
+}
+
 }  // namespace
+
+void test_a_selection_is_drawn_light_on_blue() {
+    PixelBuffer plain(240, 64, kWhite);
+    PixelBuffer selected(240, 64, kWhite);
+    (void)draw_text(Target{plain}, {4, 4}, "Paint", body_options(), kInk);
+    (void)draw_text(Target{selected}, {4, 4}, "Paint", body_options(), kInk, {}, ByteRange{1, 4});
+    const Rgba8 blue{51, 144, 255, 255};
+    CHECK(count_color(plain, blue) == 0);
+    CHECK(count_color(selected, blue) > 0);
+    CHECK(count_color(selected, kWhite) < count_color(plain, kWhite));
+    CHECK(count_color(selected, kInk) < count_color(plain, kInk));
+}
+
+void test_an_empty_selection_changes_nothing() {
+    PixelBuffer plain(240, 64, kWhite);
+    PixelBuffer empty(240, 64, kWhite);
+    (void)draw_text(Target{plain}, {4, 4}, "Paint", body_options(), kInk);
+    (void)draw_text(Target{empty}, {4, 4}, "Paint", body_options(), kInk, {}, ByteRange{2, 2});
+    CHECK(count_color(plain, kInk) == count_color(empty, kInk));
+    CHECK(count_color(empty, Rgba8{51, 144, 255, 255}) == 0);
+}
 
 int main() {
     test_text_paints_inside_the_bounds_it_reports();
@@ -290,6 +385,11 @@ int main() {
     test_characters_the_bundled_faces_lack_are_drawn_by_an_installed_face();
     test_clip_mask_limits_the_text();
     test_text_off_canvas_leaves_the_buffer_alone();
+    test_a_style_applies_only_to_its_own_characters();
+    test_a_rule_follows_the_style_of_its_character();
+    test_an_edit_keeps_the_styles_of_the_text_it_left_alone();
+    test_a_selection_is_drawn_light_on_blue();
+    test_an_empty_selection_changes_nothing();
 
     std::printf(failures == 0 ? "ALL OK\n" : "%d FAILURES\n", failures);
     return failures == 0 ? 0 : 1;

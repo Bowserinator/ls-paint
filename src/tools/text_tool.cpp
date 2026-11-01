@@ -34,6 +34,8 @@ constexpr float kBoldPixelsPerSize = 16.0f;
 constexpr float kUnderlineDrop = 0.15f;  // below the baseline
 constexpr float kStrikeRise = 0.28f;     // above it, near the middle of the x-height
 constexpr float kMarkThickness = 0.06f;
+constexpr Rgba8 kSelectionFill{51, 144, 255, kChannelMax};
+constexpr Rgba8 kSelectionText = kWhite;
 
 // The bundled faces. One file per family: bold and italic are synthesized, so
 // shipping a family costs a single file.
@@ -257,14 +259,13 @@ struct GlyphBitmap {
 // shear shifts a row further right the higher it sits above the baseline, and
 // the dilation widens every row to the right, so both grow the bitmap.
 GlyphBitmap shape_glyph(const unsigned char* raw, int width, int height, int x_offset, int y_offset,
-                        const TextOptions& options) {
+                        bool bold, bool italic, float size) {
     GlyphBitmap glyph;
-    const auto shear_at = [&options](int y) {
-        return options.italic ? std::max(0, round_to_int(-y * kItalicSlant)) : 0;
+    const auto shear_at = [italic](int y) {
+        return italic ? std::max(0, round_to_int(-y * kItalicSlant)) : 0;
     };
     const int shear = shear_at(y_offset);
-    const int passes =
-        options.bold ? std::max(1, round_to_int(options.size / kBoldPixelsPerSize)) : 0;
+    const int passes = bold ? std::max(1, round_to_int(size / kBoldPixelsPerSize)) : 0;
     glyph.width = width + shear + passes;
     glyph.height = height;
     glyph.x = x_offset;
@@ -363,7 +364,8 @@ int text_line_height(const TextOptions& options) {
     return std::max(1, round_to_int(static_cast<float>(ascent - descent + line_gap) * scale));
 }
 
-TextPreview render_text_preview(std::string_view text, const TextOptions& options, Rgba8 color) {
+TextPreview render_text_preview(std::string_view text, const TextOptions& options, Rgba8 color,
+                                std::span<const TextStyle> styles, ByteRange selection) {
     TextPreview preview;
     const int line_height = text_line_height(options);
     if (line_height <= 0) return preview;
@@ -384,7 +386,7 @@ TextPreview render_text_preview(std::string_view text, const TextOptions& option
     preview.margin = margin;
     preview.pixels = PixelBuffer(static_cast<int>(sheet_width), static_cast<int>(sheet_height), kTransparent);
     (void)draw_text(raster::Target{preview.pixels}, {static_cast<float>(margin), static_cast<float>(margin)},
-                    text, options, color);
+                    text, options, color, styles, selection);
     return preview;
 }
 
@@ -399,7 +401,8 @@ TextCaret text_caret(std::string_view text, std::size_t byte_offset, const TextO
 }
 
 RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
-                const TextOptions& options, Rgba8 color) {
+                const TextOptions& options, Rgba8 color, std::span<const TextStyle> styles,
+                ByteRange selection) {
     const LoadedFont* font = load_font(options.family);
     if (font == nullptr || text.empty() || options.size <= 0) return {};
 
@@ -435,7 +438,9 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
         int pen_x;
         int advance_px;
         GlyphFace face;
+        TextStyle style;
     };
+    const TextStyle plain{options.bold, options.italic, options.underline, options.strikethrough, color};
     std::vector<Placed> line;
     while (index < text.size()) {
         line.clear();
@@ -443,6 +448,7 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
         const LoadedFont* previous_font = nullptr;
         bool wrapped = false;
         while (index < text.size()) {
+            const std::size_t first_byte = index;
             const std::uint32_t codepoint = next_codepoint(text, index);
             if (codepoint == '\n') {
                 wrapped = true;
@@ -455,10 +461,14 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
 
             const int pen_start = pen_x;
             const int advance_px = move.advance;
-            if (options.opaque_background && advance_px > 0) {
-                draw_bar({pen_start, line_top, advance_px, line_height}, options.background);
+            const bool selected = first_byte >= selection.begin && first_byte < selection.end;
+            if (advance_px > 0 && (selected || options.opaque_background)) {
+                draw_bar({pen_start, line_top, advance_px, line_height},
+                         selected ? kSelectionFill : options.background);
             }
-            line.push_back({codepoint, pen_start, advance_px, face});
+            TextStyle style = first_byte < styles.size() ? styles[first_byte] : plain;
+            if (selected) style.color = kSelectionText;
+            line.push_back({codepoint, pen_start, advance_px, face, style});
             pen_x += advance_px;
             previous = static_cast<int>(codepoint);
             previous_font = face.font;
@@ -474,13 +484,13 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
                                                           static_cast<int>(placed.codepoint), &width,
                                                           &height, &x_offset, &y_offset);
             if (raw != nullptr) {
-                const GlyphBitmap glyph =
-                    shape_glyph(raw, width, height, x_offset, y_offset, options);
+                const GlyphBitmap glyph = shape_glyph(raw, width, height, x_offset, y_offset,
+                                                      placed.style.bold, placed.style.italic, options.size);
                 if (glyph.width > 0 && glyph.height > 0) {
                     const RectI box{placed.pen_x + glyph.x, pen_y + glyph.y, glyph.width,
                                     glyph.height};
                     raster::draw_glyph(target, box.x, box.y, glyph.width, glyph.height, glyph.width,
-                                       glyph.coverage.data(), color);
+                                       glyph.coverage.data(), placed.style.color);
                     touched = touched.united(box);
                 }
                 stbtt_FreeBitmap(raw, nullptr);
@@ -490,10 +500,12 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
         // The marks follow the glyphs, so a descender cannot cut the rule.
         for (const Placed& placed : line) {
             if (placed.advance_px <= 0) continue;
-            if (options.underline)
-                draw_bar({placed.pen_x, pen_y + underline_drop, placed.advance_px, mark_thickness}, color);
-            if (options.strikethrough)
-                draw_bar({placed.pen_x, pen_y - strike_rise, placed.advance_px, mark_thickness}, color);
+            if (placed.style.underline)
+                draw_bar({placed.pen_x, pen_y + underline_drop, placed.advance_px, mark_thickness},
+                         placed.style.color);
+            if (placed.style.strikethrough)
+                draw_bar({placed.pen_x, pen_y - strike_rise, placed.advance_px, mark_thickness},
+                         placed.style.color);
         }
 
         if (!wrapped) break;
@@ -504,13 +516,132 @@ RectI draw_text(raster::Target target, Point2f origin, std::string_view text,
     return touched.intersected(target.pixels.bounds());
 }
 
+std::vector<TextStyle> restyled_after_edit(std::string_view before, std::string_view after,
+                                           std::span<const TextStyle> styles, const TextStyle& inserted,
+                                           std::size_t caret) {
+    std::vector<TextStyle> kept(styles.begin(), styles.end());
+    kept.resize(before.size(), inserted);
+
+    // What the edit left alone at the end: up to the caret when the text after
+    // it is what followed the edit, otherwise as far back as the texts agree.
+    std::size_t suffix = 0;
+    if (caret <= after.size() && after.size() - caret <= before.size() &&
+        after.substr(caret) == before.substr(before.size() - (after.size() - caret))) {
+        suffix = after.size() - caret;
+    } else {
+        const std::size_t room = std::min(before.size(), after.size());
+        while (suffix < room && before[before.size() - 1 - suffix] == after[after.size() - 1 - suffix]) ++suffix;
+    }
+    const std::size_t room = std::min(before.size(), after.size()) - suffix;
+    std::size_t prefix = 0;
+    while (prefix < room && before[prefix] == after[prefix]) ++prefix;
+
+    std::vector<TextStyle> result;
+    result.reserve(after.size());
+    result.insert(result.end(), kept.begin(), kept.begin() + static_cast<std::ptrdiff_t>(prefix));
+    result.resize(after.size() - suffix, inserted);
+    result.insert(result.end(), kept.end() - static_cast<std::ptrdiff_t>(suffix), kept.end());
+    return result;
+}
+
+namespace {
+
+// How far, in screen pixels, from the box's edge a press still takes hold of it.
+// Only the border itself is a handle for the box, so the reach stays small.
+constexpr float kGrabReach = 2.0f;
+
+}  // namespace
+
+RectI text_box_bounds(const TextOverlayState& text) {
+    return {round_to_int(text.origin.x), round_to_int(text.origin.y), std::max(1, ceil_to_int(text.width)),
+            std::max(1, ceil_to_int(text.height))};
+}
+
+bool text_box_grabs(const TextOverlayState& text, Point2f position, float zoom) {
+    if (!text.visible) return false;
+    const RectI box = text_box_bounds(text);
+    if (handle_at(box, position, zoom)) return true;
+    const float reach = kGrabReach / std::max(zoom, 0.001f);
+    return position.x >= static_cast<float>(box.x) - reach && position.x <= static_cast<float>(box.right()) + reach &&
+           position.y >= static_cast<float>(box.y) - reach && position.y <= static_cast<float>(box.bottom()) + reach;
+}
+
 void TextTool::on_pointer_down(ToolContext& context, Point2f position, PointerButton button) {
     TextOverlayState& text = context.ui.text;
-    text.origin = position;
+    if (text.visible && text_box_grabs(text, position, context.zoom)) {
+        const RectI box = text_box_bounds(text);
+        m_start = position;
+        m_origin_before = text.origin;
+        m_bounds_before = box;
+        if (const std::optional<SelectionHandle> handle = handle_at(box, position, context.zoom)) {
+            m_drag = Drag::Resize;
+            m_handle = *handle;
+            context.ui.resize.cursor = resize_cursor_for(*handle);
+        } else {
+            m_drag = Drag::Move;
+            context.ui.move = {false, true};
+        }
+        return;
+    }
+    text = {};
+    // Whole pixels, which is where the glyphs land when they are committed.
+    text.origin = {static_cast<float>(round_to_int(position.x)), static_cast<float>(round_to_int(position.y))};
     text.color = context.colors.ink(button);
     text.visible = true;
 }
 
-void TextTool::on_deactivate(ToolContext& context) { context.ui.text = {}; }
+void TextTool::on_pointer_move(ToolContext& context, Point2f position) {
+    TextOverlayState& text = context.ui.text;
+    if (!text.visible) return;
+
+    if (m_drag == Drag::Move) {
+        text.origin = {m_origin_before.x + static_cast<float>(round_to_int(position.x - m_start.x)),
+                       m_origin_before.y + static_cast<float>(round_to_int(position.y - m_start.y))};
+        return;
+    }
+    if (m_drag == Drag::Resize) {
+        const RectI next = resized_bounds(m_bounds_before, m_handle, position, context.document.bounds());
+        text.origin = {static_cast<float>(next.x), static_cast<float>(next.y)};
+        text.width = static_cast<float>(next.width);
+        text.height = static_cast<float>(next.height);
+        text.sized = true;
+        return;
+    }
+
+    // A free pointer: show what a press would take hold of.
+    const RectI box = text_box_bounds(text);
+    const std::optional<SelectionHandle> handle = handle_at(box, position, context.zoom);
+    context.ui.resize.cursor = handle ? resize_cursor_for(*handle) : ResizeCursor::None;
+    context.ui.move.hover = !handle && text_box_grabs(text, position, context.zoom);
+}
+
+void TextTool::on_pointer_up(ToolContext& context, Point2f position) {
+    const bool dragged = m_drag != Drag::None;
+    m_drag = Drag::None;
+    context.ui.resize = {};
+    context.ui.move = {};
+    if (dragged) on_pointer_move(context, position);
+}
+
+bool TextTool::on_cancel(ToolContext& context) {
+    if (m_drag == Drag::None) return false;
+    TextOverlayState& text = context.ui.text;
+    text.origin = m_origin_before;
+    if (m_drag == Drag::Resize) {
+        text.width = static_cast<float>(m_bounds_before.width);
+        text.height = static_cast<float>(m_bounds_before.height);
+    }
+    m_drag = Drag::None;
+    context.ui.resize = {};
+    context.ui.move = {};
+    return true;
+}
+
+void TextTool::on_deactivate(ToolContext& context) {
+    m_drag = Drag::None;
+    context.ui.resize = {};
+    context.ui.move = {};
+    context.ui.text = {};
+}
 
 }  // namespace lsp

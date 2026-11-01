@@ -14,7 +14,8 @@ export component CanvasCursor inherits Rectangle {
 
     property <length> pointer-x: root.origin + root.cursor-x * root.zoom * 1px;
     property <length> pointer-y: root.origin + root.cursor-y * root.zoom * 1px;
-    property <length> reach: UserState.cursor-overlay-reach;
+    // The marks are whole device pixels, so they keep their size on any screen scale.
+    property <length> reach: UserState.cursor-overlay-reach * 1phx;
 
     width: 0px;
     height: 0px;

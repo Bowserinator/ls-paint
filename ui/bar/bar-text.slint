@@ -8,7 +8,7 @@ import { ImageButtonHorizontal } from "../components/image-buttons.slint";
 import { ColorsGroup } from "../components/colors-group.slint";
 import { ClipboardGroup } from "../components/clipboard-group.slint";
 import { StyleToggle, ValueButton } from "../components/text-controls.slint";
-import { FontStyle, UserState } from "../globals.slint";
+import { EFontToggle, FontStyle, UserState } from "../globals.slint";
 import { WinLineEdit } from "../win10.slint";
 
 // The text tool's tab. It stands in for the editing groups while that tool is
@@ -67,26 +67,26 @@ export component TextBar inherits Bar {
                         glyph: "B";
                         bold-glyph: true;
                         active: FontStyle.bold;
-                        clicked => { FontStyle.bold = !FontStyle.bold; }
+                        clicked => { FontStyle.toggle-style(EFontToggle.BOLD); }
                     }
                     StyleToggle {
                         glyph: "I";
                         glyph-family: "Times New Roman";
                         italic-glyph: true;
                         active: FontStyle.italic;
-                        clicked => { FontStyle.italic = !FontStyle.italic; }
+                        clicked => { FontStyle.toggle-style(EFontToggle.ITALIC); }
                     }
                     StyleToggle {
                         glyph: "U";
                         underline-glyph: true;
                         active: FontStyle.underline;
-                        clicked => { FontStyle.underline = !FontStyle.underline; }
+                        clicked => { FontStyle.toggle-style(EFontToggle.UNDERLINE); }
                     }
                     StyleToggle {
                         glyph: "S";
                         strike-glyph: true;
                         active: FontStyle.strike;
-                        clicked => { FontStyle.strike = !FontStyle.strike; }
+                        clicked => { FontStyle.toggle-style(EFontToggle.STRIKE); }
                     }
                 }
 

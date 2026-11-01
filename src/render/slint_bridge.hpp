@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 #include <vector>
 
 #include <slint.h>
@@ -46,6 +47,7 @@ public:
     // `wake` is called when more work is waiting, `present` when the tiles changed.
     void attach(std::function<void()> wake, std::function<void()> present);
     void upload(const PixelBuffer& source, RectI region, std::uint64_t generation);
+    void upload(const PixelBuffer& source, std::span<const RectI> regions, std::uint64_t generation);
     bool set_zoom(float zoom, float dpr);
     void set_view(const PixelBuffer& source, RectI view);
     void poll(const PixelBuffer& source);
@@ -62,5 +64,7 @@ private:
 };
 
 [[nodiscard]] slint::Image image_from(const PixelBuffer& source);
+// The part of `source` inside `region`.
+[[nodiscard]] slint::Image image_from(const PixelBuffer& source, RectI region);
 
 }  // namespace lsp

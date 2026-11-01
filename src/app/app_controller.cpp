@@ -20,11 +20,23 @@ AppController::AppController()
                 m_text_options, m_tool_ui},
       m_router(m_registry, m_context) {}
 
-void AppController::commit_text(Point2f origin, std::string_view text, Rgba8 color) {
+void AppController::commit_text(Point2f origin, std::string_view text, Rgba8 color, std::optional<RectI> box,
+                                std::span<const TextStyle> styles) {
     if (text.empty()) return;
     const LayerTarget layer = m_context.layer_target();
+    raster::Target target = layer.target();
+    SelectionMask cut;
+    if (box) {
+        // A box wholly off the paper holds nothing, and an empty mask would
+        // hold nothing back.
+        if (box->intersected(m_document.bounds()).empty()) return;
+        cut = SelectionMask(m_document.width(), m_document.height());
+        cut.fill_rect(*box);
+        cut.intersect(layer.clip);
+        target.clip = &cut;
+    }
     StrokeRecorder recorder(m_document);
-    const RectI touched = draw_text(layer.target(), origin, text, m_text_options, color);
+    const RectI touched = draw_text(target, origin, text, m_text_options, color, styles);
     if (touched.empty()) return;
     recorder.touch(touched);
     recorder.commit(m_history);

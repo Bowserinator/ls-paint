@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "config.hpp"
+#include "utils/trace.hpp"
 #include "core/color.hpp"
 #include "io/clipboard.hpp"
 #include "io/document_io.hpp"
@@ -100,6 +101,10 @@ constexpr int kMaxSkewDegrees = 89;
 // tick, so the animation is just the phase moving forward.
 constexpr int kAntSegment = 3;
 constexpr auto kAntTick = std::chrono::milliseconds(80);
+// How long a stroke may sit still before what it painted is settled into the canvas.
+constexpr auto kStrokeIdle = std::chrono::milliseconds(150);
+constexpr auto kDebugLagTick = std::chrono::milliseconds(5);
+constexpr auto kDebugPublishInterval = std::chrono::milliseconds(500);
 // The phase counts up to this before starting over.
 constexpr int kAntPhaseWrap = 1 << 20;
 // An outline longer than this many device pixels is cut down to the window,
@@ -431,6 +436,21 @@ std::vector<Point2f> turned_corners(const FloatingContents& contents) {
     return points;
 }
 
+constexpr slint::Rgba8Pixel kAntDarkPixel{0x00, 0x63, 0xe5, 0xff};
+constexpr slint::Rgba8Pixel kAntLightPixel{0xff, 0xff, 0xff, 0xff};
+
+slint::Image ant_edge_frame(bool horizontal, int length, int first_step, int sign, int phase) {
+    const int period = kAntSegment * 2;
+    const auto count = static_cast<std::uint32_t>(length);
+    slint::SharedPixelBuffer<slint::Rgba8Pixel> pixels(horizontal ? count : 1U, horizontal ? 1U : count);
+    slint::Rgba8Pixel* out = pixels.begin();
+    for (int i = 0; i < length; ++i) {
+        const int offset = (((first_step + sign * i - phase) % period) + period) % period;
+        out[i] = offset < kAntSegment ? kAntDarkPixel : kAntLightPixel;
+    }
+    return slint::Image(std::move(pixels));
+}
+
 }  // namespace
 
 UiState::UiState(AppWindow& window, AppController& controller)
@@ -438,6 +458,10 @@ UiState::UiState(AppWindow& window, AppController& controller)
       m_controller(controller) {
     m_canvas_tiles = std::make_shared<slint::VectorModel<CanvasTile>>();
     m_window.set_canvas_tiles(m_canvas_tiles);
+    m_stroke_patches = std::make_shared<slint::VectorModel<StrokePatch>>();
+    m_window.set_stroke_patches(m_stroke_patches);
+    m_ant_edge_model = std::make_shared<slint::VectorModel<SelectionEdge>>();
+    m_window.global<DocumentState>().set_ants_edges(m_ant_edge_model);
     m_bridge.attach([this] { update_canvas(); }, [this] { publish_canvas(); });
     const auto show_view = [this](const ViewArea& area) {
         apply_zoom(m_window.global<UserState>().get_zoom());
@@ -477,6 +501,16 @@ UiState::UiState(AppWindow& window, AppController& controller)
         publish_text_preview(std::string_view(text));
     });
 
+    m_window.global<FontStyle>().on_toggle_style([this](EFontToggle toggle) { do_toggle_style(toggle); });
+    m_window.global<TextOverlay>().on_recolor([this](const slint::Color& color) { do_recolor_text(color); });
+    m_window.global<TextOverlay>().on_edge_left([this] {
+        // A drag keeps the pointer it started with.
+        if (m_controller.input().active()) return;
+        m_controller.tool_ui().resize = {};
+        m_controller.tool_ui().move = {};
+        refresh();
+    });
+
     m_window.global<FontStyle>().on_filter_families([this](const slint::SharedString& query) {
         publish_font_families(std::string_view(query));
     });
@@ -489,9 +523,10 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
     m_window.global<UserState>().on_pointer_down([this](float x, float y, bool secondary) {
         const auto& state = m_window.global<UserState>();
-        // A click anywhere else closes an open text box first; the press that
-        // dismissed it still reaches its tool.
-        if (text_open()) do_commit_text(std::string(m_window.global<TextOverlay>().get_content()));
+        // A press on the open text box's edge or grips works the box; a press
+        // anywhere else closes it first and still reaches its tool.
+        if (text_open() && !text_box_grabs(m_controller.tool_ui().text, {x, y}, state.get_zoom()))
+            do_commit_text(std::string(m_window.global<TextOverlay>().get_content()));
         sync_colors();
         sync_shape_style();
         auto& tool_options = m_window.global<ToolOptions>();
@@ -519,6 +554,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
         m_controller.context().zoom = m_window.global<UserState>().get_zoom();
         m_controller.input().pointer_down(tool, {x, y}, button_from(secondary));
+        if (m_debug) m_debug_stats.stroke_begin(now, {x, y});
         if (double_click) m_controller.input().double_click(tool);
 
         const ColorPair& colors = m_controller.colors();
@@ -531,14 +567,23 @@ UiState::UiState(AppWindow& window, AppController& controller)
 
     m_window.global<UserState>().on_pointer_move([this](float x, float y, bool shift) {
         m_controller.context().zoom = m_window.global<UserState>().get_zoom();
+        const DebugStats::Clock::time_point handler_began =
+            m_debug ? DebugStats::Clock::now() : DebugStats::Clock::time_point{};
         m_controller.input().pointer_move(
             tool_from_slint(m_window.global<UserState>().get_selected_tool()), {x, y}, shift);
-        refresh();
+        if (m_debug) m_debug_stats.pointer_event(handler_began, DebugStats::Clock::now(), {x, y});
+        // Moving over the paper with a stroke tool and no stroke under way
+        // changes nothing but the pointer's marks and the colour readout.
+        const ToolId moved_tool = tool_from_slint(m_window.global<UserState>().get_selected_tool());
+        const bool stroke_tool = moved_tool == ToolId::Pencil || moved_tool == ToolId::Brush ||
+                                 moved_tool == ToolId::Eraser;
+        refresh_throttled(stroke_tool && !m_controller.input().active() && moved_tool == m_last_tool);
     });
 
     m_window.global<UserState>().on_pointer_up([this](float x, float y, bool secondary) {
         m_controller.context().zoom = m_window.global<UserState>().get_zoom();
         m_controller.input().pointer_up({x, y}, button_from(secondary));
+        if (m_debug) m_debug_stats.stroke_end(DebugStats::Clock::now(), {x, y});
         refresh();
     });
 
@@ -697,6 +742,7 @@ UiState::UiState(AppWindow& window, AppController& controller)
     m_settings = std::make_unique<SQLiteStore>(default_store_path());
     load_settings();
     apply_zoom(m_window.global<UserState>().get_zoom());
+    start_debug();
     m_settings_timer.start(slint::TimerMode::Repeated, std::chrono::seconds(1),
                            [this] { watch_settings(); });
 }
@@ -769,17 +815,65 @@ void UiState::apply_zoom(float zoom) {
     m_bridge.poll(m_controller.document().flattened());
 }
 
-UiState::~UiState() { m_bridge.shutdown(); }
+UiState::~UiState() {
+    if (debug_stats_sink() == &m_debug_stats) debug_stats_sink() = nullptr;
+    m_bridge.shutdown();
+}
 
 void UiState::update_canvas() {
     CanvasDocument& document = m_controller.document();
-    if (const auto dirty = document.flush())
-        m_bridge.upload(document.flattened(), *dirty, document.generation());
-    else
-        m_bridge.poll(document.flattened());
+    std::optional<RectI> dirty;
+    {
+        const ScopedPhase flushing(Phase::Flush);
+        dirty = document.flush();
+    }
+    if (dirty) ++m_paper_serial;
+    const bool live = live_stroke();
+    if (dirty && live) {
+        show_stroke_edit(document.flattened(), *dirty);
+        dirty.reset();
+    }
+    const bool full = m_stroke_patches->row_count() >= kStrokeOverlayMaxPictures ||
+                      m_stroke_pixels >= kStrokeOverlayMaxPixels;
+    if (!live || full) {
+        if (dirty) m_stroke_edits.push_back(*dirty);
+        if (!m_stroke_edits.empty()) {
+            settle_stroke();
+            return;
+        }
+    }
+    m_bridge.poll(document.flattened());
+}
+
+bool UiState::live_stroke() {
+    if (!m_controller.input().active()) return false;
+    const ToolId tool = tool_from_slint(m_window.global<UserState>().get_selected_tool());
+    return tool == ToolId::Pencil || tool == ToolId::Brush || tool == ToolId::Eraser;
+}
+
+void UiState::show_stroke_edit(const PixelBuffer& paper, RectI region) {
+    region = region.intersected(paper.bounds());
+    if (region.empty()) return;
+    m_stroke_patches->push_back(
+        StrokePatch{image_from(paper, region), static_cast<float>(region.x), static_cast<float>(region.y)});
+    m_stroke_edits.push_back(region);
+    m_stroke_pixels += static_cast<std::size_t>(region.width) * static_cast<std::size_t>(region.height);
+    m_stroke_idle_timer.start(slint::TimerMode::SingleShot, kStrokeIdle, [this] { settle_stroke(); });
+}
+
+void UiState::settle_stroke() {
+    m_stroke_idle_timer.stop();
+    if (m_stroke_edits.empty()) return;
+    const std::vector<RectI> edits = std::move(m_stroke_edits);
+    m_stroke_edits.clear();
+    m_stroke_pixels = 0;
+    CanvasDocument& document = m_controller.document();
+    m_bridge.upload(document.flattened(), edits, document.generation());
+    m_stroke_patches->clear();
 }
 
 void UiState::publish_canvas() {
+    const ScopedPhase timing(Phase::Rows);
     const CanvasPresentation& picture = m_bridge.presentation();
     const auto row_of = [](const TilePlacement& tile) {
         CanvasTile row;
@@ -799,6 +893,7 @@ void UiState::publish_canvas() {
     };
     for (std::size_t i = 0; i < picture.tiles.size(); ++i) {
         if (i < m_canvas_shown.size() && same_picture(picture.tiles[i], m_canvas_shown[i])) continue;
+        trace::bump(trace::TileRow);
         if (i < m_canvas_tiles->row_count())
             m_canvas_tiles->set_row_data(i, row_of(picture.tiles[i]));
         else
@@ -889,7 +984,55 @@ void UiState::save_settings() {
     m_colors_dirty = false;
 }
 
+void UiState::start_debug() {
+    m_debug = trace::debug_enabled();
+    if (!m_debug) return;
+    m_window.global<DebugState>().set_enabled(true);
+    debug_stats_sink() = &m_debug_stats;
+    m_debug_totals_at = DebugStats::Clock::now();
+    m_lag_expected = m_debug_totals_at + kDebugLagTick;
+    m_lag_timer.start(slint::TimerMode::Repeated, kDebugLagTick, [this] {
+        const DebugStats::Clock::time_point now = DebugStats::Clock::now();
+        if (now > m_lag_expected) m_debug_stats.loop_lag(now - m_lag_expected);
+        m_lag_expected = now + kDebugLagTick;
+    });
+    m_debug_timer.start(slint::TimerMode::Repeated, kDebugPublishInterval, [this] { publish_debug(); });
+    publish_debug();
+}
+
+void UiState::publish_debug() {
+    const DebugStats::Clock::time_point now = DebugStats::Clock::now();
+    std::string text = m_debug_stats.report(now);
+    const double seconds = std::max(0.001, std::chrono::duration<double>(now - m_debug_totals_at).count());
+    unsigned delta[trace::CounterCount] = {};
+    for (int i = 0; i < static_cast<int>(trace::CounterCount); ++i) {
+        delta[i] = trace::totals[i] - m_debug_totals[i];
+        m_debug_totals[i] = trace::totals[i];
+    }
+    m_debug_totals_at = now;
+
+    const UserState& user = m_window.global<UserState>();
+    const DocumentState& document = m_window.global<DocumentState>();
+    char line[200];
+    std::snprintf(line, sizeof line, "updates  full %.0f/s  hover %.0f/s\n", delta[trace::Refresh] / seconds,
+                  delta[trace::Hover] / seconds);
+    text += line;
+    std::snprintf(line, sizeof line, "upload   tile img %.0f/s  rows %.0f/s  overlay %.0f/s\n",
+                  delta[trace::TileImage] / seconds, delta[trace::TileRow] / seconds,
+                  delta[trace::OverlayImage] / seconds);
+    text += line;
+    std::snprintf(line, sizeof line, "canvas   %dx%d  zoom %.2f  dpr %.2f\n", document.get_canvas_width(),
+                  document.get_canvas_height(), static_cast<double>(user.get_zoom()),
+                  static_cast<double>(m_bridge.device_ratio()));
+    text += line;
+    std::snprintf(line, sizeof line, "tiles    shown %zu  cache %.1f MB", m_canvas_shown.size(),
+                  static_cast<double>(m_bridge.cache_bytes()) / (1024.0 * 1024.0));
+    text += line;
+    m_window.global<DebugState>().set_text(slint::SharedString(text));
+}
+
 void UiState::watch_settings() {
+    trace::report();
     if (!m_settings) return;
     if (current_settings() != m_stored_settings || m_colors_dirty) save_settings();
 }
@@ -1271,11 +1414,34 @@ void UiState::publish_text_preview(std::string_view text) {
     const Rgba8 color = m_controller.tool_ui().text.color;
     auto& overlay = m_window.global<TextOverlay>();
     const int cursor = overlay.get_cursor();
+    const ByteRange selection{static_cast<std::size_t>(std::max(overlay.get_selection_start(), 0)),
+                              static_cast<std::size_t>(std::max(overlay.get_selection_end(), 0))};
+
+    // Typing hands the box back to the text: it measures itself again, and what
+    // was typed takes the style the buttons show.
+    TextOverlayState& box = m_controller.tool_ui().text;
+    const TextStyle typing{options.bold, options.italic, options.underline, options.strikethrough, box.color};
+    if (text != m_text_last) {
+        box.styles = restyled_after_edit(m_text_last, text, box.styles, typing,
+                                         static_cast<std::size_t>(std::max(cursor, 0)));
+        m_text_last = std::string(text);
+        box.sized = false;
+    }
+    box.styles.resize(text.size(), typing);
+    show_text_style();
+    if (!box.sized) {
+        box.width = m_text_auto_width;
+        box.height = m_text_auto_height;
+    }
+    overlay.set_box_width(box.width);
+    overlay.set_box_height(box.height);
+    overlay.set_sized(box.sized);
 
     // Drawing the text is the expensive part, so it is only redone when
     // something it depends on has changed.
     std::string key = options.family;
     key += '|' + std::to_string(options.size) + '|' + std::to_string(cursor);
+    key += '|' + std::to_string(selection.begin) + ',' + std::to_string(selection.end);
     key += options.bold ? 'b' : '-';
     key += options.italic ? 'i' : '-';
     key += options.underline ? 'u' : '-';
@@ -1287,14 +1453,29 @@ void UiState::publish_text_preview(std::string_view text) {
            std::to_string(options.background.b) + ',' + std::to_string(options.background.a);
     key += '|';
     key += text;
+    key += '|';
+    for (const TextStyle& style : box.styles) {
+        key += static_cast<char>('0' + (style.bold ? 1 : 0) + (style.italic ? 2 : 0) + (style.underline ? 4 : 0) +
+                                 (style.strikethrough ? 8 : 0));
+        key += {static_cast<char>(style.color.r), static_cast<char>(style.color.g),
+                static_cast<char>(style.color.b), static_cast<char>(style.color.a)};
+    }
     if (key == m_text_preview_key) return;
     m_text_preview_key = std::move(key);
 
-    const TextPreview preview = render_text_preview(text, options, color);
+    const TextPreview preview = render_text_preview(text, options, color, box.styles, selection);
     overlay.set_preview(preview.pixels.width() > 0 ? image_from(preview.pixels) : slint::Image());
     overlay.set_preview_margin(static_cast<float>(preview.margin));
-    overlay.set_box_width(static_cast<float>(preview.width));
-    overlay.set_box_height(static_cast<float>(preview.height));
+    m_text_auto_width = static_cast<float>(preview.width);
+    m_text_auto_height = static_cast<float>(preview.height);
+    overlay.set_text_width(m_text_auto_width);
+    overlay.set_text_height(m_text_auto_height);
+    if (!box.sized) {
+        box.width = m_text_auto_width;
+        box.height = m_text_auto_height;
+        overlay.set_box_width(box.width);
+        overlay.set_box_height(box.height);
+    }
 
     const TextCaret caret = text_caret(text, static_cast<std::size_t>(std::max(cursor, 0)), options);
     overlay.set_caret_x(static_cast<float>(caret.x));
@@ -1308,9 +1489,16 @@ void UiState::publish_hover_color() {
     const int x = floor_to_int(state.get_cursor_x());
     const int y = floor_to_int(state.get_cursor_y());
     if (!state.get_cursor_on_canvas() || !paper.contains(x, y)) {
-        state.set_hover_color_text(slint::SharedString());
+        if (m_hover_valid) state.set_hover_color_text(slint::SharedString());
+        m_hover_valid = false;
         return;
     }
+    // The readout only changes with the pixel under the pointer or the paper.
+    if (m_hover_valid && x == m_hover_x && y == m_hover_y && m_hover_serial == m_paper_serial) return;
+    m_hover_valid = true;
+    m_hover_x = x;
+    m_hover_y = y;
+    m_hover_serial = m_paper_serial;
 
     const Rgba8 pixel = paper.at(x, y);
     // The readout is upper case, the way Paint prints a colour.
@@ -1322,8 +1510,12 @@ void UiState::publish_hover_color() {
 void UiState::publish_cursor_overlay() {
     auto& state = m_window.global<UserState>();
     if (!state.get_cursor_on_canvas()) {
-        state.set_cursor_overlay(slint::Image());
-        state.set_cursor_overlay_reach(0.0F);
+        if (m_overlay_reach != 0) {
+            state.set_cursor_overlay(slint::Image());
+            state.set_cursor_overlay_reach(0.0F);
+        }
+        m_overlay_reach = 0;
+        m_overlay_pixels = PixelBuffer();
         return;
     }
 
@@ -1333,9 +1525,11 @@ void UiState::publish_cursor_overlay() {
     const bool brush_tool =
         tool == ETool::BRUSH || tool == ETool::PENCIL || tool == ETool::ERASER;
     const EBrushKind kind = tool == ETool::BRUSH ? options.get_brush_kind() : EBrushKind::BRUSH;
-    const float zoom = state.get_zoom();
+    // The marks are drawn in device pixels, so the tip scales with the screen
+    // and the crosshair does not.
+    const float zoom = state.get_zoom() * m_bridge.device_ratio();
     const int size = std::max(1, round_to_int(options.get_brush_size()));
-    // The tip is the brush size at the view's zoom, across in screen pixels.
+    // The tip is the brush size at the view's zoom, across in device pixels.
     const float length = static_cast<float>(size) * zoom;
     // The engine stamps an odd tip on a pixel and an even one on a pixel corner.
     const float tip_x = size % 2 == 1 ? std::floor(state.get_cursor_x()) + 0.5F
@@ -1357,12 +1551,18 @@ void UiState::publish_cursor_overlay() {
     shape.tip.rotation_degrees = kind == EBrushKind::CALLIGRAPHY1   ? 45.0F
                                  : kind == EBrushKind::CALLIGRAPHY2 ? -45.0F
                                                                     : 0.0F;
-    // Below sixteen screen pixels across, the tip is too small to find by its
+    // Below sixteen device pixels across, the tip is too small to find by its
     // outline alone.
     shape.crosshair = !brush_tool || length < 16.0F;
 
     const CursorOverlay overlay =
         render_cursor_overlay(m_controller.document().flattened(), shape, kCanvasViewColor);
+    // Over plain paper the marks come out the same at every step, and a new
+    // image would only be copied and uploaded to look like the old one.
+    if (overlay.reach == m_overlay_reach && (overlay.reach == 0 || overlay.pixels == m_overlay_pixels)) return;
+    m_overlay_reach = overlay.reach;
+    m_overlay_pixels = overlay.pixels;
+    trace::bump(trace::OverlayImage);
     state.set_cursor_overlay(overlay.reach > 0 ? image_from(overlay.pixels) : slint::Image());
     state.set_cursor_overlay_reach(static_cast<float>(overlay.reach));
 }
@@ -1383,14 +1583,20 @@ void UiState::sync_font_style() {
 bool UiState::text_open() const noexcept { return m_controller.tool_ui().text.visible; }
 
 void UiState::do_commit_text(const std::string& text) {
+    if (!text_open()) return;
+    // The styles are brought up to date with the text that is being committed.
+    publish_text_preview(text);
     const TextOverlayState state = m_controller.tool_ui().text;
-    if (!state.visible) return;
     // Close the box first: an empty commit then leaves nothing behind, and the
     // overlay cannot come back when refresh() republishes the tool state.
     m_controller.input().deactivate(ToolId::Text);
-    if (!text.empty()) {
+    if (text.empty()) {
+        report_text_cancelled();
+    } else {
         sync_font_style();
-        m_controller.commit_text(state.origin, text, state.color);
+        m_controller.commit_text(state.origin, text, state.color,
+                                 state.sized ? std::optional<RectI>(text_box_bounds(state)) : std::nullopt,
+                                 state.styles);
     }
     // The commit both wrote pixels and closed the box, so push them out now
     // instead of waiting for whatever event comes next.
@@ -1402,11 +1608,159 @@ void UiState::do_cancel_text() {
     // Close the box and drop what was typed: nothing reaches the paper.
     m_controller.input().deactivate(ToolId::Text);
     m_window.global<TextOverlay>().set_content(slint::SharedString());
+    report_text_cancelled();
     refresh();
 }
 
+void UiState::report_text_cancelled() {
+    auto& overlay = m_window.global<TextOverlay>();
+    overlay.set_cancel_count(overlay.get_cancel_count() + 1);
+}
+
+std::pair<std::size_t, std::size_t> UiState::text_selection() const {
+    const auto& overlay = m_window.global<TextOverlay>();
+    const std::size_t size = m_controller.tool_ui().text.styles.size();
+    const std::size_t begin = std::min(static_cast<std::size_t>(std::max(overlay.get_selection_start(), 0)), size);
+    const std::size_t end = std::min(static_cast<std::size_t>(std::max(overlay.get_selection_end(), 0)), size);
+    return {begin, std::max(begin, end)};
+}
+
+void UiState::do_toggle_style(EFontToggle toggle) {
+    auto& font = m_window.global<FontStyle>();
+    bool TextStyle::*member = &TextStyle::bold;
+    bool shown = font.get_bold();
+    switch (toggle) {
+        case EFontToggle::BOLD: break;
+        case EFontToggle::ITALIC:
+            member = &TextStyle::italic;
+            shown = font.get_italic();
+            break;
+        case EFontToggle::UNDERLINE:
+            member = &TextStyle::underline;
+            shown = font.get_underline();
+            break;
+        case EFontToggle::STRIKE:
+            member = &TextStyle::strikethrough;
+            shown = font.get_strike();
+            break;
+    }
+
+    bool value = !shown;
+    if (text_open()) {
+        publish_text_preview(std::string_view(m_window.global<TextOverlay>().get_content()));
+        std::vector<TextStyle>& styles = m_controller.tool_ui().text.styles;
+        auto [begin, end] = text_selection();
+        const bool selected = begin < end;
+        if (!selected) {
+            begin = 0;
+            end = styles.size();
+        }
+        // A selection that already has the style loses it.
+        if (selected) {
+            value = !std::all_of(styles.begin() + static_cast<std::ptrdiff_t>(begin),
+                                 styles.begin() + static_cast<std::ptrdiff_t>(end),
+                                 [member](const TextStyle& style) { return style.*member; });
+        }
+        for (std::size_t i = begin; i < end; ++i) styles[i].*member = value;
+    }
+
+    switch (toggle) {
+        case EFontToggle::BOLD: font.set_bold(value); break;
+        case EFontToggle::ITALIC: font.set_italic(value); break;
+        case EFontToggle::UNDERLINE: font.set_underline(value); break;
+        case EFontToggle::STRIKE: font.set_strike(value); break;
+    }
+    refresh();
+}
+
+void UiState::do_recolor_text(const slint::Color& color) {
+    if (!text_open()) return;
+    publish_text_preview(std::string_view(m_window.global<TextOverlay>().get_content()));
+    TextOverlayState& box = m_controller.tool_ui().text;
+    auto [begin, end] = text_selection();
+    if (begin == end) {
+        begin = 0;
+        end = box.styles.size();
+    }
+    const Rgba8 ink = to_rgba(color);
+    for (std::size_t i = begin; i < end; ++i) box.styles[i].color = ink;
+    box.color = ink;
+    refresh();
+}
+
+void UiState::show_text_style() {
+    TextOverlayState& box = m_controller.tool_ui().text;
+    if (!box.visible || box.styles.empty()) return;
+    auto& font = m_window.global<FontStyle>();
+    const auto [begin, end] = text_selection();
+    if (begin < end) {
+        const auto first = box.styles.begin() + static_cast<std::ptrdiff_t>(begin);
+        const auto last = box.styles.begin() + static_cast<std::ptrdiff_t>(end);
+        const auto all = [first, last](bool TextStyle::*member) {
+            return std::all_of(first, last, [member](const TextStyle& style) { return style.*member; });
+        };
+        font.set_bold(all(&TextStyle::bold));
+        font.set_italic(all(&TextStyle::italic));
+        font.set_underline(all(&TextStyle::underline));
+        font.set_strike(all(&TextStyle::strikethrough));
+        return;
+    }
+    const std::size_t caret = static_cast<std::size_t>(std::max(m_window.global<TextOverlay>().get_cursor(), 0));
+    if (caret == 0 || caret > box.styles.size()) return;
+    const TextStyle& before = box.styles[caret - 1];
+    font.set_bold(before.bold);
+    font.set_italic(before.italic);
+    font.set_underline(before.underline);
+    font.set_strike(before.strikethrough);
+    box.color = before.color;
+}
+
+void UiState::refresh_hover() {
+    const ScopedRefreshTimer timing(m_debug ? &m_debug_stats : nullptr);
+    trace::bump(trace::Hover);
+    m_move_pending = false;
+    m_move_timer.stop();
+    m_last_refresh = std::chrono::steady_clock::now();
+    {
+        const ScopedPhase cursor(Phase::Cursor);
+        publish_hover_color();
+        publish_cursor_overlay();
+    }
+}
+
+void UiState::refresh_move() {
+    if (m_move_hover_only)
+        refresh_hover();
+    else
+        refresh();
+}
+
+void UiState::refresh_throttled(bool hover_only) {
+    const auto interval = std::chrono::milliseconds(kMinUpdateDebounceForMouseMoveMs);
+    const auto now = std::chrono::steady_clock::now();
+    m_move_hover_only = m_move_pending ? m_move_hover_only && hover_only : hover_only;
+    if (m_move_pending) return;
+    if (now - m_last_refresh >= interval) {
+        refresh_move();
+        return;
+    }
+    m_move_pending = true;
+    m_move_timer.start(slint::TimerMode::SingleShot,
+        std::chrono::ceil<std::chrono::milliseconds>(interval - (now - m_last_refresh)), [this] {
+        if (m_move_pending) refresh_move();
+    });
+}
+
 void UiState::refresh() {
-    apply_zoom(m_window.global<UserState>().get_zoom());
+    const ScopedRefreshTimer timing(m_debug ? &m_debug_stats : nullptr);
+    trace::bump(trace::Refresh);
+    m_move_pending = false;
+    m_move_timer.stop();
+    m_last_refresh = std::chrono::steady_clock::now();
+    {
+        const ScopedPhase zooming(Phase::Zoom);
+        apply_zoom(m_window.global<UserState>().get_zoom());
+    }
     CanvasDocument& document = m_controller.document();
     // The background color can change at any time, and the transparent
     // selection follows it.
@@ -1429,8 +1783,11 @@ void UiState::refresh() {
     state.set_selection_width(bounds.width);
     state.set_selection_height(bounds.height);
 
-    publish_hover_color();
-    publish_cursor_overlay();
+    {
+        const ScopedPhase cursor(Phase::Cursor);
+        publish_hover_color();
+        publish_cursor_overlay();
+    }
 
     // A tool that is left while it holds a gesture has to release it: nothing
     // else tells the shape tool that its polygon will never be finished.
@@ -1443,35 +1800,132 @@ void UiState::refresh() {
         m_last_tool = tool;
     }
 
-    const ShapePreview& preview = m_controller.tool_ui().shape;
-    auto& overlay = m_window.global<ShapeOverlay>();
-    overlay.set_visible(preview.visible);
-    // The image is only rebuilt when the tool has painted a new one.
-    if (preview.revision != m_shape_preview_revision) {
-        m_shape_preview_revision = preview.revision;
-        overlay.set_preview(preview.pixels.width() > 0 ? image_from(preview.pixels) : slint::Image());
-        overlay.set_x(static_cast<float>(preview.region.x));
-        overlay.set_y(static_cast<float>(preview.region.y));
+    {
+        const ScopedPhase previewing(Phase::Preview);
+        const ShapePreview& preview = m_controller.tool_ui().shape;
+        auto& overlay = m_window.global<ShapeOverlay>();
+        overlay.set_visible(preview.visible);
+        // The image is only rebuilt when the tool has painted a new one.
+        if (preview.revision != m_shape_preview_revision) {
+            m_shape_preview_revision = preview.revision;
+            overlay.set_preview(preview.pixels.width() > 0 ? image_from(preview.pixels) : slint::Image());
+            overlay.set_x(static_cast<float>(preview.region.x));
+            overlay.set_y(static_cast<float>(preview.region.y));
+        }
+
+        const TextOverlayState& text = m_controller.tool_ui().text;
+        auto& text_box = m_window.global<TextOverlay>();
+        text_box.set_visible(text.visible);
+        // A box that has just opened starts empty; after that the editor owns it.
+        if (text.visible && !m_text_was_visible) text_box.set_content(slint::SharedString());
+        m_text_was_visible = text.visible;
+        text_box.set_x(text.origin.x);
+        text_box.set_y(text.origin.y);
+        text_box.set_color(to_slint(text.color));
+        // A box that has just opened has nothing to draw yet, and one that has
+        // closed must not keep the last box's.
+        publish_text_preview(text.visible ? std::string_view(text_box.get_content()) : std::string_view{});
     }
 
-    const TextOverlayState& text = m_controller.tool_ui().text;
-    auto& text_box = m_window.global<TextOverlay>();
-    text_box.set_visible(text.visible);
-    // A box that has just opened starts empty; after that the editor owns it.
-    if (text.visible && !m_text_was_visible) text_box.set_content(slint::SharedString());
-    m_text_was_visible = text.visible;
-    text_box.set_x(text.origin.x);
-    text_box.set_y(text.origin.y);
-    text_box.set_color(to_slint(text.color));
-    // A box that has just opened has nothing to draw yet, and one that has
-    // closed must not keep the last box's.
-    publish_text_preview(text.visible ? std::string_view(text_box.get_content()) : std::string_view{});
-
-    set_title();
+    {
+        const ScopedPhase titling(Phase::Title);
+        set_title();
+    }
     update_ants();
 }
 
+void UiState::publish_grips(std::vector<SelectionGrip> grips) {
+    if (m_grips && m_grips->row_count() == grips.size()) {
+        for (std::size_t i = 0; i < grips.size(); ++i) {
+            if (!(m_grips->row_data(i) == grips[i])) m_grips->set_row_data(i, grips[i]);
+        }
+        return;
+    }
+    m_grips = std::make_shared<slint::VectorModel<SelectionGrip>>(std::move(grips));
+    m_window.global<DocumentState>().set_grips(m_grips);
+}
+
+void UiState::clear_ant_dashes() {
+    if (!m_ants_dashes_shown) return;
+    m_ants_dashes_shown = false;
+    m_ants_key.clear();
+    auto& state = m_window.global<DocumentState>();
+    state.set_ants_dark(std::make_shared<slint::VectorModel<SelectionDash>>(std::vector<SelectionDash>{}));
+    state.set_ants_light(std::make_shared<slint::VectorModel<SelectionDash>>(std::vector<SelectionDash>{}));
+}
+
+void UiState::clear_ant_edges() {
+    m_ant_edges.clear();
+    m_ant_edges_key.clear();
+    m_ant_edges_phase = -1;
+    if (m_ant_edge_model->row_count() == 0) return;
+    m_ant_edge_model = std::make_shared<slint::VectorModel<SelectionEdge>>();
+    m_window.global<DocumentState>().set_ants_edges(m_ant_edge_model);
+}
+
+void UiState::publish_ant_edges(const RectI& box, const std::optional<RectI>& clip) {
+    std::vector<int> key{box.x, box.y, box.width, box.height};
+    if (clip) key.insert(key.end(), {clip->x, clip->y, clip->width, clip->height});
+    if (key != m_ant_edges_key) {
+        m_ant_edges_key = std::move(key);
+        m_ant_edges.clear();
+        const int left = box.x;
+        const int top = box.y;
+        const int right = box.right() - 1;
+        const int bottom = box.bottom() - 1;
+        const int across = right - left;
+        const int down = bottom - top;
+        const auto add = [&](bool horizontal, int lane, int start, int count, int base, int sign) {
+            int low = start;
+            int high = start + count;
+            if (clip) {
+                const int lane_low = horizontal ? clip->y : clip->x;
+                const int lane_high = horizontal ? clip->bottom() : clip->right();
+                if (lane < lane_low || lane >= lane_high) return;
+                low = std::max(low, horizontal ? clip->x : clip->y);
+                high = std::min(high, horizontal ? clip->right() : clip->bottom());
+            }
+            if (high <= low) return;
+            AntEdge edge;
+            edge.horizontal = horizontal;
+            edge.x = horizontal ? low : lane;
+            edge.y = horizontal ? lane : low;
+            edge.length = high - low;
+            edge.first_step = base + sign * (low - start);
+            edge.sign = sign;
+            edge.frames.resize(static_cast<std::size_t>(kAntSegment) * 2);
+            m_ant_edges.push_back(std::move(edge));
+        };
+        add(true, top, left, across, 0, 1);
+        add(false, right, top, down, across, 1);
+        add(true, bottom, left + 1, across, 2 * across + down - 1, -1);
+        add(false, left, top + 1, down, 2 * across + 2 * down - 1, -1);
+        m_ant_edges_phase = -1;
+    }
+
+    const int phase = m_ant_phase % (kAntSegment * 2);
+    if (phase == m_ant_edges_phase) return;
+    m_ant_edges_phase = phase;
+
+    std::vector<SelectionEdge> rows;
+    rows.reserve(m_ant_edges.size());
+    for (AntEdge& edge : m_ant_edges) {
+        std::optional<slint::Image>& frame = edge.frames[static_cast<std::size_t>(phase)];
+        if (!frame) frame = ant_edge_frame(edge.horizontal, edge.length, edge.first_step, edge.sign, phase);
+        const float length = static_cast<float>(edge.length);
+        rows.push_back({*frame, static_cast<float>(edge.x), static_cast<float>(edge.y),
+                        edge.horizontal ? length : 1.0f, edge.horizontal ? 1.0f : length});
+    }
+    if (m_ant_edge_model->row_count() == rows.size()) {
+        for (std::size_t i = 0; i < rows.size(); ++i) m_ant_edge_model->set_row_data(i, rows[i]);
+        return;
+    }
+    m_ant_edge_model = std::make_shared<slint::VectorModel<SelectionEdge>>(std::move(rows));
+    m_window.global<DocumentState>().set_ants_edges(m_ant_edge_model);
+}
+
 void UiState::update_ants() {
+    const ScopedPhase timing(Phase::Ants);
     auto& state = m_window.global<DocumentState>();
     CanvasDocument& document = m_controller.document();
     const SelectionMask& selection = document.selection();
@@ -1482,25 +1936,56 @@ void UiState::update_ants() {
     const SelectionPreview& preview = m_controller.tool_ui().selection;
     const bool drawing = preview.points.size() >= 2;
 
-    // The grip pointer only makes sense while there is a selection to grip.
-    const bool gripping = visible && m_window.global<UserState>().get_selected_tool() == ETool::SELECTION;
+    // The grip pointer only makes sense while there is a selection or an open
+    // text box to grip.
+    const ETool tool = m_window.global<UserState>().get_selected_tool();
+    const TextOverlayState& text = m_controller.tool_ui().text;
+    const bool text_gripped = text.visible && tool == ETool::TEXT;
+    const bool gripping = (visible && tool == ETool::SELECTION) || text_gripped;
     auto& resize_state = m_window.global<ResizeOverlay>();
     const EResizeCursor resize_cursor =
         gripping ? resize_cursor_to_slint(m_controller.tool_ui().resize.cursor) : EResizeCursor::NONE;
     if (resize_state.get_cursor() != resize_cursor) resize_state.set_cursor(resize_cursor);
+
+    // The pointer over something a drag would move. Written only when it
+    // changes: this runs on a timer.
+    const MovePreview& move = m_controller.tool_ui().move;
+    if (move.hover != m_move_hover || move.dragging != m_move_active) {
+        m_move_hover = move.hover;
+        m_move_active = move.dragging;
+        auto& overlay = m_window.global<MoveOverlay>();
+        overlay.set_hover(move.hover);
+        overlay.set_dragging(move.dragging);
+    }
+
+    // The text box's grips, in device pixels like the selection's.
+    std::vector<SelectionGrip> text_grips;
+    std::vector<float> text_grips_key;
+    if (text_gripped) {
+        const RectI box = text_box_bounds(text);
+        const float device_scale = m_window.global<UserState>().get_zoom() * m_bridge.device_ratio();
+        const bool dragging = m_controller.input().active();
+        if (dragging || (box.width >= kMinHandleSpan && box.height >= kMinHandleSpan)) {
+            text_grips = grip_centres(box, device_scale);
+            text_grips_key = {static_cast<float>(box.x), static_cast<float>(box.y), static_cast<float>(box.width),
+                              static_cast<float>(box.height), device_scale};
+        }
+    }
 
     if (!visible && !drawing) {
         // Written only when a selection actually disappears: this runs on a
         // timer, and assigning fresh models every tick would repaint forever.
         if (m_ants_visible) {
             m_ants_visible = false;
-            state.set_ants_dark(
-                std::make_shared<slint::VectorModel<SelectionDash>>(std::vector<SelectionDash>{}));
-            state.set_ants_light(
-                std::make_shared<slint::VectorModel<SelectionDash>>(std::vector<SelectionDash>{}));
-            state.set_grips(
-                std::make_shared<slint::VectorModel<SelectionGrip>>(std::vector<SelectionGrip>{}));
+            clear_ant_dashes();
+            clear_ant_edges();
             m_ants_key.clear();
+            // The selection's grips go with it.
+            m_text_grips_key = {-1.0f};
+        }
+        if (text_grips_key != m_text_grips_key) {
+            m_text_grips_key = text_grips_key;
+            publish_grips(std::move(text_grips));
         }
         return;
     }
@@ -1518,6 +2003,7 @@ void UiState::update_ants() {
         bool closed = false;
     };
     std::vector<Outline> outlines;
+    bool upright = false;
     if (visible) {
         // A turned float is not the box its mask holds, so its outline follows
         // the shape its contents cover.
@@ -1526,6 +2012,7 @@ void UiState::update_ants() {
             outlines.push_back({scaled(turned_corners(*floating), scale), false});
         } else {
             outlines.push_back({border_outline(bounds, scale), true});
+            upright = true;
         }
     }
     if (drawing) outlines.push_back({scaled(preview.points, scale), false});
@@ -1547,35 +2034,47 @@ void UiState::update_ants() {
                      ceil_to_int(view.height * scale) + 2 * kAntClipMargin};
     }
 
-    // A pointer event asks for the outline too, and most of the time nothing
-    // about it has changed since the last tick.
-    std::vector<float> key{static_cast<float>(m_ant_phase), static_cast<float>(segment)};
-    if (clip) key.insert(key.end(), {float(clip->x), float(clip->y), float(clip->width), float(clip->height)});
-    for (const Outline& outline : outlines) {
-        key.push_back(outline.closed ? 1.0f : 0.0f);
-        for (const Point2f& point : outline.points) key.insert(key.end(), {point.x, point.y});
-        key.push_back(-1.0f);
-    }
-    const bool outline_unchanged = key == m_ants_key;
-    m_ants_key = std::move(key);
+    const RectI box = upright && !drawing ? border_box(bounds, scale) : RectI{};
+    if (box.width >= 2 && box.height >= 2) {
+        clear_ant_dashes();
+        publish_ant_edges(box, clip);
+    } else {
+        clear_ant_edges();
 
-    std::vector<SelectionDash> dark;
-    std::vector<SelectionDash> light;
-    if (!outline_unchanged) {
+        // A pointer event asks for the outline too, and most of the time nothing
+        // about it has changed since the last tick.
+        std::vector<float> key{static_cast<float>(m_ant_phase), static_cast<float>(segment)};
+        if (clip) key.insert(key.end(), {float(clip->x), float(clip->y), float(clip->width), float(clip->height)});
         for (const Outline& outline : outlines) {
-            append_ant_runs(outline.points, outline.closed, m_ant_phase, segment, clip ? &*clip : nullptr, dark,
-                            light);
+            key.push_back(outline.closed ? 1.0f : 0.0f);
+            for (const Point2f& point : outline.points) key.insert(key.end(), {point.x, point.y});
+            key.push_back(-1.0f);
         }
-        state.set_ants_dark(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(dark)));
-        state.set_ants_light(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(light)));
+        const bool outline_unchanged = key == m_ants_key;
+        m_ants_key = std::move(key);
+
+        std::vector<SelectionDash> dark;
+        std::vector<SelectionDash> light;
+        if (!outline_unchanged) {
+            for (const Outline& outline : outlines) {
+                append_ant_runs(outline.points, outline.closed, m_ant_phase, segment, clip ? &*clip : nullptr, dark,
+                                light);
+            }
+            state.set_ants_dark(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(dark)));
+            state.set_ants_light(std::make_shared<slint::VectorModel<SelectionDash>>(std::move(light)));
+            m_ants_dashes_shown = true;
+        }
     }
 
     std::vector<SelectionGrip> grips;
     if (visible && bounds.width >= kMinHandleSpan && bounds.height >= kMinHandleSpan &&
-        m_window.global<UserState>().get_selected_tool() == ETool::SELECTION) {
+        tool == ETool::SELECTION) {
         grips = grip_centres(bounds, scale);
+    } else if (text_gripped) {
+        grips = std::move(text_grips);
     }
-    state.set_grips(std::make_shared<slint::VectorModel<SelectionGrip>>(std::move(grips)));
+    m_text_grips_key.clear();
+    publish_grips(std::move(grips));
 
     // The rotate badge. Written only when it changes: this runs on a timer, and
     // fresh values every tick would repaint the window forever.
@@ -1934,7 +2433,9 @@ void UiState::do_resize_ok() {
     }
     close_resize_window();
     sync_colors();
-    m_controller.resize_and_skew(width, height, *skew_horizontal, *skew_vertical,
+    // The dialog's angles run the other way round from the warp's: a positive
+    // angle there leans the picture the way a negative one does here.
+    m_controller.resize_and_skew(width, height, -*skew_horizontal, -*skew_vertical,
                                  to_rgba(m_window.global<UserState>().get_secondary_color()));
     refresh();
 }

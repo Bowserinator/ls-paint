@@ -6,6 +6,7 @@
 #include <optional>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "about-window.h"
@@ -18,6 +19,8 @@
 #include "store/store.hpp"
 #include "private/slint_timer.h"
 #include "render/slint_bridge.hpp"
+#include "ui/debug_stats.hpp"
+#include "utils/trace.hpp"
 
 namespace lsp {
 
@@ -74,10 +77,40 @@ private:
     // a tool switch all land here.
     void do_commit_text(const std::string& text);
     void do_cancel_text();
+    // Tells the ribbon that a box was closed without writing any text.
+    void report_text_cancelled();
+    // Shows `grips` on the paper.
+    void publish_grips(std::vector<SelectionGrip> grips);
+    void publish_ant_edges(const RectI& box, const std::optional<RectI>& clip);
+    void clear_ant_edges();
+    void clear_ant_dashes();
+    // The bytes of the open text that the user has selected, an empty span when
+    // nothing is.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> text_selection() const;
+    // A style button was pressed: the selected text changes, or all of the text
+    // when nothing is selected.
+    void do_toggle_style(EFontToggle toggle);
+    // A colour was picked: the selected text takes it, or all of the text when
+    // nothing is selected.
+    void do_recolor_text(const slint::Color& color);
+    // Makes the style buttons show the style of the selected text, or of the
+    // character before the cursor when nothing is selected.
+    void show_text_style();
     void refresh();
+    void refresh_throttled(bool hover_only);
+    void refresh_move();
+    void refresh_hover();
     void apply_zoom(float zoom);
+    void start_debug();
+    void publish_debug();
     void update_canvas();
     void publish_canvas();
+    // Whether a stroke is being painted right now.
+    [[nodiscard]] bool live_stroke();
+    // Shows what a stroke just painted in `region` without touching the canvas.
+    void show_stroke_edit(const PixelBuffer& paper, RectI region);
+    // Moves everything shown for the stroke into the canvas.
+    void settle_stroke();
 
     // What the store holds: the window geometry and the settings the app
     // remembers, as one comparable set.
@@ -213,6 +246,10 @@ private:
     SlintBridge m_bridge;
     std::shared_ptr<slint::VectorModel<CanvasTile>> m_canvas_tiles;
     std::vector<TilePlacement> m_canvas_shown;
+    std::shared_ptr<slint::VectorModel<StrokePatch>> m_stroke_patches;
+    std::vector<RectI> m_stroke_edits;
+    std::size_t m_stroke_pixels = 0;
+    slint::Timer m_stroke_idle_timer;
     // The dialogs are windows of their own, made on first use and kept for the
     // life of the application.
     std::optional<slint::ComponentHandle<lsp_colors::EditColorsWindow>>
@@ -241,14 +278,56 @@ private:
     // is open.
     std::shared_ptr<slint::VectorModel<slint::Color>> m_dialog_customs;
     slint::Timer m_ants_timer;
+    bool m_debug = false;
+    DebugStats m_debug_stats;
+    slint::Timer m_debug_timer;
+    slint::Timer m_lag_timer;
+    DebugStats::Clock::time_point m_lag_expected;
+    DebugStats::Clock::time_point m_debug_totals_at;
+    unsigned m_debug_totals[trace::CounterCount] = {};
+    // Pointer moves refresh the view at most once per frame.
+    slint::Timer m_move_timer;
+    std::chrono::steady_clock::time_point m_last_refresh;
+    bool m_move_pending = false;
+    bool m_move_hover_only = false;
+    // What the cursor marks and the colour readout were last built from, so a
+    // hover that changes nothing the eye can see costs nothing to show.
+    PixelBuffer m_overlay_pixels;
+    int m_overlay_reach = 0;
+    std::uint64_t m_paper_serial = 0;
+    std::uint64_t m_hover_serial = 0;
+    int m_hover_x = 0;
+    int m_hover_y = 0;
+    bool m_hover_valid = false;
     int m_ant_phase = 0;
     // What the outline on screen was last built from.
     std::vector<float> m_ants_key;
     bool m_ants_visible = false;
+    bool m_ants_dashes_shown = false;
+    struct AntEdge {
+        int x = 0;
+        int y = 0;
+        int length = 0;
+        bool horizontal = true;
+        int first_step = 0;
+        int sign = 1;
+        std::vector<std::optional<slint::Image>> frames;
+    };
+    std::vector<AntEdge> m_ant_edges;
+    std::vector<int> m_ant_edges_key;
+    int m_ant_edges_phase = -1;
+    std::shared_ptr<slint::VectorModel<SelectionEdge>> m_ant_edge_model;
     bool m_rotate_hover = false;
     bool m_rotate_active = false;
     bool m_text_was_visible = false;
     std::string m_text_preview_key;
+    std::string m_text_last;
+    float m_text_auto_width = 0.0f;
+    float m_text_auto_height = 0.0f;
+    bool m_move_hover = false;
+    bool m_move_active = false;
+    std::vector<float> m_text_grips_key;
+    std::shared_ptr<slint::VectorModel<SelectionGrip>> m_grips;
     std::uint64_t m_shape_preview_revision = 0;
     // Whether the system clipboard last offered an image, for the Paste commands.
     bool m_system_clipboard = false;
