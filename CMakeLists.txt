@@ -90,6 +90,8 @@ add_library(lsp_core STATIC
     src/selection/selection_mask.cpp
     src/selection/selection_ops.cpp
     src/store/store_sqlite.cpp
+    src/store/window_settings.cpp
+    src/ui/screen_geometry.cpp
     src/text/font_catalog.cpp
     src/tools/brush_stroke_tool.cpp
     src/tools/dropper_tool.cpp
@@ -115,11 +117,14 @@ target_compile_definitions(lsp_core PRIVATE LSP_FONT_DIR="${CMAKE_SOURCE_DIR}/th
 # on Windows.
 if (WIN32)
     target_sources(lsp_core PRIVATE src/text/font_catalog_windows.cpp)
-    target_link_libraries(lsp_core PRIVATE dwrite shell32)
+    target_link_libraries(lsp_core PRIVATE dwrite shell32 user32)
 else()
     find_package(Fontconfig REQUIRED)
     target_sources(lsp_core PRIVATE src/text/font_catalog_linux.cpp)
     target_link_libraries(lsp_core PRIVATE Fontconfig::Fontconfig)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ScreenLibraries REQUIRED IMPORTED_TARGET xcb-randr wayland-client)
+    target_link_libraries(lsp_core PRIVATE PkgConfig::ScreenLibraries)
 endif()
 
 add_executable(ls_paint

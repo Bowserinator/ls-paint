@@ -113,6 +113,7 @@ public:
     void on_deactivate(ToolContext& context) override;
 
 private:
+    [[nodiscard]] Point2f constrained_end(const ToolContext& context, Point2f end) const;
     void start_drag(ToolContext& context, Point2f position, PointerButton button);
     void update_preview(ToolContext& context, Point2f cursor);
     void commit_drag(ToolContext& context, Point2f end);

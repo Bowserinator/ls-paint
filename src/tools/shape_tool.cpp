@@ -781,6 +781,17 @@ void ShapeTool::on_deactivate(ToolContext& context) {
     context.ui.shape.visible = false;
 }
 
+Point2f ShapeTool::constrained_end(const ToolContext& context, Point2f end) const {
+    if (!context.shift || !shape::is_closed(context.shape_options.kind)) return end;
+    const int x = round_to_int(m_origin.x);
+    const int y = round_to_int(m_origin.y);
+    const int dx = round_to_int(end.x) - x;
+    const int dy = round_to_int(end.y) - y;
+    const float side = static_cast<float>(std::max(std::abs(dx), std::abs(dy)));
+    return {x + std::copysign(side, end.x - m_origin.x),
+            y + std::copysign(side, end.y - m_origin.y)};
+}
+
 void ShapeTool::start_drag(ToolContext& context, Point2f position, PointerButton button) {
     m_dragging = true;
     m_button = button;
@@ -796,6 +807,7 @@ void ShapeTool::update_preview(ToolContext& context, Point2f cursor) {
         publish_open_polygon(context, points, m_button);
         return;
     }
+    cursor = constrained_end(context, cursor);
     // A curve is a straight baseline until it is bent.
     const Point2f middle = midpoint(m_origin, cursor);
     const std::span<const Point2f> bend = context.shape_options.kind == ShapeId::Curve
@@ -810,7 +822,7 @@ void ShapeTool::update_curve_preview(ToolContext& context) {
 
 void ShapeTool::commit_drag(ToolContext& context, Point2f end) {
     m_cursor = end;
-    commit_shape(context, context.shape_options.kind, m_origin, end, {}, m_button);
+    commit_shape(context, context.shape_options.kind, m_origin, constrained_end(context, end), {}, m_button);
 }
 
 void ShapeTool::commit_curve(ToolContext& context) {

@@ -17,11 +17,13 @@
 #include "io/clipboard.hpp"
 #include "io/document_io.hpp"
 #include "store/store_sqlite.hpp"
+#include "store/window_settings.hpp"
 #include "text/font_catalog.hpp"
 #include "tools/selection_tool.hpp"
 #include "tools/text_tool.hpp"
 #include "ui/cursor_overlay.hpp"
 #include "ui/file_picker.hpp"
+#include "ui/screen_geometry.hpp"
 #include "ui/shortcuts.hpp"
 #include "utils/key_text.hpp"
 #include "utils/math.hpp"
@@ -930,16 +932,15 @@ UiState::SettingsSnapshot UiState::current_settings() const {
 void UiState::restore_settings() {
     if (!m_settings) return;
     slint::Window& window = m_window.window();
-    // The geometry is stored in logical pixels, so the same numbers mean the
-    // same window on a screen with a different scale factor.
-    const std::optional<int> width = stored_int(*m_settings, kStoreKeyWindowWidth);
-    const std::optional<int> height = stored_int(*m_settings, kStoreKeyWindowHeight);
-    if (width && height && *width > 0 && *height > 0) {
-        window.set_size(slint::LogicalSize({static_cast<float>(*width), static_cast<float>(*height)}));
-    }
-    const std::optional<int> x = stored_int(*m_settings, kStoreKeyWindowX);
-    const std::optional<int> y = stored_int(*m_settings, kStoreKeyWindowY);
-    if (x && y) window.set_position(slint::LogicalPosition({static_cast<float>(*x), static_cast<float>(*y)}));
+    const SettingsSnapshot defaults = current_settings();
+    const ScreenGeometry screens = screen_geometry(window.scale_factor());
+    const RectI geometry = restore_window_settings(*m_settings,
+        {defaults.x, defaults.y, defaults.width, defaults.height}, screens.work_areas, screens.position_supported);
+    m_window.set_minimum_window_width(std::min(620, geometry.width));
+    m_window.set_minimum_window_height(std::min(240, geometry.height));
+    window.set_size(slint::LogicalSize({static_cast<float>(geometry.width), static_cast<float>(geometry.height)}));
+    if (screens.position_supported && !screens.work_areas.empty())
+        window.set_position(slint::LogicalPosition({static_cast<float>(geometry.x), static_cast<float>(geometry.y)}));
 }
 
 void UiState::save_settings() {
@@ -979,6 +980,8 @@ void UiState::save_settings() {
     }
     m_settings->set(kStoreKeyDialogCustoms, encode_list(dialog_customs));
     m_settings->set(kStoreKeyLastDirectory, utf8_from_path(m_last_directory));
+    const ScreenGeometry screens = screen_geometry(m_window.window().scale_factor());
+    (void)restore_window_settings(*m_settings, {0, 0, 900, 600}, screens.work_areas, screens.position_supported);
     m_settings->save();
     m_stored_settings = snapshot;
     m_colors_dirty = false;

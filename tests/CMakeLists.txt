@@ -17,6 +17,11 @@ target_link_libraries(lsp_raster_tests PRIVATE lsp_core)
 target_include_directories(lsp_raster_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME lsp_raster_tests COMMAND lsp_raster_tests)
 
+add_executable(lsp_brush_stroke_tests brush_stroke_test.cpp)
+target_link_libraries(lsp_brush_stroke_tests PRIVATE lsp_core)
+target_include_directories(lsp_brush_stroke_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME lsp_brush_stroke_tests COMMAND lsp_brush_stroke_tests)
+
 add_executable(lsp_color_tests color_tests.cpp)
 target_link_libraries(lsp_color_tests PRIVATE lsp_core)
 target_include_directories(lsp_color_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -57,6 +62,11 @@ target_link_libraries(lsp_debug_stats_tests PRIVATE lsp_core)
 target_include_directories(lsp_debug_stats_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 add_test(NAME lsp_debug_stats_tests COMMAND lsp_debug_stats_tests)
 
+add_executable(lsp_slint_bridge_tests slint_bridge_test.cpp ${CMAKE_SOURCE_DIR}/src/render/slint_bridge.cpp)
+target_link_libraries(lsp_slint_bridge_tests PRIVATE lsp_core Slint::Slint)
+target_include_directories(lsp_slint_bridge_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+add_test(NAME lsp_slint_bridge_tests COMMAND lsp_slint_bridge_tests)
+
 add_executable(lsp_ui_tests
     ui_tests.cpp
     ${CMAKE_SOURCE_DIR}/src/render/slint_bridge.cpp
@@ -88,11 +98,11 @@ add_custom_target(snapshots
 )
 
 if(MSVC)
-    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_preview_cache_tests lsp_debug_stats_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_brush_stroke_tests lsp_slint_bridge_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_preview_cache_tests lsp_debug_stats_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE /W4)
     endforeach()
 else()
-    foreach(target lsp_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_preview_cache_tests lsp_debug_stats_tests lsp_ui_tests)
+    foreach(target lsp_tests lsp_brush_stroke_tests lsp_slint_bridge_tests lsp_raster_tests lsp_color_tests lsp_text_tests lsp_io_tests lsp_shape_tests lsp_tile_resample_tests lsp_preview_cache_tests lsp_debug_stats_tests lsp_ui_tests)
         target_compile_options(${target} PRIVATE -Wall -Wextra)
     endforeach()
 endif()
@@ -100,6 +110,8 @@ endif()
 # The executables the parent scope's `check` target builds before it runs them.
 set(LSP_TEST_TARGETS
     lsp_tests
+    lsp_brush_stroke_tests
+    lsp_slint_bridge_tests
     lsp_raster_tests
     lsp_color_tests
     lsp_text_tests

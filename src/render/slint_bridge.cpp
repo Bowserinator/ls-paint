@@ -165,14 +165,23 @@ const CanvasPresentation& SlintBridge::presentation() const { return m_state->pu
 std::size_t SlintBridge::cache_bytes() const { return m_state->cache.bytes(); }
 
 slint::Image image_from(const PixelBuffer& source, RectI region) {
+    const ScopedPhase timing(Phase::Images);
     region = region.intersected(source.bounds());
     trace::bump(trace::ImageFrom);
-    return image_from_grid({region.width, region.height, source.contiguous_copy(region)});
+    trace::bump(trace::TileImage);
+    slint::SharedPixelBuffer<slint::Rgba8Pixel> pixels(static_cast<std::uint32_t>(region.width),
+                                                     static_cast<std::uint32_t>(region.height));
+    static_assert(sizeof(Rgba8) == sizeof(slint::Rgba8Pixel));
+    auto* out = pixels.begin();
+    for (int y = region.y; y < region.bottom(); ++y) {
+        std::memcpy(out, source.row(y).data() + region.x, static_cast<std::size_t>(region.width) * sizeof(Rgba8));
+        out += region.width;
+    }
+    return slint::Image(std::move(pixels));
 }
 
 slint::Image image_from(const PixelBuffer& source) {
-    trace::bump(trace::ImageFrom);
-    return image_from_grid({source.width(), source.height(), source.contiguous_copy(source.bounds())});
+    return image_from(source, source.bounds());
 }
 
 }  // namespace lsp

@@ -1,7 +1,9 @@
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -9,6 +11,7 @@
 
 #include "store/store.hpp"
 #include "store/store_sqlite.hpp"
+#include "store/window_settings.hpp"
 
 using namespace lsp;
 
@@ -31,6 +34,94 @@ std::filesystem::path fresh_directory(std::string_view name) {
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir, ec);
     return dir;
+}
+
+class MemoryStore final : public Store {
+public:
+    std::map<std::string, std::string> values;
+    mutable std::map<std::string, std::string> persisted;
+    mutable int saves = 0;
+
+    std::optional<std::string> get(std::string_view key) const override {
+        const auto it = values.find(std::string(key));
+        return it == values.end() ? std::nullopt : std::optional(it->second);
+    }
+    void set(std::string_view key, std::string_view value) override { values[std::string(key)] = value; }
+    bool erase(std::string_view key) override { return values.erase(std::string(key)) != 0; }
+    void load() override { values = persisted; }
+    void save() const override { persisted = values; ++saves; }
+};
+
+void test_window_settings_are_repaired_through_the_interface() {
+    const std::array screens{RectI{0, 0, 1920, 1080}, RectI{-1280, 0, 1280, 1024}};
+    const RectI defaults{0, 0, 900, 600};
+    struct Case { const char* x; const char* y; const char* width; const char* height; RectI expected; };
+    for (const Case& c : {
+        Case{"60", "40", "744", "522", {60, 40, 744, 522}},
+        Case{"-1200", "40", "1000", "800", {-1200, 40, 1000, 800}},
+        Case{"50000", "50000", "900", "600", {1020, 480, 900, 600}},
+        Case{"-2147483648", "2147483647", "900", "600", {0, 480, 900, 600}},
+        Case{"0", "0", "2147483647", "2147483647", {0, 0, 1920, 1080}},
+        Case{"0", "0", "0", "-12", {0, 0, 620, 240}},
+        Case{"garbage", "1.5", "999999999999999999999", "600px", defaults}}) {
+        MemoryStore memory;
+        Store& store = memory;
+        store.set(kStoreKeyWindowX, c.x);
+        store.set(kStoreKeyWindowY, c.y);
+        store.set(kStoreKeyWindowWidth, c.width);
+        store.set(kStoreKeyWindowHeight, c.height);
+        store.set("unrelated", "Keep me");
+        CHECK(restore_window_settings(store, defaults, screens) == c.expected);
+        CHECK(stored_int(store, kStoreKeyWindowX) == c.expected.x);
+        CHECK(stored_int(store, kStoreKeyWindowY) == c.expected.y);
+        CHECK(stored_int(store, kStoreKeyWindowWidth) == c.expected.width);
+        CHECK(stored_int(store, kStoreKeyWindowHeight) == c.expected.height);
+        CHECK(store.get("unrelated") == "Keep me");
+        const int saves = memory.saves;
+        CHECK(restore_window_settings(store, defaults, screens) == c.expected);
+        CHECK(memory.saves == saves);
+        if (saves != 0) {
+            store.load();
+            CHECK(restore_window_settings(store, defaults, screens) == c.expected);
+            CHECK(memory.saves == saves);
+        }
+    }
+    MemoryStore store;
+    store.set(kStoreKeyWindowX, "-1200");
+    store.set(kStoreKeyWindowY, "40");
+    CHECK((restore_window_settings(store, defaults, std::span(screens).first(1)) == RectI{0, 40, 900, 600}));
+    const std::array tiny{RectI{0, 0, 320, 200}};
+    CHECK((restore_window_settings(store, defaults, tiny) == RectI{0, 0, 320, 200}));
+    const std::array separated{RectI{0, 0, 1920, 1080}, RectI{3000, 0, 1920, 1080}};
+    store.set(kStoreKeyWindowX, "2100");
+    store.set(kStoreKeyWindowWidth, "620");
+    store.set(kStoreKeyWindowHeight, "240");
+    CHECK((restore_window_settings(store, defaults, separated) == RectI{1300, 0, 620, 240}));
+    CHECK(restore_window_settings(store, defaults, {}) == defaults);
+    CHECK(!store.get(kStoreKeyWindowX));
+    CHECK(!store.get(kStoreKeyWindowY));
+    CHECK(restore_window_settings(store, defaults, screens, false) == defaults);
+    CHECK(!store.get(kStoreKeyWindowX));
+    CHECK(!store.get(kStoreKeyWindowY));
+}
+
+void test_repaired_window_settings_survive_a_database_reopen() {
+    const auto path = fresh_directory("lsp_store_window_repair") / "config.sqlite3";
+    const std::array screens{RectI{0, 0, 1280, 720}};
+    {
+        SQLiteStore sqlite(path);
+        Store& store = sqlite;
+        store.set(kStoreKeyWindowX, "2147483647");
+        store.set(kStoreKeyWindowY, "-2147483648");
+        store.set(kStoreKeyWindowWidth, "2147483647");
+        store.set(kStoreKeyWindowHeight, "0");
+        CHECK((restore_window_settings(store, {0, 0, 900, 600}, screens) == RectI{0, 0, 1280, 240}));
+    }
+    SQLiteStore reopened(path);
+    CHECK(stored_int(reopened, kStoreKeyWindowX) == 0);
+    CHECK(stored_int(reopened, kStoreKeyWindowY) == 0);
+    CHECK(stored_int(reopened, kStoreKeyWindowWidth) == 1280);
+    CHECK(stored_int(reopened, kStoreKeyWindowHeight) == 240);
 }
 
 void test_a_value_survives_a_reopen() {
@@ -219,6 +310,8 @@ int main() {
     test_a_list_round_trips_through_encoding();
     test_the_default_path_names_the_app_directory();
     test_environment_values();
+    test_window_settings_are_repaired_through_the_interface();
+    test_repaired_window_settings_survive_a_database_reopen();
 
     if (failures == 0) {
         std::printf("ALL OK\n");

@@ -8,7 +8,6 @@ import { ViewBar } from "./bar/bar-view.slint";
 
 // One tab of the ribbon strip.
 component RibbonTab inherits Rectangle {
-    cache-rendering-hint: true;
     in property <string> title;
     in property <bool> selected;
     // The File tab is a button that opens a menu: it is filled blue and is
@@ -72,7 +71,6 @@ component RibbonTab inherits Rectangle {
 // The button at the end of the tab strip: a chevron pointing up while the ribbon
 // is open and down while it is closed.
 component RibbonToggle inherits Rectangle {
-    cache-rendering-hint: true;
     in property <bool> open;
     callback clicked;
 
@@ -101,7 +99,6 @@ component RibbonToggle inherits Rectangle {
 // window's layout: a layout child would pin the window's width to its preferred
 // size, and the window has to be freely resizable.
 export component TopBar inherits Rectangle {
-    cache-rendering-hint: true;
     // The window opens on Home, as Paint does. The File tab is not a page, so
     // 0 is never selected.
     private property <int> tab: 1;
@@ -235,7 +232,6 @@ export component TopBar inherits Rectangle {
         close-policy: close-on-click-outside;
 
         Rectangle {
-            cache-rendering-hint: true;
             background: Styles.ribbon-background;
 
             if (root.tab == 1) : HomeBar {

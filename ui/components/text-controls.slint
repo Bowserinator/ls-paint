@@ -4,7 +4,6 @@ import { Styles } from "../styles.slint";
 // A plain ribbon button that shows its current value and drops a list of the
 // other ones. The Font controls are all of this shape.
 export component ValueButton inherits Rectangle {
-    cache-rendering-hint: true;
     in property <string> caption;
     // The face the caption is drawn in, so the font control previews the family
     // it currently names. Empty draws in the window's default.
@@ -49,7 +48,6 @@ export component ValueButton inherits Rectangle {
 
 // A style toggle: the glyph shows the style it turns on.
 export component StyleToggle inherits Rectangle {
-    cache-rendering-hint: true;
     in property <string> glyph;
     // The face the glyph is drawn in. Empty draws in the window's default; the
     // italic button names a serif face, as Paint's does.

@@ -1,7 +1,6 @@
 import { Styles } from "../styles.slint";
 
 export component Bar inherits Rectangle {
-    cache-rendering-hint: true;
     height: Styles.bar-height;
     horizontal-stretch: 1;
     vertical-stretch: 0;
@@ -30,7 +29,6 @@ export component BarDivider inherits Rectangle {
 }
 
 export component BarItemGroup {
-    cache-rendering-hint: true;
     in-out property <string> title;
     // False when the group is merged into one button that already carries the
     // group's name, which would otherwise read twice.

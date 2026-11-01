@@ -13,6 +13,7 @@
 
 #include "core/raster.hpp"
 #include "tools/shape_tool.hpp"
+#include "tools/tool_context.hpp"
 
 using namespace lsp;
 using lsp::raster::Target;
@@ -131,6 +132,59 @@ bool encloses_background(const PixelBuffer& pixels) {
             if (!seen[index] && pixels.at(x, y).a == 0) return true;
         }
     return false;
+}
+
+void test_shift_constrains_shape_previews_and_commits() {
+    const int before = failures;
+    const Point2f origin{64.2f, 64.7f};
+    const std::array drags{
+        std::pair{Point2f{84.4f, 74.2f}, Point2f{84, 85}},
+        std::pair{Point2f{44.1f, 74.2f}, Point2f{44, 85}},
+        std::pair{Point2f{84.4f, 54.3f}, Point2f{84, 45}},
+        std::pair{Point2f{44.1f, 54.3f}, Point2f{44, 45}},
+        std::pair{Point2f{64.2f, 94.2f}, Point2f{93, 94}},
+        std::pair{Point2f{64.1f, 94.2f}, Point2f{35, 94}},
+        std::pair{Point2f{94.2f, 64.7f}, Point2f{94, 95}},
+        std::pair{origin, Point2f{64, 65}}};
+    for (const ShapeId kind : kShapeIds) {
+        if (!shape::is_closed(kind) || kind == ShapeId::Polygon) continue;
+        for (const auto& [cursor, constrained] : drags) {
+            CanvasDocument document(128, 128);
+            HistoryStack history(document);
+            const Brush brush;
+            ColorPair colors;
+            SelectionShape selection = SelectionShape::Rectangular;
+            ShapeOptions options;
+            options.kind = kind;
+            TextOptions text;
+            ToolUiState ui;
+            ToolContext context{document, history, brush, colors, selection, options, text, ui};
+            ShapeTool tool;
+            tool.on_pointer_down(context, origin, PointerButton::Primary);
+            for (const bool shift : {false, true, false, true}) {
+                context.shift = shift;
+                tool.on_pointer_move(context, cursor);
+                const Point2f end = shift ? constrained : cursor;
+                const RectI box = shape::normalized_rect(origin, end);
+                if (shift) CHECK(box.width == box.height);
+                PixelBuffer preview(128, 128, kTransparent);
+                rasterize_shape({preview}, kind, origin, end, {}, options, kInk, kWhite);
+                CHECK(ui.shape.visible);
+                CHECK(ui.shape.pixels == preview.copy_region(ui.shape.region));
+            }
+            const PixelBuffer original = document.active_layer().pixels;
+            PixelBuffer expected(128, 128, kWhite);
+            rasterize_shape({expected}, kind, origin, constrained, {}, options, kInk, kWhite);
+            tool.on_pointer_up(context, cursor);
+            CHECK(!ui.shape.visible);
+            CHECK(document.active_layer().pixels == expected);
+            history.undo();
+            CHECK(document.active_layer().pixels == original);
+            history.redo();
+            CHECK(document.active_layer().pixels == expected);
+        }
+    }
+    if (before == failures) std::puts("Shift constraint checks passed");
 }
 
 void test_every_kind_is_reachable() {
@@ -419,6 +473,7 @@ void test_textured_fills_are_grainy_and_bounded() {
 }  // namespace
 
 int main() {
+    test_shift_constrains_shape_previews_and_commits();
     test_every_kind_is_reachable();
     test_outlines_do_not_cross_themselves();
     test_fill_meets_the_outline_at_thin_thickness();

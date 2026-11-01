@@ -274,8 +274,10 @@ export component AppWindow inherits Window {
     property <length> resize-dy;
 
     // Window sizes
-    min-height: 240px;
-    min-width: 620px;
+    in property <int> minimum-window-width: 620;
+    in property <int> minimum-window-height: 240;
+    min-height: root.minimum-window-height * 1px;
+    min-width: root.minimum-window-width * 1px;
 
     preferred-height: 600px;
     preferred-width: 900px;
@@ -395,6 +397,9 @@ export component AppWindow inherits Window {
         height: 100%;
 
         key-pressed(event) => {
+            if (UserState.selected-tool == ETool.SHAPE && ShapeOverlay.visible) {
+                UserState.pointer-move(UserState.cursor-x * 1px, UserState.cursor-y * 1px, event.modifiers.shift);
+            }
             if (event.text == "\u{1b}" && UserState.selected-tool == ETool.TEXT) {
                 if (TextOverlay.visible) {
                     UserState.cancel-text();
@@ -420,6 +425,9 @@ export component AppWindow inherits Window {
         }
 
         key-released(event) => {
+            if (UserState.selected-tool == ETool.SHAPE && ShapeOverlay.visible) {
+                UserState.pointer-move(UserState.cursor-x * 1px, UserState.cursor-y * 1px, event.modifiers.shift);
+            }
             if (event.text == " ") {
                 root.zoom-armed = false;
                 root.pan-held = false;
@@ -758,6 +766,11 @@ export component AppWindow inherits Window {
                                     } else if (root.size-dragging) {
                                         root.size-dragging = false;
                                     } else {
+                                        if (UserState.selected-tool == ETool.SHAPE) {
+                                            UserState.pointer-move(touch.mouse-x / UserState.zoom,
+                                                                   touch.mouse-y / UserState.zoom,
+                                                                   event.modifiers.shift);
+                                        }
                                         UserState.pointer-up(touch.mouse-x / UserState.zoom,
                                                              touch.mouse-y / UserState.zoom,
                                                              event.button == PointerEventButton.right);
@@ -834,7 +847,6 @@ export component AppWindow inherits Window {
                             width: max(0px, self.view-right - self.view-left);
                             height: max(0px, self.view-bottom - self.view-top);
                             clip: true;
-                            cache-rendering-hint: true;
 
                             // Each tile reaches a little under the next one, so
                             // no gap shows between them at any zoom.

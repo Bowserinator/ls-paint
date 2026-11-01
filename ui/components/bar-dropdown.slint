@@ -1,7 +1,6 @@
 import { Styles } from "../styles.slint";
 
 export component BarDropdown {
-    cache-rendering-hint: true;
     // Wider than the default only for the panels whose contents need it.
     in property <length> panel-width: Styles.bar-dropdown-width + 2phx;
 
@@ -30,7 +29,6 @@ export component BarDropdownDivider {
 }
 
 export component BarDropdownTitle {
-    cache-rendering-hint: true;
     in-out property text <=> txt.text;
     // The row is as tall as an ordinary menu row unless the menu is tighter.
     in property <length> title-height: Styles.bar-dropdown-height;
@@ -50,7 +48,6 @@ export component BarDropdownTitle {
 }
 
 export component BarDropdownItem {
-    cache-rendering-hint: true;
     callback clicked <=> touch.clicked;
     in-out property text <=> txt.text;
     // The face the label is drawn in, so a list of family names can preview
