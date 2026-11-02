@@ -433,6 +433,23 @@ BrushKind brush_from_slint(EBrushKind kind) {
     return BrushKind::Brush;
 }
 
+EBrushKind brush_to_slint(BrushKind kind) {
+    switch (kind) {
+        case BrushKind::Brush: return EBrushKind::BRUSH;
+        case BrushKind::Calligraphy1: return EBrushKind::CALLIGRAPHY1;
+        case BrushKind::Calligraphy2: return EBrushKind::CALLIGRAPHY2;
+        case BrushKind::Airbrush: return EBrushKind::AIRBRUSH;
+        case BrushKind::Oil: return EBrushKind::OIL;
+        case BrushKind::Crayon: return EBrushKind::CRAYON;
+        case BrushKind::Marker: return EBrushKind::MARKER;
+        case BrushKind::NaturalPencil: return EBrushKind::NATURALPENCIL;
+        case BrushKind::Watercolor: return EBrushKind::WATERCOLOR;
+        case BrushKind::Blur: return EBrushKind::BLUR;
+        case BrushKind::Liquify: return EBrushKind::LIQUIFY;
+    }
+    return EBrushKind::BRUSH;
+}
+
 ShapeTexture texture_from_slint(EShapeTexture texture) {
     switch (texture) {
         case EShapeTexture::NONE: return ShapeTexture::None;
@@ -810,6 +827,11 @@ void UiState::load_settings() {
     if (const std::optional<bool> stored = stored_bool(*m_settings, kStoreKeyShowRibbon))
         m_window.global<UserState>().set_show_ribbon(*stored);
 
+    if (const std::optional<std::string> stored = m_settings->get(kStoreKeyBrushKind)) {
+        if (const std::optional<BrushKind> kind = brush::from_name(*stored))
+            m_window.global<ToolOptions>().set_brush_kind(brush_to_slint(*kind));
+    }
+
     restore_settings();
 
     // The File menu's recent list, newest entry first.
@@ -967,6 +989,7 @@ UiState::SettingsSnapshot UiState::current_settings() const {
     snapshot.status_bar = user.get_show_status_bar();
     snapshot.ribbon = user.get_show_ribbon();
     snapshot.family = std::string(m_window.global<FontStyle>().get_family());
+    snapshot.brush_kind = brush_from_slint(m_window.global<ToolOptions>().get_brush_kind());
     return snapshot;
 }
 
@@ -996,6 +1019,7 @@ void UiState::save_settings() {
     m_settings->set(kStoreKeyShowStatusBar, snapshot.status_bar ? "1" : "0");
     m_settings->set(kStoreKeyShowRibbon, snapshot.ribbon ? "1" : "0");
     m_settings->set(kStoreKeyFontFamily, snapshot.family);
+    m_settings->set(kStoreKeyBrushKind, brush::name(snapshot.brush_kind));
     std::vector<std::string> recent;
     recent.reserve(m_recent_files.size());
     for (const std::filesystem::path& path : m_recent_files) recent.push_back(utf8_from_path(path));

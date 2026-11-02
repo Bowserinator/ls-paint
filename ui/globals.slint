@@ -339,6 +339,21 @@ export global BrushGallery {
         { kind: EBrushKind.BLUR, image: @image-url("../icons/brushes/blur.png"), name: "Blur" },
         { kind: EBrushKind.LIQUIFY, image: @image-url("../icons/brushes/liquify.png"), name: "Liquify" },
     ];
+
+    // The picture of one brush type.
+    public pure function image-of(kind: EBrushKind) -> image {
+        if (kind == EBrushKind.CALLIGRAPHY_1) { return items[1].image; }
+        if (kind == EBrushKind.CALLIGRAPHY_2) { return items[2].image; }
+        if (kind == EBrushKind.AIRBRUSH) { return items[3].image; }
+        if (kind == EBrushKind.OIL) { return items[4].image; }
+        if (kind == EBrushKind.CRAYON) { return items[5].image; }
+        if (kind == EBrushKind.MARKER) { return items[6].image; }
+        if (kind == EBrushKind.NATURAL_PENCIL) { return items[7].image; }
+        if (kind == EBrushKind.WATERCOLOR) { return items[8].image; }
+        if (kind == EBrushKind.BLUR) { return items[9].image; }
+        if (kind == EBrushKind.LIQUIFY) { return items[10].image; }
+        return items[0].image;
+    }
 }
 
 // The shape being dragged, as the pixels the commit will paint, and where their

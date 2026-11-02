@@ -72,12 +72,22 @@ void uneven_samples_reversals_and_cancel() {
     f.tool.on_pointer_up(f.ctx, {60.5f, 60.5f});
     CHECK(f.doc.active_layer().pixels.at(60, 60).r == 0);
 }
+
+void brush_names_round_trip() {
+    for (int i = 0; i <= static_cast<int>(BrushKind::Liquify); ++i) {
+        const auto kind = static_cast<BrushKind>(i);
+        CHECK(brush::from_name(brush::name(kind)) == kind);
+    }
+    CHECK(!brush::from_name("").has_value());
+    CHECK(!brush::from_name("unknown").has_value());
+}
 }  // namespace
 
 int main() {
     curved_stroke_preserves_endpoints_and_undo();
     clicks_lines_duplicates_and_reuse();
     uneven_samples_reversals_and_cancel();
+    brush_names_round_trip();
     if (failures) return 1;
     std::puts("All brush stroke tests passed");
 }

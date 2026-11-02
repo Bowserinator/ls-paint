@@ -1,5 +1,8 @@
 #pragma once
 
+#include <optional>
+#include <string_view>
+
 #include "core/blend_modes.hpp"
 
 namespace lsp {
@@ -57,6 +60,10 @@ struct BrushProfile {
 namespace brush {
 
 [[nodiscard]] BrushProfile profile(BrushKind kind);
+
+// The brush type's name for saving, and the type a saved name stands for.
+[[nodiscard]] std::string_view name(BrushKind kind);
+[[nodiscard]] std::optional<BrushKind> from_name(std::string_view name);
 
 }  // namespace brush
 

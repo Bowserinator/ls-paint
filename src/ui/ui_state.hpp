@@ -124,6 +124,7 @@ private:
         bool status_bar = true;
         bool ribbon = true;
         std::string family;
+        BrushKind brush_kind = BrushKind::Brush;
 
         friend bool operator==(const SettingsSnapshot&, const SettingsSnapshot&) = default;
     };

@@ -637,11 +637,11 @@ export component HomeBar inherits Bar {
                 // than the other merged buttons.
                 width: Styles.ribbon-merged-button + 8px;
                 text: "Brushes";
-                icon: @image-url("../../icons/brushes.png");
+                icon: BrushGallery.image-of(ToolOptions.brush-kind);
                 boxed-icon: true;
                 focused1: brushes-dropdown.is-open || UserState.selected-tool == ETool.BRUSH;
                 focused2: brushes-dropdown.is-open || UserState.selected-tool == ETool.BRUSH;
-                clicked => { root.hovered-brush = -1; brushes-dropdown.show(); }
+                clicked => { UserState.selected-tool = ETool.BRUSH; }
                 clicked_dropdown => { root.hovered-brush = -1; brushes-dropdown.show(); }
             }
         }

@@ -11,7 +11,7 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-0.1.1}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 BUILD_DIR="${BUILD_DIR:-build-pkg}"
 OUT_DIR="${OUT_DIR:-dist}"

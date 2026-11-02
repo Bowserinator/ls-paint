@@ -34,6 +34,7 @@ inline constexpr std::string_view kStoreKeyRecentFiles = "recent_files";
 inline constexpr std::string_view kStoreKeyPaletteCustoms = "palette_customs";
 inline constexpr std::string_view kStoreKeyDialogCustoms = "dialog_customs";
 inline constexpr std::string_view kStoreKeyLastDirectory = "last_directory";
+inline constexpr std::string_view kStoreKeyBrushKind = "brush_kind";
 
 class Store {
 public:

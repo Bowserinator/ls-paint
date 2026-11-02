@@ -1,5 +1,7 @@
 #include "brushes/brush.hpp"
 
+#include <array>
+
 namespace lsp {
 
 BrushProfile brush::profile(BrushKind kind) {
@@ -78,6 +80,36 @@ BrushProfile brush::profile(BrushKind kind) {
             break;
     }
     return profile;
+}
+
+namespace {
+
+constexpr std::array<std::pair<BrushKind, std::string_view>, 11> kBrushNames{{
+    {BrushKind::Brush, "brush"},
+    {BrushKind::Calligraphy1, "calligraphy_1"},
+    {BrushKind::Calligraphy2, "calligraphy_2"},
+    {BrushKind::Airbrush, "airbrush"},
+    {BrushKind::Oil, "oil"},
+    {BrushKind::Crayon, "crayon"},
+    {BrushKind::Marker, "marker"},
+    {BrushKind::NaturalPencil, "natural_pencil"},
+    {BrushKind::Watercolor, "watercolor"},
+    {BrushKind::Blur, "blur"},
+    {BrushKind::Liquify, "liquify"},
+}};
+
+}  // namespace
+
+std::string_view brush::name(BrushKind kind) {
+    for (const auto& [candidate, text] : kBrushNames)
+        if (candidate == kind) return text;
+    return kBrushNames.front().second;
+}
+
+std::optional<BrushKind> brush::from_name(std::string_view name) {
+    for (const auto& [candidate, text] : kBrushNames)
+        if (text == name) return candidate;
+    return std::nullopt;
 }
 
 }  // namespace lsp
