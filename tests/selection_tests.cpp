@@ -466,6 +466,54 @@ void test_resizing_an_unfloated_selection_is_plain_geometry() {
     CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 21, 21}));
 }
 
+// Holding the proportions sizes the box from the one it started as, so the same
+// pointer position gives the same box whatever came before.
+void test_resizing_with_shift_keeps_the_proportions_of_the_start() {
+    const RectI start{10, 10, 40, 20};
+    const RectI canvas{0, 0, 200, 200};
+    CHECK((resized_bounds(start, SelectionHandle::Se, {89, 39}, canvas, true) == RectI{10, 10, 80, 40}));
+    CHECK((resized_bounds(start, SelectionHandle::Se, {89, 39}, canvas, false) == RectI{10, 10, 80, 30}));
+
+    // The side the pointer has travelled further along sets the size.
+    CHECK((resized_bounds(start, SelectionHandle::Se, {49, 69}, canvas, true) == RectI{10, 10, 120, 60}));
+
+    // An edge grip scales the other axis around its middle.
+    CHECK((resized_bounds(start, SelectionHandle::E, {89, 5}, canvas, true) == RectI{10, 0, 80, 40}));
+
+    // Against the canvas edge the box stops growing in both directions.
+    const RectI small{0, 0, 100, 100};
+    CHECK((resized_bounds(start, SelectionHandle::Nw, {-10, 0}, small, true) == RectI{0, 5, 50, 25}));
+
+    // Dragged past the opposite corner it shrinks to the smallest box with the
+    // proportions rather than flipping.
+    CHECK((resized_bounds(start, SelectionHandle::Se, {0, 0}, canvas, true) == RectI{10, 10, 2, 1}));
+}
+
+void test_a_resize_drag_holding_shift_keeps_the_selection_proportions() {
+    Fixture fixture(64, 64);
+    fixture.doc.selection().fill_rect({4, 4, 40, 20});
+
+    SelectionTool tool;
+    fixture.ctx.shift = true;
+    tool.on_pointer_down(fixture.ctx, {43, 23}, PointerButton::Primary);  // the south-east grip
+    tool.on_pointer_move(fixture.ctx, {63, 40});
+    tool.on_pointer_move(fixture.ctx, {9, 60});
+    tool.on_pointer_move(fixture.ctx, {63, 33});
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 60, 30}));
+
+    // Letting go of Shift mid-drag frees the box again.
+    fixture.ctx.shift = false;
+    tool.on_pointer_move(fixture.ctx, {63, 33});
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 60, 30}));
+    tool.on_pointer_move(fixture.ctx, {63, 43});
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 60, 40}));
+    fixture.ctx.shift = true;
+    tool.on_pointer_move(fixture.ctx, {63, 43});
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 60, 30}));
+    tool.on_pointer_up(fixture.ctx, {63, 43});
+    CHECK((fixture.doc.selection().bounds() == RectI{4, 4, 60, 30}));
+}
+
 // A floating selection scaled by a grip keeps its own undo entry: undo hands
 // back the pre-resize contents rather than a resampled copy.
 void test_resizing_a_floated_selection_is_undoable() {
@@ -1252,6 +1300,8 @@ int main() {
     test_polygon_closes_on_a_click_near_the_first_point();
     test_dragging_inside_a_selection_moves_the_contents();
     test_resizing_an_unfloated_selection_is_plain_geometry();
+    test_resizing_with_shift_keeps_the_proportions_of_the_start();
+    test_a_resize_drag_holding_shift_keeps_the_selection_proportions();
     test_resizing_a_floated_selection_is_undoable();
     test_resizing_twice_samples_from_the_original_contents();
     test_transforming_a_squashed_selection_still_rescales_from_the_original();

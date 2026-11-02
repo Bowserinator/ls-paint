@@ -57,6 +57,9 @@ struct SelectionPreview {
 struct RotatePreview {
     bool hover = false;
     bool rotating = false;
+    // The middle the turn pivots on, for tools whose box the UI cannot read off
+    // the selection.
+    Point2f centre{};
 };
 
 // What the selection tool tells the UI about resizing: the shape the pointer

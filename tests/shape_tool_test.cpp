@@ -14,6 +14,7 @@
 #include "core/raster.hpp"
 #include "tools/shape_tool.hpp"
 #include "tools/tool_context.hpp"
+#include "utils/key_text.hpp"
 
 using namespace lsp;
 using lsp::raster::Target;
@@ -176,6 +177,10 @@ void test_shift_constrains_shape_previews_and_commits() {
             PixelBuffer expected(128, 128, kWhite);
             rasterize_shape({expected}, kind, origin, constrained, {}, options, kInk, kWhite);
             tool.on_pointer_up(context, cursor);
+            // The finished drag waits, unpainted, until it is committed.
+            CHECK(ui.shape.visible);
+            CHECK(document.active_layer().pixels == original);
+            tool.on_key_pressed(context, kKeyEnter);
             CHECK(!ui.shape.visible);
             CHECK(document.active_layer().pixels == expected);
             history.undo();
@@ -470,10 +475,305 @@ void test_textured_fills_are_grainy_and_bounded() {
     CHECK(painted_in(hatched, RectI{10, 10, 60, 60}) > 200);
 }
 
+
+bool same_points(const std::vector<Point2f>& a, const std::vector<Point2f>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t i = 0; i < a.size(); ++i)
+        if (a[i].x != b[i].x || a[i].y != b[i].y) return false;
+    return true;
+}
+
+// A tool wired to a blank canvas, for the gestures that need several events.
+struct Fixture {
+    CanvasDocument document{128, 128};
+    HistoryStack history{document};
+    Brush brush;
+    ColorPair colors;
+    SelectionShape selection = SelectionShape::Rectangular;
+    ShapeOptions options;
+    TextOptions text;
+    ToolUiState ui;
+    ToolContext context{document, history, brush, colors, selection, options, text, ui};
+    ShapeTool tool;
+
+    explicit Fixture(ShapeId kind) { options.kind = kind; }
+
+    [[nodiscard]] const PixelBuffer& layer() { return document.active_layer().pixels; }
+
+    void press(Point2f at) { tool.on_pointer_down(context, at, PointerButton::Primary); }
+    void move(Point2f at) { tool.on_pointer_move(context, at); }
+    void release(Point2f at) { tool.on_pointer_up(context, at); }
+    void drag(Point2f from, Point2f to) {
+        press(from);
+        move(to);
+        release(to);
+    }
+
+    // What the layer holds after `kind` is painted between the corners.
+    [[nodiscard]] PixelBuffer painted(ShapeId kind, Point2f a, Point2f b, float rotation = 0.0f) const {
+        PixelBuffer expected(128, 128, kWhite);
+        rasterize_shape({expected}, kind, a, b, {}, options, kInk, kWhite, rotation);
+        return expected;
+    }
+};
+
+void test_a_drawn_shape_waits_until_something_else_is_pressed() {
+    Fixture f(ShapeId::Rectangle);
+    const PixelBuffer blank = f.layer();
+    f.drag({20, 20}, {60, 50});
+    CHECK(f.ui.shape.visible);
+    CHECK(f.ui.shape.frame == shape::normalized_rect({20, 20}, {60, 50}));
+    CHECK(f.layer() == blank);
+
+    // Colors changed after the drawing do not recolor what is already drawn.
+    f.colors.primary = {255, 0, 0, 255};
+    f.press({100, 100});
+    CHECK(f.layer() == f.painted(ShapeId::Rectangle, {20, 20}, {60, 50}));
+    CHECK(f.history.is_modified());
+    f.history.undo();
+    CHECK(f.layer() == blank);
+    f.history.redo();
+    f.release({100, 100});
+    // The press that painted it also began the next shape.
+    CHECK(f.ui.shape.visible);
+    CHECK(f.ui.shape.frame == shape::normalized_rect({100, 100}, {100, 100}));
+}
+
+void test_escape_drops_a_drawn_shape() {
+    Fixture f(ShapeId::Oval);
+    const PixelBuffer blank = f.layer();
+    f.drag({20, 20}, {60, 50});
+    f.tool.on_key_pressed(f.context, kKeyEscape);
+    CHECK(!f.ui.shape.visible);
+    CHECK(!f.ui.shape.frame.has_value());
+    CHECK(f.layer() == blank);
+    CHECK(!f.history.is_modified());
+    CHECK(!f.tool.on_cancel(f.context));
+}
+
+void test_leaving_the_tool_paints_a_drawn_shape() {
+    Fixture f(ShapeId::Rectangle);
+    f.drag({20, 20}, {60, 50});
+    f.tool.on_deactivate(f.context);
+    CHECK(!f.ui.shape.visible);
+    CHECK(f.layer() == f.painted(ShapeId::Rectangle, {20, 20}, {60, 50}));
+}
+
+void test_a_drawn_shape_resizes_by_its_grips() {
+    Fixture f(ShapeId::Rectangle);
+    const PixelBuffer blank = f.layer();
+    f.drag({20, 20}, {60, 50});
+
+    // The south east grip sits on the box's last pixel.
+    f.move({60, 50});
+    CHECK(f.ui.resize.cursor == ResizeCursor::DiagonalNwSe);
+    f.move({70, 10});
+    CHECK(f.ui.resize.cursor == ResizeCursor::None);
+
+    f.press({60, 50});
+    f.move({75, 65});
+    CHECK((f.ui.shape.frame == RectI{20, 20, 56, 46}));
+    f.release({80, 70});
+    CHECK(f.ui.shape.visible);
+    CHECK((f.ui.shape.frame == RectI{20, 20, 61, 51}));
+    // The pointer is still over the grip it dragged.
+    CHECK(f.ui.resize.cursor == ResizeCursor::DiagonalNwSe);
+
+    // The north west grip moves the other corner, past the first one's reach.
+    f.press({20, 20});
+    f.release({10, 5});
+    CHECK((f.ui.shape.frame == RectI{10, 5, 71, 66}));
+
+    f.tool.on_key_pressed(f.context, kKeyEnter);
+    CHECK(f.layer() == f.painted(ShapeId::Rectangle, {10, 5}, {80, 70}));
+    f.history.undo();
+    CHECK(f.layer() == blank);
+}
+
+void test_shift_keeps_the_proportions_of_a_resized_shape() {
+    Fixture f(ShapeId::Rectangle);
+    f.drag({10, 10}, {49, 29});  // 40 x 20
+    f.context.shift = true;
+    f.press({49, 29});
+    f.move({89, 39});
+    CHECK((f.ui.shape.frame == RectI{10, 10, 80, 40}));
+
+    // Wandering about does not leave anything behind: the box is a function of
+    // where the pointer is now and the box the drag began with.
+    for (const Point2f wander : {Point2f{12, 80}, Point2f{120, 14}, Point2f{31, 21}}) f.move(wander);
+    f.move({59, 34});
+    CHECK((f.ui.shape.frame == RectI{10, 10, 50, 25}));
+
+    // Letting go of Shift frees the box again, without a new press.
+    f.context.shift = false;
+    f.move({59, 39});
+    CHECK((f.ui.shape.frame == RectI{10, 10, 50, 30}));
+    f.context.shift = true;
+    f.release({59, 39});
+    CHECK((f.ui.shape.frame == RectI{10, 10, 60, 30}));
+
+    // An edge grip scales the other axis around its middle.
+    f.press({69, 24});
+    f.release({109, 24});
+    CHECK((f.ui.shape.frame == RectI{10, 0, 100, 50}));
+}
+
+void test_a_drawn_shape_moves_by_dragging_inside_it() {
+    Fixture f(ShapeId::Rectangle);
+    f.drag({20, 20}, {60, 50});
+
+    f.move({40, 35});
+    CHECK(f.ui.move.hover);
+    CHECK(f.ui.resize.cursor == ResizeCursor::None);
+    f.move({90, 90});
+    CHECK(!f.ui.move.hover);
+
+    f.press({40, 35});
+    CHECK(f.ui.move.dragging);
+    f.move({50, 45});
+    CHECK((f.ui.shape.frame == RectI{30, 30, 41, 31}));
+    f.release({50, 45});
+    CHECK(!f.ui.move.dragging);
+    CHECK(f.ui.move.hover);
+    f.tool.on_key_pressed(f.context, kKeyEnter);
+    CHECK(f.layer() == f.painted(ShapeId::Rectangle, {30, 30}, {70, 60}));
+}
+
+void test_a_drawn_line_moves_by_dragging_along_it() {
+    Fixture f(ShapeId::Line);
+    f.drag({10, 10}, {60, 40});
+    f.move({35, 25});
+    CHECK(f.ui.move.hover);
+    f.press({35, 25});
+    f.release({45, 35});
+    CHECK((same_points(f.ui.shape.points, {{20, 20}, {70, 50}})));
+}
+
+void test_a_drawn_shape_turns_by_dragging_outside_a_corner() {
+    Fixture f(ShapeId::Rectangle);
+    f.drag({20, 20}, {60, 50});
+
+    f.move({14, 35});
+    CHECK(f.ui.rotate.hover);
+    CHECK(!f.ui.move.hover);
+    CHECK(f.ui.resize.cursor == ResizeCursor::None);
+
+    f.press({14, 35});
+    CHECK(f.ui.rotate.rotating);
+    f.move({40, 9});
+    CHECK(f.ui.shape.rotation == 90.0f);
+    f.release({40, 9});
+    CHECK(!f.ui.rotate.rotating);
+    f.tool.on_key_pressed(f.context, kKeyEnter);
+    CHECK(f.layer() == f.painted(ShapeId::Rectangle, {20, 20}, {60, 50}, 90.0f));
+}
+
+void test_shift_snaps_the_turn_of_a_drawn_shape() {
+    Fixture f(ShapeId::Rectangle);
+    f.drag({20, 20}, {60, 50});
+    f.press({14, 35});
+    f.move({17, 16});  // 40 degrees on
+    CHECK(std::abs(f.ui.shape.rotation - 40.0f) < 1.0f);
+    f.context.shift = true;
+    f.move({17, 16});
+    CHECK(f.ui.shape.rotation == 45.0f);
+    f.release({17, 16});
+    // A second turn carries on from the angle the shape already has.
+    f.context.shift = false;
+    f.press({14, 35});
+    f.release({14, 35});
+    CHECK(f.ui.shape.rotation == 45.0f);
+}
+
+void test_a_turned_shape_resizes_from_the_opposite_corner() {
+    Fixture f(ShapeId::Rectangle);
+    f.drag({20, 20}, {60, 50});
+    f.press({14, 35});
+    f.release({40, 9});
+
+    // The grip moved with the shape: the south east corner is now below the box.
+    f.move({25, 55});
+    CHECK(f.ui.resize.cursor != ResizeCursor::None);
+    f.press({25, 55});
+    f.release({25, 65});
+    CHECK((f.ui.shape.frame == RectI{15, 25, 51, 31}));
+    CHECK(f.ui.shape.rotation == 90.0f);
+}
+
+void test_a_drawn_line_is_resized_by_its_ends() {
+    Fixture f(ShapeId::Line);
+    f.drag({10, 10}, {60, 40});
+    CHECK(f.ui.shape.visible);
+    CHECK(!f.ui.shape.frame.has_value());
+    CHECK((same_points(f.ui.shape.points, {{10, 10}, {60, 40}})));
+
+    f.move({60, 40});
+    CHECK(f.ui.resize.cursor != ResizeCursor::None);
+    f.move({35, 25});
+    CHECK(f.ui.resize.cursor == ResizeCursor::None);
+
+    f.press({60, 40});
+    f.move({70, 60});
+    f.release({80, 70});
+    CHECK((same_points(f.ui.shape.points, {{10, 10}, {80, 70}})));
+    f.tool.on_key_pressed(f.context, kKeyEnter);
+    CHECK(f.layer() == f.painted(ShapeId::Line, {10, 10}, {80, 70}));
+}
+
+void test_a_curve_shows_its_control_points() {
+    Fixture f(ShapeId::Curve);
+    f.press({10, 10});
+    f.move({60, 10});
+    CHECK((same_points(f.ui.shape.points, {{10, 10}, {60, 10}})));
+    f.release({60, 10});
+    // The bend starts halfway along the baseline.
+    CHECK((same_points(f.ui.shape.points, {{10, 10}, {60, 10}, {35, 10}})));
+
+    f.press({35, 40});
+    f.move({35, 50});
+    CHECK((same_points(f.ui.shape.points, {{10, 10}, {60, 10}, {35, 50}})));
+    f.release({35, 50});
+    CHECK(!f.ui.shape.visible);
+    CHECK(f.ui.shape.points.empty());
+}
+
+void test_resizing_depends_only_on_where_the_drag_ends() {
+    // The same box resized to the same place paints the same pixels however the
+    // pointer got there.
+    Fixture direct(ShapeId::Star5);
+    direct.drag({10, 10}, {49, 29});
+    direct.press({49, 29});
+    direct.release({89, 69});
+    direct.tool.on_key_pressed(direct.context, kKeyEnter);
+
+    Fixture wandering(ShapeId::Star5);
+    wandering.drag({10, 10}, {49, 29});
+    wandering.press({49, 29});
+    for (const Point2f at : {Point2f{12, 12}, Point2f{100, 5}, Point2f{20, 90}}) wandering.move(at);
+    wandering.release({89, 69});
+    wandering.tool.on_key_pressed(wandering.context, kKeyEnter);
+
+    CHECK(direct.layer() == wandering.layer());
+    CHECK(direct.layer() == direct.painted(ShapeId::Star5, {10, 10}, {89, 69}));
+}
+
 }  // namespace
 
 int main() {
     test_shift_constrains_shape_previews_and_commits();
+    test_a_drawn_shape_waits_until_something_else_is_pressed();
+    test_escape_drops_a_drawn_shape();
+    test_leaving_the_tool_paints_a_drawn_shape();
+    test_a_drawn_shape_resizes_by_its_grips();
+    test_shift_keeps_the_proportions_of_a_resized_shape();
+    test_a_drawn_shape_moves_by_dragging_inside_it();
+    test_a_drawn_line_moves_by_dragging_along_it();
+    test_a_drawn_shape_turns_by_dragging_outside_a_corner();
+    test_shift_snaps_the_turn_of_a_drawn_shape();
+    test_a_turned_shape_resizes_from_the_opposite_corner();
+    test_a_drawn_line_is_resized_by_its_ends();
+    test_a_curve_shows_its_control_points();
+    test_resizing_depends_only_on_where_the_drag_ends();
     test_every_kind_is_reachable();
     test_outlines_do_not_cross_themselves();
     test_fill_meets_the_outline_at_thin_thickness();

@@ -15,6 +15,17 @@ Built with [Slint](https://slint.dev) and C++.
 - Free rotation
 - Liquify and blur tools
 - Better color picker
+- New shortcuts (See shorts section below)
+
+**New Shortcuts:**
+
+- `Ctrl+shift+Z`: Redo (Also Ctrl+Y works)
+- `Ctrl+Alt+drag`: Change brush space
+- `Ctrl+space+drag`: Zoom in/out
+- `Space+drag`: pan
+- `E`: Switch to eraser
+- `P`: Switch to pencil or brush (whichever you last used)
+- `Esc`: Cancel current action
 
 Note: some custom cursors won't work on Wayland because of Wayland limitations.
 

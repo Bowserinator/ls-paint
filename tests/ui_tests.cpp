@@ -165,6 +165,9 @@ public:
         for (const char letter : text) key(std::string(1, letter));
     }
 
+    // A drawn shape is only a preview until it is committed; Enter paints it.
+    void commit_shape() { key("\n"); }
+
     [[nodiscard]] std::size_t popups() const {
         return slint::private_api::testing::active_popup_count(&*m_window);
     }
@@ -673,7 +676,14 @@ int run_ui_tests() {
     CHECK(h.overlay().get_visible());
     CHECK(h.count_color(418, 58, 472, 112, 0, 0, 255) == 0);
     h.release(origin.x + 470, origin.y + 110);
+    // The released shape stays a preview, with the grips of its box around it,
+    // until it is committed.
+    CHECK(h.overlay().get_visible());
+    CHECK(h.count_color(418, 58, 472, 112, 0, 0, 255) == 0);
+    CHECK(h.doc().get_grips()->row_count() == 8);
+    h.commit_shape();
     CHECK(!h.overlay().get_visible());
+    CHECK(h.doc().get_grips()->row_count() == 0);
     CHECK(h.count_color(418, 58, 472, 112, 0, 0, 255) > 0);
     CHECK(!h.color_near(445, 85, 0, 0, 255));  // an outline leaves the middle empty
 
@@ -700,6 +710,7 @@ int run_ui_tests() {
         h.shapes().set_kind(kinds[i]);
         h.drag(origin.x + float(x0), origin.y + float(y0), origin.x + float(x0 + 50),
                origin.y + float(y0 + 50));
+        h.commit_shape();
         CHECK(h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 0, 0, 255) > 0);
         h.controller().history().undo();
         (void)h.controller().document().flush();
@@ -719,6 +730,7 @@ int run_ui_tests() {
         h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::NONE);
         h.drag(origin.x + float(x0), origin.y + float(y0), origin.x + float(x0 + 50),
                origin.y + float(y0 + 50));
+        h.commit_shape();
         const int outline_ink = h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 0, 0, 255);
         h.controller().history().undo();
         (void)h.controller().document().flush();
@@ -726,6 +738,7 @@ int run_ui_tests() {
         h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::SOLID);
         h.drag(origin.x + float(x0), origin.y + float(y0), origin.x + float(x0 + 50),
                origin.y + float(y0 + 50));
+        h.commit_shape();
         CHECK(h.count_color(x0 - 2, y0 - 2, x0 + 52, y0 + 52, 255, 255, 0) > outline_ink);
         h.controller().history().undo();
         (void)h.controller().document().flush();
@@ -740,20 +753,24 @@ int run_ui_tests() {
     h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::NONE);
     h.shapes().set_thickness(1);
     h.drag(origin.x + 420, origin.y + 60, origin.x + 470, origin.y + 110);
+    h.commit_shape();
     const int thin_outline = h.count_color(418, 58, 472, 112, 0, 0, 255);
 
     h.shapes().set_thickness(6);
     h.drag(origin.x + 560, origin.y + 60, origin.x + 610, origin.y + 110);
+    h.commit_shape();
     CHECK(h.count_color(558, 58, 612, 112, 0, 0, 255) > thin_outline);
 
     h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::SOLID);
     h.shapes().set_thickness(1);
     h.drag(origin.x + 630, origin.y + 60, origin.x + 680, origin.y + 110);
+    h.commit_shape();
     CHECK(h.color_near(655, 85, 255, 255, 0));  // the fill takes Color 2, and
     CHECK(h.count_color(628, 58, 682, 112, 0, 0, 255) > 0);  // the border is drawn too
 
     h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::SOLID);
     h.drag(origin.x + 700, origin.y + 60, origin.x + 750, origin.y + 110);
+    h.commit_shape();
     CHECK(h.color_near(725, 85, 255, 255, 0));  // the interior takes Color 2
     CHECK(h.count_color(698, 58, 752, 112, 0, 0, 255) > 0);
 
@@ -788,6 +805,7 @@ int run_ui_tests() {
     CHECK(h.doc().get_has_selection());
     h.user().set_selected_tool(ETool::SHAPE);
     h.drag(origin.x + 400, origin.y + 300, origin.x + 560, origin.y + 350);
+    h.commit_shape();
     CHECK(h.count_color(402, 296, 498, 354, 0, 0, 255) > 0);
     CHECK(h.count_color(505, 296, 565, 354, 0, 0, 255) == 0);
     h.user().invoke_clear_selection();
@@ -892,6 +910,9 @@ int run_ui_tests() {
     CHECK(has_fill);
     CHECK(h.count_ink(418, 378, 502, 442) == 0);  // the preview never touches the paper
     h.release(origin.x + 500, origin.y + 440);
+    CHECK(h.overlay().get_visible());
+    CHECK(h.count_ink(418, 378, 502, 442) == 0);  // nor does the released shape
+    h.commit_shape();
     CHECK(!h.overlay().get_visible());
     CHECK(h.count_ink(418, 378, 502, 442) > 0);  // the crayon edge landed
     h.controller().history().undo();
@@ -902,7 +923,36 @@ int run_ui_tests() {
     h.press(origin.x + 560, origin.y + 380);
     h.move(origin.x + 640, origin.y + 440);
     h.release(origin.x + 640, origin.y + 440);
+    h.commit_shape();
     CHECK(h.count_ink(558, 378, 642, 442) == 0);
+
+    // 15l. A drawn shape can still be resized by its grips, Escape drops it, and
+    //      a curve shows the points it is bent by.
+    h.set_shape_textures(EShapeTexture::SOLID, EShapeTexture::NONE);
+    h.shapes().set_kind(EShapeKind::RECTANGLE);
+    h.drag(origin.x + 420, origin.y + 380, origin.x + 480, origin.y + 420);
+    CHECK(h.doc().get_grips()->row_count() == 8);
+    h.drag(origin.x + 480, origin.y + 420, origin.x + 520, origin.y + 450);  // the south east grip
+    CHECK(h.overlay().get_visible());
+    CHECK(h.count_ink(418, 378, 522, 452) == 0);  // still not on the paper
+    h.commit_shape();
+    CHECK(h.count_color(518, 448, 522, 452, 0, 0, 255) > 0);  // the box ends where the grip went
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
+
+    h.drag(origin.x + 420, origin.y + 380, origin.x + 480, origin.y + 420);
+    h.key("\x1b");
+    CHECK(!h.overlay().get_visible());
+    CHECK(h.doc().get_grips()->row_count() == 0);
+    CHECK(h.count_ink(418, 378, 522, 452) == 0);
+
+    h.shapes().set_kind(EShapeKind::CURVE);
+    h.drag(origin.x + 420, origin.y + 380, origin.x + 500, origin.y + 380);
+    CHECK(h.doc().get_grips()->row_count() == 3);  // both ends and the bend
+    h.commit_shape();
+    CHECK(h.doc().get_grips()->row_count() == 0);
+    h.controller().history().undo();
+    (void)h.controller().document().flush();
     h.user().set_selected_tool(ETool::PENCIL);
 
     // 16. Ctrl+wheel over the gray outside the paper zooms around the cursor

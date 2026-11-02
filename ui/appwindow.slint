@@ -378,6 +378,18 @@ export component AppWindow inherits Window {
     property <float> magnify-zoom: min(ZoomScale.max-zoom, UserState.zoom * root.magnify-step);
     property <float> magnify-ratio: UserState.zoom / root.magnify-zoom;
 
+    // Whether Shift changes what the tool is showing, so the pointer is reported
+    // again when the key goes up or down: a shape being drawn or resized, and a
+    // selection being resized.
+    property <bool> follows-shift: (UserState.selected-tool == ETool.SHAPE && ShapeOverlay.visible)
+        || (UserState.selected-tool == ETool.SELECTION && ResizeOverlay.cursor != EResizeCursor.NONE);
+
+    // The middle a turn pivots on: the selection's, or the shape's.
+    property <float> rotate-centre-x: UserState.selected-tool == ETool.SHAPE ? RotateOverlay.centre-x
+        : DocumentState.selection-x + DocumentState.selection-width / 2.0;
+    property <float> rotate-centre-y: UserState.selected-tool == ETool.SHAPE ? RotateOverlay.centre-y
+        : DocumentState.selection-y + DocumentState.selection-height / 2.0;
+
     // Whether the window draws the pointer over the paper instead of the system.
     // The magnifier draws its own pointer, and the text tool keeps the system
     // one while its box is open, because the box has a pointer of its own.
@@ -397,7 +409,7 @@ export component AppWindow inherits Window {
         height: 100%;
 
         key-pressed(event) => {
-            if (UserState.selected-tool == ETool.SHAPE && ShapeOverlay.visible) {
+            if (root.follows-shift) {
                 UserState.pointer-move(UserState.cursor-x * 1px, UserState.cursor-y * 1px, event.modifiers.shift);
             }
             if (event.text == "\u{1b}" && UserState.selected-tool == ETool.TEXT) {
@@ -425,7 +437,7 @@ export component AppWindow inherits Window {
         }
 
         key-released(event) => {
-            if (UserState.selected-tool == ETool.SHAPE && ShapeOverlay.visible) {
+            if (root.follows-shift) {
                 UserState.pointer-move(UserState.cursor-x * 1px, UserState.cursor-y * 1px, event.modifiers.shift);
             }
             if (event.text == " ") {
@@ -1144,15 +1156,16 @@ export component AppWindow inherits Window {
 
                     // The badge at the pointer, while it is over the rotate zone
                     // or turning the contents.
-                    if UserState.selected-tool == ETool.SELECTION && UserState.cursor-on-canvas
+                    if (UserState.selected-tool == ETool.SELECTION || UserState.selected-tool == ETool.SHAPE)
+                        && UserState.cursor-on-canvas
                         && !root.pan-cursor
                         && (RotateOverlay.hover || RotateOverlay.rotating) : RotateBadge {
                         x: root.canvas-origin + UserState.cursor-x * UserState.zoom * 1px - 12phx;
                         y: root.canvas-origin + UserState.cursor-y * UserState.zoom * 1px - 12phx;
-                        corner: UserState.cursor-x < DocumentState.selection-x + DocumentState.selection-width / 2.0
-                            ? (UserState.cursor-y < DocumentState.selection-y + DocumentState.selection-height / 2.0
+                        corner: UserState.cursor-x < root.rotate-centre-x
+                            ? (UserState.cursor-y < root.rotate-centre-y
                                 ? ERotateCorner.NW : ERotateCorner.SW)
-                            : (UserState.cursor-y < DocumentState.selection-y + DocumentState.selection-height / 2.0
+                            : (UserState.cursor-y < root.rotate-centre-y
                                 ? ERotateCorner.NE : ERotateCorner.SE);
                     }
 
@@ -1194,7 +1207,8 @@ export component AppWindow inherits Window {
                     }
 
                     // The badge at the pointer, while it is over a resize grip.
-                    if (UserState.selected-tool == ETool.SELECTION || UserState.selected-tool == ETool.TEXT)
+                    if (UserState.selected-tool == ETool.SELECTION || UserState.selected-tool == ETool.TEXT
+                        || UserState.selected-tool == ETool.SHAPE)
                         && UserState.cursor-on-canvas
                         && !root.pan-cursor
                         && ResizeOverlay.cursor != EResizeCursor.NONE : ResizeBadge {
@@ -1207,7 +1221,7 @@ export component AppWindow inherits Window {
                     // the paper except the rotate badge's own pointer.
                     if UserState.cursor-on-canvas && root.custom-cursor && !root.pan-cursor
                         && ResizeOverlay.cursor == EResizeCursor.NONE
-                        && !(UserState.selected-tool == ETool.SELECTION
+                        && !((UserState.selected-tool == ETool.SELECTION || UserState.selected-tool == ETool.SHAPE)
                             && (RotateOverlay.hover || RotateOverlay.rotating)) : CanvasCursor {
                         x: 0px;
                         y: 0px;

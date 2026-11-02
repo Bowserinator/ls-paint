@@ -17,14 +17,9 @@ namespace {
 // A click this close to the polygon's first vertex closes the lasso.
 constexpr float kClosePolygonDistance = 6.0f;
 
-// How close, in screen pixels, a pointer has to be to a grip to take it: the
-// reach of the grip as drawn, whatever the zoom.
-constexpr float kHandleHitRadius = 3.5f;
-
-// How far from a corner a press still starts a turn, the steps Shift snaps a
-// turn to, and the turn below which a drag is treated as a click.
+// How far from a corner a press still starts a turn, and the turn below which
+// a drag is treated as a click.
 constexpr float kRotateHitRadius = 24.0f;
-constexpr float kRotateStepDegrees = 45.0f;
 constexpr float kMinRotateDegrees = 1.0f;
 
 RectI rect_from_corners(Point2f a, Point2f b) {
@@ -40,17 +35,6 @@ RectI rect_from_corners(Point2f a, Point2f b) {
 RectI marquee_rect(Point2f a, Point2f b) {
     if (floor_to_int(a.x) == floor_to_int(b.x) && floor_to_int(a.y) == floor_to_int(b.y)) return {};
     return rect_from_corners(a, b);
-}
-
-// True when a press at `position` would start a turn: near a corner, but not on
-// a resize grip or inside the selection, which take the press first.
-bool in_rotate_zone(RectI bounds, Point2f position, float zoom) {
-    if (handle_at(bounds, position, zoom) || bounds.contains(position)) return false;
-    constexpr std::array kCorners{SelectionHandle::Nw, SelectionHandle::Ne, SelectionHandle::Se,
-                                  SelectionHandle::Sw};
-    for (const SelectionHandle corner : kCorners)
-        if (distance(handle_anchor(bounds, corner), position) <= kRotateHitRadius) return true;
-    return false;
 }
 
 // Records whether a press at the pointer would grab a grip, so the UI can show
@@ -96,11 +80,95 @@ Point2f rotate_pivot(RectI bounds, const std::optional<FloatingContents>& floati
     return rect_centre(bounds);
 }
 
-// The pointer's bearing from a point, in degrees. Canvas y runs down, so a
-// growing bearing is a turn to the right, which is the sense the contents turn
-// in as well.
+}  // namespace
+
+bool in_rotate_zone(RectI bounds, Point2f position, float zoom) {
+    if (handle_at(bounds, position, zoom) || bounds.contains(position)) return false;
+    constexpr std::array kCorners{SelectionHandle::Nw, SelectionHandle::Ne, SelectionHandle::Se,
+                                  SelectionHandle::Sw};
+    for (const SelectionHandle corner : kCorners)
+        if (distance(handle_anchor(bounds, corner), position) <= kRotateHitRadius) return true;
+    return false;
+}
+
 float bearing_degrees(Point2f centre, Point2f position) {
     return degrees_from_radians(std::atan2(position.y - centre.y, position.x - centre.x));
+}
+
+namespace {
+
+// The sides of a box a grip moves.
+struct MovedSides {
+    bool west;
+    bool east;
+    bool north;
+    bool south;
+};
+
+MovedSides sides_moved_by(SelectionHandle handle) {
+    return {handle == SelectionHandle::Nw || handle == SelectionHandle::Sw || handle == SelectionHandle::W,
+            handle == SelectionHandle::Ne || handle == SelectionHandle::Se || handle == SelectionHandle::E,
+            handle == SelectionHandle::Nw || handle == SelectionHandle::Ne || handle == SelectionHandle::N,
+            handle == SelectionHandle::Sw || handle == SelectionHandle::Se || handle == SelectionHandle::S};
+}
+
+// How far a box may stretch along one axis: from the fixed side to the canvas
+// edge the grip heads for, or around its middle when the grip leaves the axis
+// alone.
+int room_along(int start, int length, bool toward_low, bool toward_high, int low, int high) {
+    if (toward_high) return high - start;
+    if (toward_low) return start + length - low;
+    return std::min(2 * start + length - 2 * low, 2 * high - (2 * start + length));
+}
+
+// Where a box of `length` starts along one axis, given which side stays put.
+// A box that grows around its middle keeps its middle.
+int origin_along(int start, int start_length, int length, bool toward_low, bool toward_high, int low,
+                 int high) {
+    int origin = start;
+    if (toward_low)
+        origin = start + start_length - length;
+    else if (!toward_high)
+        origin = start + static_cast<int>(std::floor((start_length - length) / 2.0));
+    return std::clamp(origin, low, std::max(low, high - length));
+}
+
+// The box dragging `handle` to `position` makes when it keeps the proportions
+// of `start`. One scale factor, worked out from `start` alone, sizes both sides,
+// so no frame of the drag depends on the one before it. A corner follows the
+// pointer on whichever axis it has travelled further along, an edge grip scales
+// the other axis around its middle.
+RectI resized_keeping_aspect(RectI start, SelectionHandle handle, Point2f position, RectI canvas) {
+    const auto [west, east, north, south] = sides_moved_by(handle);
+    const int px = round_to_int(position.x);
+    const int py = round_to_int(position.y);
+
+    const int wanted_width = east ? px + 1 - start.x : west ? start.right() - px : start.width;
+    const int wanted_height = south ? py + 1 - start.y : north ? start.bottom() - py : start.height;
+    const float across = static_cast<float>(wanted_width) / static_cast<float>(start.width);
+    const float down = static_cast<float>(wanted_height) / static_cast<float>(start.height);
+
+    float scale = across;
+    if ((west || east) && (north || south))
+        scale = std::max(across, down);
+    else if (north || south)
+        scale = down;
+
+    const int room_x = room_along(start.x, start.width, west, east, canvas.x, canvas.right());
+    const int room_y = room_along(start.y, start.height, north, south, canvas.y, canvas.bottom());
+    // Never smaller than the smallest box that still has the proportions.
+    const float smallest =
+        std::max(1.0f / static_cast<float>(start.width), 1.0f / static_cast<float>(start.height));
+    scale = std::min({std::max(scale, smallest), static_cast<float>(room_x) / static_cast<float>(start.width),
+                      static_cast<float>(room_y) / static_cast<float>(start.height)});
+
+    const int width = std::clamp(round_to_int(static_cast<float>(start.width) * scale), 1,
+                                 std::max(1, room_x));
+    const int height = std::clamp(round_to_int(static_cast<float>(start.height) * scale), 1,
+                                  std::max(1, room_y));
+    return {origin_along(start.x, start.width, width, west, east, canvas.x, canvas.right()),
+            origin_along(start.y, start.height, height, north, south, canvas.y, canvas.bottom()), width,
+            height};
 }
 
 }  // namespace
@@ -126,7 +194,11 @@ ResizeCursor resize_cursor_for(SelectionHandle handle) {
     return ResizeCursor::DiagonalNeSw;
 }
 
-RectI resized_bounds(RectI start, SelectionHandle handle, Point2f position, RectI canvas) {
+RectI resized_bounds(RectI start, SelectionHandle handle, Point2f position, RectI canvas,
+                     bool keep_aspect) {
+    if (keep_aspect && start.width > 0 && start.height > 0)
+        return resized_keeping_aspect(start, handle, position, canvas);
+
     int left = start.x;
     int top = start.y;
     int right = start.x + start.width;
@@ -300,7 +372,8 @@ void SelectionTool::on_pointer_move(ToolContext& context, Point2f position) {
     }
 
     if (m_drag == Drag::Resize) {
-        const RectI next = resized_bounds(m_resize_bounds, m_handle, position, context.document.bounds());
+        const RectI next = resized_bounds(m_resize_bounds, m_handle, position, context.document.bounds(),
+                                          context.shift);
         if (next == m_resize_applied) return;
         m_resize_applied = next;
         // Rebuild from the drag's snapshot, and let the resize resample the
@@ -392,7 +465,8 @@ void SelectionTool::finish_resize_drag(ToolContext& context, Point2f position) {
     SelectionMask& selection = context.document.selection();
     std::optional<FloatingContents>& floating = context.document.floating();
 
-    const RectI next = resized_bounds(m_resize_bounds, m_handle, position, context.document.bounds());
+    const RectI next = resized_bounds(m_resize_bounds, m_handle, position, context.document.bounds(),
+                                          context.shift);
     // Always rebuild from the snapshot: the last frame may be somewhere else
     // entirely, and a drag that came back to the start has to end up pristine.
     selection = m_mask_before;

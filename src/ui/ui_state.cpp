@@ -295,6 +295,40 @@ std::vector<SelectionGrip> grip_centres(const RectI& bounds, float scale) {
     return grips;
 }
 
+// The pixel centres, in device pixels, of the corners of a shape's box turned
+// the way the shape is, closed back onto the first.
+std::vector<Point2f> turned_frame(const RectI& frame, float rotation, float scale) {
+    std::vector<Point2f> points;
+    for (const SelectionHandle handle : {SelectionHandle::Nw, SelectionHandle::Ne, SelectionHandle::Se,
+                                         SelectionHandle::Sw}) {
+        const Point2f corner = shape::turned_about_middle(frame, handle_anchor(frame, handle), rotation);
+        points.push_back({(corner.x + 0.5f) * scale, (corner.y + 0.5f) * scale});
+    }
+    points.push_back(points.front());
+    return points;
+}
+
+// The centres of the grips of a shape that can still be edited, in device
+// pixels like the selection's: its box's, then one on each pixel it is grabbed
+// by.
+std::vector<SelectionGrip> shape_grip_centres(const ShapePreview& shape, float scale) {
+    std::vector<SelectionGrip> grips;
+    if (shape.frame && shape.frame->width >= kMinHandleSpan && shape.frame->height >= kMinHandleSpan) {
+        if (shape.rotation == 0.0f) {
+            grips = grip_centres(*shape.frame, scale);
+        } else {
+            for (const SelectionHandle handle : kSelectionHandles) {
+                const Point2f anchor = shape::turned_about_middle(
+                    *shape.frame, handle_anchor(*shape.frame, handle), shape.rotation);
+                grips.push_back({(anchor.x + 0.5f) * scale, (anchor.y + 0.5f) * scale});
+            }
+        }
+    }
+    for (const Point2f& point : shape.points)
+        grips.push_back({(point.x + 0.5f) * scale, (point.y + 0.5f) * scale});
+    return grips;
+}
+
 CanvasDocument::Rotation rotation_from_slint(ERotation rotation) {
     switch (rotation) {
         case ERotation::CCW90: return CanvasDocument::Rotation::Ccw90;
@@ -623,8 +657,15 @@ UiState::UiState(AppWindow& window, AppController& controller)
         }
         // Enter and Escape end the active tool's own gesture (a polygon); the
         // shortcut table below only ever sees what that leaves behind.
+        const bool shape_held = m_controller.tool_ui().shape.visible;
         m_controller.input().key(
             tool_from_slint(m_window.global<UserState>().get_selected_tool()), std::string_view(text));
+        // Painting or dropping a shape is all that key does: Escape must not
+        // also deselect.
+        if (shape_held && !m_controller.tool_ui().shape.visible) {
+            refresh();
+            return;
+        }
         const auto action = lookup_shortcut(std::string_view(text), ctrl, shift, alt);
         if (!action) return;
         sync_colors();  // the controller otherwise only sees colors set by a pointer press
@@ -1937,14 +1978,19 @@ void UiState::update_ants() {
     // A gesture that is still being drawn has no mask yet, so its outline comes
     // from the path the tool has published so far.
     const SelectionPreview& preview = m_controller.tool_ui().selection;
-    const bool drawing = preview.points.size() >= 2;
+    const bool lassoing = preview.points.size() >= 2;
 
-    // The grip pointer only makes sense while there is a selection or an open
-    // text box to grip.
+    // The grip pointer only makes sense while there is a selection, an open text
+    // box or a drawn shape to grip.
     const ETool tool = m_window.global<UserState>().get_selected_tool();
     const TextOverlayState& text = m_controller.tool_ui().text;
     const bool text_gripped = text.visible && tool == ETool::TEXT;
-    const bool gripping = (visible && tool == ETool::SELECTION) || text_gripped;
+    const ShapePreview& shape = m_controller.tool_ui().shape;
+    const bool shape_gripped = shape.visible && tool == ETool::SHAPE && (shape.frame || !shape.points.empty());
+    // A shape's box is outlined like a selection.
+    const bool framed = shape_gripped && shape.frame.has_value();
+    const bool drawing = lassoing || framed;
+    const bool gripping = (visible && tool == ETool::SELECTION) || text_gripped || shape_gripped;
     auto& resize_state = m_window.global<ResizeOverlay>();
     const EResizeCursor resize_cursor =
         gripping ? resize_cursor_to_slint(m_controller.tool_ui().resize.cursor) : EResizeCursor::NONE;
@@ -1975,7 +2021,7 @@ void UiState::update_ants() {
         }
     }
 
-    if (!visible && !drawing) {
+    if (!visible && !drawing && !shape_gripped) {
         // Written only when a selection actually disappears: this runs on a
         // timer, and assigning fresh models every tick would repaint forever.
         if (m_ants_visible) {
@@ -2018,7 +2064,11 @@ void UiState::update_ants() {
             upright = true;
         }
     }
-    if (drawing) outlines.push_back({scaled(preview.points, scale), false});
+    if (framed && shape.rotation != 0.0f)
+        outlines.push_back({turned_frame(*shape.frame, shape.rotation, scale), false});
+    else if (framed)
+        outlines.push_back({border_outline(*shape.frame, scale), true});
+    if (lassoing) outlines.push_back({scaled(preview.points, scale), false});
 
     // An outline far longer than the window only needs the part that can be
     // seen. A short one is drawn whole.
@@ -2075,6 +2125,8 @@ void UiState::update_ants() {
         grips = grip_centres(bounds, scale);
     } else if (text_gripped) {
         grips = std::move(text_grips);
+    } else if (shape_gripped) {
+        grips = shape_grip_centres(shape, scale);
     }
     m_text_grips_key.clear();
     publish_grips(std::move(grips));
@@ -2089,6 +2141,9 @@ void UiState::update_ants() {
         zone.set_hover(rotate.hover);
         zone.set_rotating(rotate.rotating);
     }
+    auto& zone = m_window.global<RotateOverlay>();
+    if (zone.get_centre_x() != rotate.centre.x) zone.set_centre_x(rotate.centre.x);
+    if (zone.get_centre_y() != rotate.centre.y) zone.set_centre_y(rotate.centre.y);
 }
 
 void UiState::set_title() {

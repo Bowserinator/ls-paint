@@ -1,8 +1,9 @@
 import { Win10, WinButton } from "../win10.slint";
 
-// The question asked before throwing work away. A real window, so the window
-// manager draws the title bar and its close button; the face, the text and the
-// three answers wear the Windows 10 colors and controls the other dialogs use.
+// The question asked before throwing work away, laid out like a Windows message
+// box: the question in blue on a white panel, the three answers on the gray
+// strip below it. A real window, so the window manager draws the title bar and
+// its close button.
 export component ConfirmDialog inherits Window {
     title: "LS Paint";
     width: 380px;
@@ -24,22 +25,31 @@ export component ConfirmDialog inherits Window {
         border-color: Win10.frame-color;
 
         body := VerticalLayout {
-            padding: 12px;
-            spacing: 10px;
+            padding: Win10.frame-width;
 
-            Text {
-                text: root.message;
-                wrap: word-wrap;
+            Rectangle {
+                background: Win10.field-color;
                 vertical-stretch: 1;
-                horizontal-stretch: 1;
-                font-size: Win10.font-size;
-                color: Win10.text-color;
+
+                VerticalLayout {
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    padding-top: 13px;
+                    padding-bottom: 26px;
+
+                    Text {
+                        text: root.message;
+                        wrap: word-wrap;
+                        font-size: Win10.font-size * 1.2;
+                        color: Win10.message-color;
+                    }
+                }
             }
 
             HorizontalLayout {
+                padding: 12px;
                 alignment: end;
                 spacing: 8px;
-                horizontal-stretch: 1;
 
                 WinButton {
                     text: "Save";

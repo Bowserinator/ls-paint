@@ -11,6 +11,7 @@
 
 #include "brushes/brush_engine.hpp"
 #include "selection/selection_mask.hpp"
+#include "selection/selection_ops.hpp"
 #include "tools/stroke_recorder.hpp"
 #include "tools/tool_context.hpp"
 #include "utils/key_text.hpp"
@@ -311,30 +312,48 @@ std::vector<Point2f> polygon_glyph(RectI box) {
     return fit_to_box(box, unit);
 }
 
+// The middle of a drag box's pixels, which the outline of every closed kind is
+// laid out around.
+Point2f middle_of(RectI box) {
+    return {static_cast<float>(box.x) + static_cast<float>(box.width - 1) / 2.0f,
+            static_cast<float>(box.y) + static_cast<float>(box.height - 1) / 2.0f};
+}
+
+// The outline turned about the middle of the drag box.
+std::vector<Point2f> turned_outline(ShapeId kind, Point2f a, Point2f b,
+                                    std::span<const Point2f> polygon, float rotation) {
+    std::vector<Point2f> points = shape::outline(kind, a, b, polygon);
+    if (rotation == 0.0f || !shape::is_closed(kind)) return points;
+    const RectI box = shape::normalized_rect(a, b);
+    for (Point2f& point : points) point = shape::turned_about_middle(box, point, rotation);
+    return points;
+}
+
 RectI shape_bounds(ShapeId kind, Point2f a, Point2f b, std::span<const Point2f> polygon,
-                   int thickness) {
-    switch (kind) {
-        case ShapeId::Rectangle:
-        case ShapeId::Oval:
-        case ShapeId::RoundedRect:
-            return raster::bounds_rect(shape::normalized_rect(a, b), thickness);
-        default: break;
+                   int thickness, float rotation = 0.0f) {
+    if (rotation == 0.0f) {
+        switch (kind) {
+            case ShapeId::Rectangle:
+            case ShapeId::Oval:
+            case ShapeId::RoundedRect:
+                return raster::bounds_rect(shape::normalized_rect(a, b), thickness);
+            default: break;
+        }
     }
-    return raster::bounds_points(shape::outline(kind, a, b, polygon), thickness);
+    return raster::bounds_points(turned_outline(kind, a, b, polygon, rotation), thickness);
 }
 
 // Paints the finished shape into the active layer as one history entry.
 void commit_shape(ToolContext& context, ShapeId kind, Point2f a, Point2f b,
-                  std::span<const Point2f> polygon, PointerButton button) {
-    const ShapeOptions& options = context.shape_options;
-    const RectI region = shape_bounds(kind, a, b, polygon, clamped_thickness(options))
+                  std::span<const Point2f> polygon, const ShapePaint& paint, float rotation = 0.0f) {
+    const RectI region = shape_bounds(kind, a, b, polygon, clamped_thickness(paint.options), rotation)
                              .intersected(context.document.bounds());
     if (region.empty()) return;
 
     const LayerTarget layer = context.layer_target();
     StrokeRecorder recorder(context.document);
-    rasterize_shape(layer.target(), kind, a, b, polygon, options, context.colors.ink(button),
-                    context.colors.other_ink(button));
+    rasterize_shape(layer.target(), kind, a, b, polygon, paint.options, paint.outline, paint.fill,
+                    rotation);
     recorder.touch(region);
     recorder.commit(context.history);
 }
@@ -490,6 +509,17 @@ bool shape::is_closed(ShapeId kind) {
     return kind != ShapeId::Line && kind != ShapeId::Curve;
 }
 
+Point2f shape::turned_about_middle(RectI box, Point2f point, float degrees) {
+    if (degrees == 0.0f) return point;
+    const Point2f middle = middle_of(box);
+    const float radians = radians_from_degrees(degrees);
+    const float cosine = std::cos(radians);
+    const float sine = std::sin(radians);
+    const float dx = point.x - middle.x;
+    const float dy = point.y - middle.y;
+    return {middle.x + dx * cosine - dy * sine, middle.y + dx * sine + dy * cosine};
+}
+
 std::vector<Point2f> shape::outline(ShapeId kind, Point2f a, Point2f b,
                                     std::span<const Point2f> polygon) {
     if (kind == ShapeId::Polygon) return {polygon.begin(), polygon.end()};
@@ -555,7 +585,7 @@ std::string shape::gallery_commands(ShapeId kind, RectI box) {
 
 void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
                      std::span<const Point2f> polygon, const ShapeOptions& options,
-                     Rgba8 outline_color, Rgba8 fill_color) {
+                     Rgba8 outline_color, Rgba8 fill_color, float rotation_degrees) {
     // An open shape has no interior, so a fill texture cannot be laid down.
     const bool open = !shape::is_closed(kind);
     const bool wants_outline = options.outline != ShapeTexture::None;
@@ -564,7 +594,8 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
     const bool solid_fill = options.fill == ShapeTexture::Solid;
     const int thickness = clamped_thickness(options);
     const RectI box = shape::normalized_rect(a, b);
-    const bool plain = (solid_outline || !wants_outline) && (solid_fill || !wants_fill);
+    const bool plain = rotation_degrees == 0.0f && (solid_outline || !wants_outline) &&
+                       (solid_fill || !wants_fill);
 
     // Rectangle, ellipse and rounded rectangle keep their own primitives: they
     // are exact at every size, where a sampled outline would cut thin corners.
@@ -591,7 +622,7 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
         }
     }
 
-    const std::vector<Point2f> points = shape::outline(kind, a, b, polygon);
+    const std::vector<Point2f> points = turned_outline(kind, a, b, polygon, rotation_degrees);
     if (points.size() < 2) return;
     if (wants_fill) {
         if (solid_fill) {
@@ -623,21 +654,35 @@ void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
 
 namespace {
 
+// The look a shape drawn by `button` gets from the options and colors as they
+// stand now.
+ShapePaint paint_for(const ToolContext& context, PointerButton button) {
+    return {context.shape_options, context.colors.ink(button), context.colors.other_ink(button)};
+}
+
+// The pixel a point lands on.
+Point2f pixel_of(Point2f point) {
+    return {static_cast<float>(round_to_int(point.x)), static_cast<float>(round_to_int(point.y))};
+}
+
 // Paints the preview with the same code the commit runs: on a transparent sheet
 // laid over the document, held back by the same selection. The sheet only
 // costs memory where it is painted.
 template <typename Paint>
-void publish_preview(ToolContext& context, RectI area, Paint paint) {
+void publish_preview(ToolContext& context, RectI area, int thickness, Paint paint) {
     static std::uint64_t revision = 0;
     ShapePreview& preview = context.ui.shape;
     preview.visible = true;
     preview.pixels = PixelBuffer();
     preview.region = {};
+    preview.frame.reset();
+    preview.points.clear();
+    preview.rotation = 0.0f;
     preview.revision = ++revision;
     if (area.empty()) return;
 
     // Textured edges reach a little past the geometry.
-    const int pad = 2 * clamped_thickness(context.shape_options) + 2;
+    const int pad = 2 * thickness + 2;
     preview.region = RectI{area.x - pad, area.y - pad, area.width + 2 * pad, area.height + 2 * pad}
                          .intersected(context.document.bounds());
     if (preview.region.empty()) return;
@@ -649,34 +694,63 @@ void publish_preview(ToolContext& context, RectI area, Paint paint) {
 }
 
 void publish_shape(ToolContext& context, ShapeId kind, Point2f a, Point2f b,
-                   std::span<const Point2f> polygon, PointerButton button) {
-    const ShapeOptions& options = context.shape_options;
-    const Rgba8 outline_color = context.colors.ink(button);
-    const Rgba8 fill_color = context.colors.other_ink(button);
-    publish_preview(context, shape_bounds(kind, a, b, polygon, clamped_thickness(options)),
+                   std::span<const Point2f> polygon, const ShapePaint& paint,
+                   float rotation = 0.0f) {
+    const int thickness = clamped_thickness(paint.options);
+    publish_preview(context, shape_bounds(kind, a, b, polygon, thickness, rotation), thickness,
                     [&](raster::Target target) {
-                        rasterize_shape(target, kind, a, b, polygon, options, outline_color, fill_color);
+                        rasterize_shape(target, kind, a, b, polygon, paint.options, paint.outline,
+                                        paint.fill, rotation);
                     });
 }
 
 // A polygon still being laid out is only its edges so far.
-void publish_open_polygon(ToolContext& context, std::span<const Point2f> points, PointerButton button) {
-    const ShapeOptions& options = context.shape_options;
+void publish_open_polygon(ToolContext& context, std::span<const Point2f> points,
+                          const ShapePaint& paint) {
+    const ShapeOptions& options = paint.options;
     const int thickness = clamped_thickness(options);
-    const Rgba8 color = context.colors.ink(button);
-    publish_preview(context, raster::bounds_points(points, thickness), [&](raster::Target target) {
+    publish_preview(context, raster::bounds_points(points, thickness), thickness,
+                    [&](raster::Target target) {
         if (options.outline == ShapeTexture::None || points.size() < 2) return;
         if (options.outline == ShapeTexture::Solid) {
-            raster::draw_polyline(target, points, thickness, color, false);
+            raster::draw_polyline(target, points, thickness, paint.outline, false);
         } else {
-            stroke_texture(target, points, thickness, options.outline, color, false);
+            stroke_texture(target, points, thickness, options.outline, paint.outline, false);
         }
     });
 }
 
+// A pointer shape along the line, for the grip at one of its ends.
+ResizeCursor line_cursor(Point2f a, Point2f b) {
+    const float dx = std::abs(b.x - a.x);
+    const float dy = std::abs(b.y - a.y);
+    if (dx >= 2.0f * dy) return ResizeCursor::Horizontal;
+    if (dy >= 2.0f * dx) return ResizeCursor::Vertical;
+    return (b.x - a.x) * (b.y - a.y) >= 0.0f ? ResizeCursor::DiagonalNwSe : ResizeCursor::DiagonalNeSw;
+}
+
+// How far a point is from the nearest point of the segment.
+float distance_to_segment(Point2f point, Point2f a, Point2f b) {
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    const float length_squared = dx * dx + dy * dy;
+    float t = 0.0f;
+    if (length_squared > 0.0f) t = ((point.x - a.x) * dx + (point.y - a.y) * dy) / length_squared;
+    t = std::clamp(t, 0.0f, 1.0f);
+    return distance(point, {a.x + t * dx, a.y + t * dy});
+}
+
+// Where a resized drag box may reach: the pointer is not held to the canvas, as
+// it is not while a shape is first dragged out.
+constexpr RectI kUnboundedBox{-(1 << 20), -(1 << 20), 1 << 21, 1 << 21};
+
 }  // namespace
 
 void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerButton button) {
+    if (m_pending) {
+        if (grab_pending(context, position)) return;
+        commit_pending(context);
+    }
     if (m_curve_pending) {
         if (context.shape_options.kind == ShapeId::Curve) {
             m_bending = true;
@@ -696,7 +770,7 @@ void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerB
     if (!m_polygon_open) {
         m_polygon_open = true;
         m_polygon = {position};
-        m_button = button;
+        m_paint = paint_for(context, button);
         update_preview(context, position);
         return;
     }
@@ -711,9 +785,17 @@ void ShapeTool::on_pointer_down(ToolContext& context, Point2f position, PointerB
 }
 
 void ShapeTool::on_pointer_move(ToolContext& context, Point2f position) {
+    if (m_edit != Edit::None) {
+        edit_pending(context, position);
+        return;
+    }
     if (m_bending) {
         m_curve_control = position;
         update_curve_preview(context);
+        return;
+    }
+    if (m_pending) {
+        hover_pending(context, position);
         return;
     }
     if (!m_dragging && !m_polygon_open) return;
@@ -721,6 +803,14 @@ void ShapeTool::on_pointer_move(ToolContext& context, Point2f position) {
 }
 
 void ShapeTool::on_pointer_up(ToolContext& context, Point2f position) {
+    if (m_edit != Edit::None) {
+        edit_pending(context, position);
+        m_edit = Edit::None;
+        context.ui.move.dragging = false;
+        context.ui.rotate.rotating = false;
+        hover_pending(context, position);
+        return;
+    }
     if (m_bending) {
         m_curve_control = position;
         commit_curve(context);
@@ -733,7 +823,7 @@ void ShapeTool::on_pointer_up(ToolContext& context, Point2f position) {
     }
     if (!m_dragging) return;
     m_dragging = false;
-    if (context.shape_options.kind == ShapeId::Curve && distance(m_origin, position) >= 1.0f) {
+    if (m_kind == ShapeId::Curve && distance(m_origin, position) >= 1.0f) {
         // The first drag only lays out the baseline; the next one bends it.
         m_curve_pending = true;
         m_curve_end = position;
@@ -741,11 +831,15 @@ void ShapeTool::on_pointer_up(ToolContext& context, Point2f position) {
         update_curve_preview(context);
         return;
     }
-    commit_drag(context, position);
-    context.ui.shape.visible = false;
+    finish_drag(context, position);
 }
 
 void ShapeTool::on_key_pressed(ToolContext& context, std::string_view text) {
+    if (m_pending) {
+        if (text == kKeyEnter) commit_pending(context);
+        if (text == kKeyEscape) cancel_pending(context);
+        return;
+    }
     if (m_curve_pending) {
         if (text == kKeyEnter) commit_curve(context);
         if (text == kKeyEscape) cancel_curve(context);
@@ -774,15 +868,16 @@ void ShapeTool::on_double_click(ToolContext& context) {
 }
 
 void ShapeTool::on_deactivate(ToolContext& context) {
+    commit_pending(context);
     cancel_polygon(context);
     cancel_curve(context);
     m_bending = false;
     m_dragging = false;
-    context.ui.shape.visible = false;
+    hide_preview(context);
 }
 
 Point2f ShapeTool::constrained_end(const ToolContext& context, Point2f end) const {
-    if (!context.shift || !shape::is_closed(context.shape_options.kind)) return end;
+    if (!context.shift || !shape::is_closed(m_kind)) return end;
     const int x = round_to_int(m_origin.x);
     const int y = round_to_int(m_origin.y);
     const int dx = round_to_int(end.x) - x;
@@ -794,7 +889,9 @@ Point2f ShapeTool::constrained_end(const ToolContext& context, Point2f end) cons
 
 void ShapeTool::start_drag(ToolContext& context, Point2f position, PointerButton button) {
     m_dragging = true;
-    m_button = button;
+    m_kind = context.shape_options.kind;
+    m_paint = paint_for(context, button);
+    m_rotation = 0.0f;
     m_origin = position;
     update_preview(context, position);
 }
@@ -804,40 +901,43 @@ void ShapeTool::update_preview(ToolContext& context, Point2f cursor) {
     if (m_polygon_open) {
         std::vector<Point2f> points = m_polygon;
         points.push_back(cursor);
-        publish_open_polygon(context, points, m_button);
+        publish_open_polygon(context, points, m_paint);
         return;
     }
     cursor = constrained_end(context, cursor);
     // A curve is a straight baseline until it is bent.
     const Point2f middle = midpoint(m_origin, cursor);
-    const std::span<const Point2f> bend = context.shape_options.kind == ShapeId::Curve
-                                              ? std::span<const Point2f>(&middle, 1)
-                                              : std::span<const Point2f>();
-    publish_shape(context, context.shape_options.kind, m_origin, cursor, bend, m_button);
+    const std::span<const Point2f> bend =
+        m_kind == ShapeId::Curve ? std::span<const Point2f>(&middle, 1) : std::span<const Point2f>();
+    publish_shape(context, m_kind, m_origin, cursor, bend, m_paint);
+    if (!shape::is_closed(m_kind)) context.ui.shape.points = {pixel_of(m_origin), pixel_of(cursor)};
 }
 
 void ShapeTool::update_curve_preview(ToolContext& context) {
-    publish_shape(context, ShapeId::Curve, m_origin, m_curve_end, {&m_curve_control, 1}, m_button);
+    publish_shape(context, ShapeId::Curve, m_origin, m_curve_end, {&m_curve_control, 1}, m_paint);
+    context.ui.shape.points = {pixel_of(m_origin), pixel_of(m_curve_end), pixel_of(m_curve_control)};
 }
 
-void ShapeTool::commit_drag(ToolContext& context, Point2f end) {
+void ShapeTool::finish_drag(ToolContext& context, Point2f end) {
     m_cursor = end;
-    commit_shape(context, context.shape_options.kind, m_origin, constrained_end(context, end), {}, m_button);
+    m_end = constrained_end(context, end);
+    m_pending = true;
+    publish_pending(context);
 }
 
 void ShapeTool::commit_curve(ToolContext& context) {
     const Point2f control = m_curve_control;
     m_curve_pending = false;
     m_bending = false;
-    context.ui.shape.visible = false;
-    commit_shape(context, ShapeId::Curve, m_origin, m_curve_end, {&control, 1}, m_button);
+    hide_preview(context);
+    commit_shape(context, ShapeId::Curve, m_origin, m_curve_end, {&control, 1}, m_paint);
 }
 
 void ShapeTool::cancel_curve(ToolContext& context) {
     if (!m_curve_pending) return;
     m_curve_pending = false;
     m_bending = false;
-    context.ui.shape.visible = false;
+    hide_preview(context);
 }
 
 void ShapeTool::close_polygon(ToolContext& context) {
@@ -845,27 +945,166 @@ void ShapeTool::close_polygon(ToolContext& context) {
     const std::vector<Point2f> vertices = m_polygon;
     m_polygon_open = false;
     m_polygon.clear();
-    context.ui.shape.visible = false;
+    hide_preview(context);
     if (vertices.size() < kMinPolygonPoints) return;
 
-    commit_shape(context, ShapeId::Polygon, m_origin, m_cursor, vertices, m_button);
+    commit_shape(context, ShapeId::Polygon, m_origin, m_cursor, vertices, m_paint);
 }
 
 void ShapeTool::cancel_polygon(ToolContext& context) {
     if (!m_polygon_open) return;
     m_polygon_open = false;
     m_polygon.clear();
-    context.ui.shape.visible = false;
+    hide_preview(context);
+}
+
+void ShapeTool::publish_pending(ToolContext& context) {
+    publish_shape(context, m_kind, m_origin, m_end, {}, m_paint, m_rotation);
+    ShapePreview& preview = context.ui.shape;
+    if (shape::is_closed(m_kind)) {
+        preview.frame = shape::normalized_rect(m_origin, m_end);
+        preview.rotation = m_rotation;
+    } else {
+        preview.points = {pixel_of(m_origin), pixel_of(m_end)};
+    }
+}
+
+void ShapeTool::commit_pending(ToolContext& context) {
+    if (!m_pending) return;
+    m_pending = false;
+    m_edit = Edit::None;
+    hide_preview(context);
+    commit_shape(context, m_kind, m_origin, m_end, {}, m_paint, m_rotation);
+}
+
+void ShapeTool::cancel_pending(ToolContext& context) {
+    if (!m_pending) return;
+    m_pending = false;
+    m_edit = Edit::None;
+    hide_preview(context);
+}
+
+ShapeTool::Grab ShapeTool::grab_at(const ToolContext& context, Point2f position) const {
+    if (m_kind == ShapeId::Line) {
+        const std::array ends{m_origin, m_end};
+        for (int i = 0; i < static_cast<int>(ends.size()); ++i) {
+            // A grip sits in the middle of the pixel the end lands on.
+            const Point2f centre = pixel_of(ends[static_cast<std::size_t>(i)]);
+            if (distance({centre.x + 0.5f, centre.y + 0.5f}, position) * context.zoom <= kHandleHitRadius)
+                return {Edit::Endpoint, std::nullopt, i};
+        }
+        if (distance_to_segment(position, m_origin, m_end) * context.zoom <= kHandleHitRadius)
+            return {Edit::Move, std::nullopt, 0};
+        return {};
+    }
+    // The box is hit-tested as if it were upright: the pointer is turned back
+    // by the angle the shape has been turned.
+    const RectI box = shape::normalized_rect(m_origin, m_end);
+    const Point2f local = shape::turned_about_middle(box, position, -m_rotation);
+    if (const std::optional<SelectionHandle> handle = handle_at(box, local, context.zoom))
+        return {Edit::Box, handle, 0};
+    if (box.contains(local)) return {Edit::Move, std::nullopt, 0};
+    if (in_rotate_zone(box, local, context.zoom)) return {Edit::Rotate, std::nullopt, 0};
+    return {};
+}
+
+bool ShapeTool::grab_pending(ToolContext& context, Point2f position) {
+    const Grab grab = grab_at(context, position);
+    if (grab.edit == Edit::None) return false;
+    m_edit = grab.edit;
+    m_press = position;
+    m_origin_before = m_origin;
+    m_end_before = m_end;
+    m_rotation_before = m_rotation;
+    m_box_before = shape::normalized_rect(m_origin, m_end);
+    m_endpoint = grab.endpoint;
+    context.ui.resize = {};
+    context.ui.move = {};
+    context.ui.rotate = {};
+    switch (grab.edit) {
+        case Edit::Box:
+            m_handle = *grab.handle;
+            context.ui.resize.cursor = resize_cursor_for(m_handle);
+            break;
+        case Edit::Endpoint: context.ui.resize.cursor = line_cursor(m_origin, m_end); break;
+        case Edit::Move: context.ui.move = {true, true}; break;
+        case Edit::Rotate:
+            m_bearing_before = bearing_degrees(middle_of(m_box_before), position);
+            context.ui.rotate = {true, true, middle_of(m_box_before)};
+            break;
+        case Edit::None: break;
+    }
+    return true;
+}
+
+void ShapeTool::edit_pending(ToolContext& context, Point2f position) {
+    switch (m_edit) {
+        case Edit::Endpoint: (m_endpoint == 0 ? m_origin : m_end) = position; break;
+        case Edit::Move: {
+            const Point2f offset{std::round(position.x - m_press.x), std::round(position.y - m_press.y)};
+            m_origin = {m_origin_before.x + offset.x, m_origin_before.y + offset.y};
+            m_end = {m_end_before.x + offset.x, m_end_before.y + offset.y};
+            break;
+        }
+        case Edit::Rotate: {
+            const float turn = wrap_degrees(bearing_degrees(middle_of(m_box_before), position) - m_bearing_before);
+            float degrees = m_rotation_before + turn;
+            // Snap the angle the shape ends up at, not the turn made in this drag.
+            if (context.shift) degrees = std::round(degrees / kRotateStepDegrees) * kRotateStepDegrees;
+            m_rotation = wrap_degrees(degrees);
+            break;
+        }
+        case Edit::Box: {
+            // Every frame starts from the box the drag began with, so the shape
+            // never inherits what an earlier frame rounded away. The pointer is
+            // turned back into the upright box, and the box that comes out
+            // swings around the middle it had, so the corner opposite the grip
+            // stays where it was on the paper.
+            const Point2f local = shape::turned_about_middle(m_box_before, position, -m_rotation);
+            const RectI box = resized_bounds(m_box_before, m_handle, local, kUnboundedBox, context.shift);
+            const Point2f middle =
+                shape::turned_about_middle(m_box_before, middle_of(box), m_rotation);
+            const Point2f origin{std::round(middle.x - static_cast<float>(box.width - 1) / 2.0f),
+                                 std::round(middle.y - static_cast<float>(box.height - 1) / 2.0f)};
+            m_origin = origin;
+            m_end = {origin.x + static_cast<float>(box.width - 1),
+                     origin.y + static_cast<float>(box.height - 1)};
+            break;
+        }
+        case Edit::None: break;
+    }
+    publish_pending(context);
+    if (m_edit == Edit::Rotate) context.ui.rotate.centre = middle_of(shape::normalized_rect(m_origin, m_end));
+}
+
+void ShapeTool::hover_pending(ToolContext& context, Point2f position) {
+    const Grab grab = grab_at(context, position);
+    context.ui.resize.cursor = ResizeCursor::None;
+    context.ui.move.hover = grab.edit == Edit::Move;
+    context.ui.rotate = {grab.edit == Edit::Rotate, false, middle_of(shape::normalized_rect(m_origin, m_end))};
+    if (grab.edit == Edit::Box) context.ui.resize.cursor = resize_cursor_for(*grab.handle);
+    if (grab.edit == Edit::Endpoint) context.ui.resize.cursor = line_cursor(m_origin, m_end);
+}
+
+void ShapeTool::hide_preview(ToolContext& context) {
+    ShapePreview& preview = context.ui.shape;
+    preview.visible = false;
+    preview.frame.reset();
+    preview.points.clear();
+    context.ui.resize = {};
+    context.ui.move = {};
+    context.ui.rotate = {};
 }
 
 bool ShapeTool::on_cancel(ToolContext& context) {
     // A drag paints nothing until the release - it only publishes a preview -
     // so abandoning it is dropping that preview.
-    if (!m_dragging && !m_polygon_open && !m_curve_pending) return false;
+    if (!m_dragging && !m_polygon_open && !m_curve_pending && !m_pending) return false;
+    cancel_pending(context);
     cancel_polygon(context);
     cancel_curve(context);
     m_dragging = false;
-    context.ui.shape.visible = false;
+    hide_preview(context);
     return true;
 }
 

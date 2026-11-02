@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -8,6 +9,7 @@
 
 #include "core/raster.hpp"
 #include "core/types.hpp"
+#include "tools/selection_handles.hpp"
 #include "tools/tool.hpp"
 
 // Shape tool: the whole shape vocabulary of mspaint, its outline geometry, and
@@ -72,6 +74,14 @@ struct ShapePreview {
     RectI region;
     // Differs whenever the pixels do.
     std::uint64_t revision = 0;
+    // What the shape can be grabbed by while it is still editable: the box that
+    // carries its resize grips, and the pixels of the points (the ends of a
+    // line, the ends and bend of a curve) that are grabbed one by one.
+    std::optional<RectI> frame;
+    std::vector<Point2f> points;
+    // How far the frame, and the shape in it, is turned about its middle, in
+    // degrees clockwise.
+    float rotation = 0.0f;
 };
 
 namespace shape {
@@ -89,6 +99,9 @@ namespace shape {
 [[nodiscard]] std::vector<Point2f> outline(ShapeId kind, Point2f a, Point2f b,
                                            std::span<const Point2f> polygon);
 
+// `point` turned clockwise by `degrees` about the middle of `box`'s pixels.
+[[nodiscard]] Point2f turned_about_middle(RectI box, Point2f point, float degrees);
+
 [[nodiscard]] std::string svg_commands(std::span<const Point2f> points, bool closed);
 
 // Glyph for the shape gallery, drawn inside `box`.
@@ -97,10 +110,18 @@ namespace shape {
 }  // namespace shape
 
 // Paints `kind` into `target`. `outline_color` draws the border and
-// `fill_color` the interior, matching mspaint's Color 1 / Color 2 split.
+// `fill_color` the interior, matching mspaint's Color 1 / Color 2 split. A
+// closed shape can be turned by `rotation_degrees` about the middle of its box.
 void rasterize_shape(raster::Target target, ShapeId kind, Point2f a, Point2f b,
                      std::span<const Point2f> polygon, const ShapeOptions& options,
-                     Rgba8 outline_color, Rgba8 fill_color);
+                     Rgba8 outline_color, Rgba8 fill_color, float rotation_degrees = 0.0f);
+
+// The options and the two colors a shape is painted with.
+struct ShapePaint {
+    ShapeOptions options;
+    Rgba8 outline;
+    Rgba8 fill;
+};
 
 class ShapeTool final : public ITool {
 public:
@@ -113,19 +134,41 @@ public:
     void on_deactivate(ToolContext& context) override;
 
 private:
+    // What a drag on a pending shape is moving.
+    enum class Edit { None, Box, Endpoint, Move, Rotate };
+
     [[nodiscard]] Point2f constrained_end(const ToolContext& context, Point2f end) const;
     void start_drag(ToolContext& context, Point2f position, PointerButton button);
     void update_preview(ToolContext& context, Point2f cursor);
-    void commit_drag(ToolContext& context, Point2f end);
+    void finish_drag(ToolContext& context, Point2f end);
     void update_curve_preview(ToolContext& context);
     void commit_curve(ToolContext& context);
     void cancel_curve(ToolContext& context);
     void close_polygon(ToolContext& context);
     void cancel_polygon(ToolContext& context);
 
+    // A finished drag stays unpainted so it can still be resized. The next
+    // press elsewhere, Enter or leaving the tool paints it; Escape drops it.
+    void publish_pending(ToolContext& context);
+    void commit_pending(ToolContext& context);
+    void cancel_pending(ToolContext& context);
+    [[nodiscard]] bool grab_pending(ToolContext& context, Point2f position);
+    void edit_pending(ToolContext& context, Point2f position);
+    void hover_pending(ToolContext& context, Point2f position);
+    // What a press at `position` on the pending shape would take hold of.
+    struct Grab {
+        Edit edit = Edit::None;
+        std::optional<SelectionHandle> handle;
+        int endpoint = 0;
+    };
+    [[nodiscard]] Grab grab_at(const ToolContext& context, Point2f position) const;
+    void hide_preview(ToolContext& context);
+
     bool m_dragging = false;
-    PointerButton m_button = PointerButton::Primary;
+    ShapeId m_kind = ShapeId::Rectangle;
+    ShapePaint m_paint;
     Point2f m_origin{};
+    Point2f m_end{};
     Point2f m_cursor{};
     std::vector<Point2f> m_polygon;
     bool m_polygon_open = false;
@@ -133,6 +176,19 @@ private:
     bool m_bending = false;
     Point2f m_curve_end{};
     Point2f m_curve_control{};
+
+    bool m_pending = false;
+    Edit m_edit = Edit::None;
+    SelectionHandle m_handle = SelectionHandle::Nw;
+    RectI m_box_before;
+    int m_endpoint = 0;
+    float m_rotation = 0.0f;
+    // The shape as it was when the drag on it began.
+    Point2f m_press{};
+    Point2f m_origin_before{};
+    Point2f m_end_before{};
+    float m_rotation_before = 0.0f;
+    float m_bearing_before = 0.0f;
 };
 
 }  // namespace lsp

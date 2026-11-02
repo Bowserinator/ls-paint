@@ -383,6 +383,9 @@ export global FontStyle {
 export global RotateOverlay {
     in-out property <bool> hover: false;
     in-out property <bool> rotating: false;
+    // The middle the turn pivots on, when the tool does not turn the selection.
+    in-out property <float> centre-x: 0;
+    in-out property <float> centre-y: 0;
 }
 
 // The pointer shape the selection tool asks for over a resize grip.
