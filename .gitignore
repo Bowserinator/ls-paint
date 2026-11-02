@@ -39,6 +39,11 @@ TODO.txt
 
 # CMake build directory
 build/
+build-msvc/
+build-win/
+build-pkg/
+build-deb/
+dist/
 
 # Agent goal/task state
 .pi/
