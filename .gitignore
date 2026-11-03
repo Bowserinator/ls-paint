@@ -43,7 +43,10 @@ build-msvc/
 build-win/
 build-pkg/
 build-deb/
+build-appimage/
+build-flatpak/
 dist/
+tools/
 
 # Agent goal/task state
 .pi/

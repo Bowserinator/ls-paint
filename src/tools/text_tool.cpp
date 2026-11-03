@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <string>
@@ -25,6 +26,22 @@
 
 namespace lsp {
 namespace {
+
+std::string font_dir() {
+    static const std::string dir = [] {
+#ifdef __linux__
+        std::error_code ec;
+        const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (!ec) {
+            const auto candidate = exe.parent_path() / ".." / "share" / "ls-paint" / "fonts";
+            if (std::filesystem::is_directory(candidate, ec))
+                return utf8_from_path(candidate.lexically_normal());
+        }
+#endif
+        return std::string(LSP_FONT_DIR);
+    }();
+    return dir;
+}
 
 constexpr float kItalicSlant = 0.21f;  // tan(12 degrees): the shear of a faux italic
 // A bold glyph is widened by one pixel for every this many pixels of size.
@@ -66,7 +83,7 @@ bool read_font(LoadedFont& font, const std::string& path) {
 // carries that name.
 std::string bundled_path_for(std::string_view family) {
     for (const auto& face : kFamilies) {
-        if (face.first == family) return std::string(LSP_FONT_DIR) + "/" + std::string(face.second);
+        if (face.first == family) return font_dir() + "/" + std::string(face.second);
     }
     return {};
 }
@@ -88,13 +105,13 @@ const LoadedFont* load_font(std::string_view family) {
     };
     add(installed_fonts().face_path(family));
     add(bundled_path_for(family));
-    add(std::string(LSP_FONT_DIR) + "/" + std::string(kFamilies[0].second));
+    add(font_dir() + "/" + std::string(kFamilies[0].second));
 
     LoadedFont font;
     for (const std::string& path : candidates) {
         if (read_font(font, path)) break;
     }
-    if (!font.ready) std::fprintf(stderr, "No usable font file for %s in %s\n", key.c_str(), LSP_FONT_DIR);
+    if (!font.ready) std::fprintf(stderr, "No usable font file for %s in %s\n", key.c_str(), font_dir().c_str());
 
     auto& stored = cache[key] = std::move(font);
     return stored.ready ? &stored : nullptr;
